@@ -1,0 +1,60 @@
+# ==============================================================================
+# 1. Source Control Metadata
+# ==============================================================================
+.git
+.gitignore
+.gitattributes
+
+# ==============================================================================
+# 2. Python Runtime & Bytecode Caches
+# ==============================================================================
+# Prevents host-compiled python bytecode from polluting the container filesystem
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+*.pyo
+
+# ==============================================================================
+# 3. Local Virtual Environments (CRITICAL)
+# ==============================================================================
+# Never copy host-compiled binaries into the container; pip handles this inside the build
+.venv/
+venv/
+env/
+ENV/
+ENV_DIR/
+
+# ==============================================================================
+# 4. Local Environment Variables & Credentials
+# ==============================================================================
+# Protects against baking development secrets into the immutable Docker image
+.env
+.env.local
+.env.development
+.env.production
+
+# ==============================================================================
+# 5. IDE, Editors, and OS Artifacts
+# ==============================================================================
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+.DS_Store
+Thumbs.db
+
+# ==============================================================================
+# 6. Testing & CI/CD Framework Outputs
+# ==============================================================================
+.pytest_cache/
+.htmlcov/
+htmlcov/
+.coverage
+.coverage.*
+.cache/
+.noserc
+nosetests.xml
