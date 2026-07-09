@@ -28,12 +28,19 @@ def require_permission(permission_name: str):
                 detail="User not found",
             )
 
-        permissions = RBACRepository.get_permissions(
+        permissions = RBACRepository.get_role_permissions(
             db,
             user.role_id,
         )
 
-        if permission_name not in permissions:
+        permission_names = {
+            permission.permission_name
+            for permission in permissions
+        }
+        print("Required Permission:", permission_name)
+        print("Assigned Permissions:", permission_names)
+
+        if permission_name not in permission_names:
 
             raise HTTPException(
                 status_code=403,
