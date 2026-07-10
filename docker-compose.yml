@@ -1,0 +1,80 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: inventory_backend_dev
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    # Mount the local directory into the container for live hot-reloading
+    volumes:
+      - .:/app
+    # Override the production command to enable Uvicorn's development reloader
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      - ENV=development
+      - DATABASE_URL=postgresql://admin:supersecret@postgres_db:5432/inventory_db
+      - MONGO_URL=mongodb://admin:supersecret@mongo_db:27017/
+      - REDIS_URL=redis://redis_cache:6379/0
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+      mongo_db:
+        condition: service_healthy
+      redis_cache:
+        condition: service_healthy
+
+  postgres_db:
+    image: postgres:16-alpine
+    container_name: postgres_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: supersecret
+      POSTGRES_DB: inventory_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_inventory_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d inventory_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mongo_db:
+    image: mongo:7.0
+    container_name: mongo_db
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: supersecret
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_inventory_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis_cache:
+    image: redis:7.2-alpine
+    container_name: redis_cache
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_inventory_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_inventory_data:
+  mongo_inventory_data:
+  redis_inventory_data:
