@@ -16,11 +16,7 @@ class RBACRepository:
 
     @staticmethod
     def get_user(db: Session, user_id: str):
-        return (
-            db.query(User)
-            .filter(User.id == user_id)
-            .first()
-        )
+        return db.query(User).filter(User.id == user_id).first()
 
     # =========================
     # Permission CRUD
@@ -33,16 +29,14 @@ class RBACRepository:
     ):
         existing = (
             db.query(Permission)
-            .filter(
-                Permission.permission_name == permission.permission_name
-            )
+            .filter(Permission.permission_name == permission.permission_name)
             .first()
         )
 
         if existing:
             raise HTTPException(
                 status_code=409,
-                detail=f"Permission '{permission.permission_name}' already exists."
+                detail=f"Permission '{permission.permission_name}' already exists.",
             )
 
         try:
@@ -53,36 +47,22 @@ class RBACRepository:
 
         except IntegrityError:
             db.rollback()
-            raise HTTPException(
-                status_code=409,
-                detail="Permission already exists."
-            )
+            raise HTTPException(status_code=409, detail="Permission already exists.")
 
         except SQLAlchemyError:
             db.rollback()
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to create permission."
-            )
+            raise HTTPException(status_code=500, detail="Failed to create permission.")
 
     @staticmethod
     def get_permissions(db: Session):
-        return (
-            db.query(Permission)
-            .order_by(Permission.permission_name)
-            .all()
-        )
+        return db.query(Permission).order_by(Permission.permission_name).all()
 
     @staticmethod
     def get_permission_by_id(
         db: Session,
         permission_id: str,
     ):
-        return (
-            db.query(Permission)
-            .filter(Permission.id == permission_id)
-            .first()
-        )
+        return db.query(Permission).filter(Permission.id == permission_id).first()
 
     @staticmethod
     def get_permission_by_name(
@@ -91,9 +71,7 @@ class RBACRepository:
     ):
         return (
             db.query(Permission)
-            .filter(
-                Permission.permission_name == permission_name
-            )
+            .filter(Permission.permission_name == permission_name)
             .first()
         )
 
@@ -108,10 +86,7 @@ class RBACRepository:
 
         except SQLAlchemyError:
             db.rollback()
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to delete permission."
-            )
+            raise HTTPException(status_code=500, detail="Failed to delete permission.")
 
     # =========================
     # Role CRUD
@@ -122,18 +97,11 @@ class RBACRepository:
         db: Session,
         role: Role,
     ):
-        existing = (
-            db.query(Role)
-            .filter(
-                Role.role_name == role.role_name
-            )
-            .first()
-        )
+        existing = db.query(Role).filter(Role.role_name == role.role_name).first()
 
         if existing:
             raise HTTPException(
-                status_code=409,
-                detail=f"Role '{role.role_name}' already exists."
+                status_code=409, detail=f"Role '{role.role_name}' already exists."
             )
 
         try:
@@ -144,49 +112,29 @@ class RBACRepository:
 
         except IntegrityError:
             db.rollback()
-            raise HTTPException(
-                status_code=409,
-                detail="Role already exists."
-            )
+            raise HTTPException(status_code=409, detail="Role already exists.")
 
         except SQLAlchemyError:
             db.rollback()
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to create role."
-            )
+            raise HTTPException(status_code=500, detail="Failed to create role.")
 
     @staticmethod
     def get_roles(db: Session):
-        return (
-            db.query(Role)
-            .order_by(Role.role_name)
-            .all()
-        )
+        return db.query(Role).order_by(Role.role_name).all()
 
     @staticmethod
     def get_role_by_id(
         db: Session,
         role_id: str,
     ):
-        return (
-            db.query(Role)
-            .filter(Role.id == role_id)
-            .first()
-        )
+        return db.query(Role).filter(Role.id == role_id).first()
 
     @staticmethod
     def get_role_by_name(
         db: Session,
         role_name: str,
     ):
-        return (
-            db.query(Role)
-            .filter(
-                Role.role_name == role_name
-            )
-            .first()
-        )
+        return db.query(Role).filter(Role.role_name == role_name).first()
 
     @staticmethod
     def delete_role(
@@ -199,10 +147,7 @@ class RBACRepository:
 
         except SQLAlchemyError:
             db.rollback()
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to delete role."
-            )
+            raise HTTPException(status_code=500, detail="Failed to delete role.")
 
     # =========================
     # Role Permissions
@@ -224,8 +169,7 @@ class RBACRepository:
 
         if existing:
             raise HTTPException(
-                status_code=409,
-                detail="Permission is already assigned to this role."
+                status_code=409, detail="Permission is already assigned to this role."
             )
 
         try:
@@ -237,15 +181,13 @@ class RBACRepository:
         except IntegrityError:
             db.rollback()
             raise HTTPException(
-                status_code=409,
-                detail="Permission is already assigned to this role."
+                status_code=409, detail="Permission is already assigned to this role."
             )
 
         except SQLAlchemyError:
             db.rollback()
             raise HTTPException(
-                status_code=500,
-                detail="Failed to assign permission to role."
+                status_code=500, detail="Failed to assign permission to role."
             )
 
     @staticmethod
@@ -259,9 +201,7 @@ class RBACRepository:
                 RolePermission,
                 Permission.id == RolePermission.permission_id,
             )
-            .filter(
-                RolePermission.role_id == role_id
-            )
+            .filter(RolePermission.role_id == role_id)
             .order_by(Permission.permission_name)
             .all()
         )
@@ -285,8 +225,7 @@ class RBACRepository:
 
         if role_permission is None:
             raise HTTPException(
-                status_code=404,
-                detail="Permission assignment not found."
+                status_code=404, detail="Permission assignment not found."
             )
 
         try:
@@ -296,8 +235,55 @@ class RBACRepository:
         except SQLAlchemyError:
             db.rollback()
             raise HTTPException(
-                status_code=500,
-                detail="Failed to remove permission from role."
+                status_code=500, detail="Failed to remove permission from role."
             )
 
         return role_permission
+
+    @staticmethod
+    def get_role_permission(
+        db: Session,
+        role_id: str,
+        permission_id: str,
+    ):
+        return (
+            db.query(RolePermission)
+            .filter(
+                RolePermission.role_id == role_id,
+                RolePermission.permission_id == permission_id,
+            )
+            .first()
+        )
+
+    @staticmethod
+    def assign_permission_to_role(
+        db: Session,
+        role_permission: RolePermission,
+    ):
+        db.add(role_permission)
+        db.commit()
+        db.refresh(role_permission)
+        return role_permission
+
+    @staticmethod
+    def get_permissions_by_role(
+        db: Session,
+        role_id: str,
+    ):
+        return (
+            db.query(Permission)
+            .join(
+                RolePermission,
+                Permission.id == RolePermission.permission_id,
+            )
+            .filter(RolePermission.role_id == role_id)
+            .all()
+        )
+
+    @staticmethod
+    def remove_permission_from_role(
+        db: Session,
+        role_permission: RolePermission,
+    ):
+        db.delete(role_permission)
+        db.commit()

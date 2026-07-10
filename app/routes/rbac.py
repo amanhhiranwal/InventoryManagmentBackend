@@ -62,3 +62,46 @@ def delete_role(
     db: Session = Depends(get_db),
 ):
     return RBACController.delete_role(role_id, db)
+
+
+@router.post(
+    "/roles/{role_id}/permissions/{permission_id}"
+)
+def assign_permission(
+    role_id: str,
+    permission_id: str,
+    db: Session = Depends(get_db),
+):
+    return RBACController.assign_permission_to_role(
+        role_id,
+        permission_id,
+        db,
+    )
+
+
+@router.get(
+    "/roles/{role_id}/permissions"
+)
+def get_role_permissions(
+    role_id: str,
+    db: Session = Depends(get_db),
+):
+    return RBACController.get_permissions_by_role(
+        role_id,
+        db,
+    )
+
+
+@router.delete(
+    "/roles/{role_id}/permissions/{permission_id}"
+)
+def remove_permission(
+    role_id: str,
+    permission_id: str,
+    db: Session = Depends(get_db),
+):
+    return RBACController.remove_permission_from_role(
+        role_id,
+        permission_id,
+        db,
+    )

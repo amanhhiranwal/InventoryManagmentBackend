@@ -45,3 +45,12 @@ def me(
         "success": True,
         "data": current_user,
     }
+
+
+@router.post("/logout")
+async def logout():
+
+    return {
+        "success": True,
+        "message": "Logged out successfully"
+    }
