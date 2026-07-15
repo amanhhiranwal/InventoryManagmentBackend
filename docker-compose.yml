@@ -7,10 +7,9 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
-    # Mount the local directory into the container for live hot-reloading
+    # Maps your entire 'atin' folder into the container workspace
     volumes:
       - .:/app
-    # Override the production command to enable Uvicorn's development reloader
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     environment:
       - ENV=development
@@ -36,7 +35,8 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_inventory_data:/var/lib/postgresql/data
+      # LEFT SIDE: Creates a 'data/postgres' folder inside your 'atin' directory
+      - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U admin -d inventory_db"]
       interval: 5s
@@ -53,7 +53,8 @@ services:
     ports:
       - "27017:27017"
     volumes:
-      - mongo_inventory_data:/data/db
+      # LEFT SIDE: Creates a 'data/mongo' folder inside your 'atin' directory
+      - ./data/mongo:/data/db
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 5s
@@ -67,14 +68,10 @@ services:
     ports:
       - "6379:6379"
     volumes:
-      - redis_inventory_data:/data
+      # LEFT SIDE: Creates a 'data/redis' folder inside your 'atin' directory
+      - ./data/redis:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
-
-volumes:
-  postgres_inventory_data:
-  mongo_inventory_data:
-  redis_inventory_data:
