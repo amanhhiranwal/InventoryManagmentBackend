@@ -10,7 +10,7 @@ services:
     # Maps your entire 'atin' folder into the container workspace
     volumes:
       - .:/app
-    command: uvicorn main:app --app-dir app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     environment:
       - ENV=development
       - DATABASE_URL=postgresql://admin:supersecret@postgres_db:5432/inventory_db
