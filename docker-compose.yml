@@ -13,9 +13,25 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     environment:
       - ENV=development
-      - DATABASE_URL=postgresql://admin:supersecret@postgres_db:5432/inventory_db
-      - MONGO_URL=mongodb://admin:supersecret@mongo_db:27017/
-      - REDIS_URL=redis://redis_cache:6379/0
+      # Mandatory Pydantic Metadata Configs
+      - APP_NAME=InventoryManagementBackend
+      - APP_VERSION=1.0.0
+      # Relational Tier Networking Parameters (Matches postgres_db service)
+      - POSTGRES_HOST=postgres_db
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=inventory_db
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=supersecret
+      # Document Tier Networking Parameters (Matches mongo_db service)
+      - MONGO_URI=mongodb://admin:supersecret@mongo_db:27017/
+      - MONGO_DB=inventory_mongo
+      # Cache Tier Networking Parameters (Matches redis_cache service)
+      - REDIS_HOST=redis_cache
+      - REDIS_PORT=6379
+      # Security Token Layer Parameters
+      - JWT_SECRET_KEY=dev_secret_key_dont_use_this_in_production_12345
+      - JWT_ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
     depends_on:
       postgres_db:
         condition: service_healthy
