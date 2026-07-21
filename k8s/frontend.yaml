@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: synergy-frontend
+  namespace: synergy-crm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: synergy-frontend
+  template:
+    metadata:
+      labels:
+        app: synergy-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: synergy-frontend:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: NEXT_PUBLIC_API_URL
+              value: http://192.168.1.73/api/v1
+          ports:
+            - containerPort: 3000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: synergy-frontend
+  namespace: synergy-crm
+spec:
+  ports:
+    - port: 3000
+      targetPort: 3000
+  selector:
+    app: synergy-frontend

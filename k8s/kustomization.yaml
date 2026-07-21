@@ -1,0 +1,9 @@
+resources:
+  - namespace.yaml
+  - secrets.yaml
+  - db-postgres.yaml
+  - db-mongo.yaml
+  - db-redis.yaml
+  - backend.yaml
+  - frontend.yaml
+  - ingress.yaml
