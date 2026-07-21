@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.database.dependencies import get_db
 from app.controllers.location_controller import LocationController
-from app.middleware.permission_middleware import require_permission
+from app.middleware.permission_middleware import require_permission, require_super_admin
 from app.schemas.location import (
     LocationCreate,
     LocationUpdate,
@@ -23,7 +23,7 @@ router = APIRouter(
 @router.post(
     "/",
     dependencies=[
-        Depends(require_permission("location.create"))
+        Depends(require_super_admin)
     ],
 )
 def create_location(
@@ -44,11 +44,15 @@ def create_location(
     ],
 )
 def get_locations(
+    page: int = 1,
+    size: int = 20,
     db: Session = Depends(get_db),
 ):
-
+    skip = (page - 1) * size
     return LocationController.get_all(
         db,
+        skip=skip,
+        limit=size,
     )
 
 

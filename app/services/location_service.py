@@ -81,9 +81,9 @@ class LocationService:
         )
 
     @staticmethod
-    def get_all(db: Session):
+    def get_all(db: Session, skip: int = 0, limit: int = 100):
 
-        return LocationRepository.get_all(db)
+        return LocationRepository.get_all(db, skip, limit)
 
     @staticmethod
     def get_by_id(location_id, db: Session):

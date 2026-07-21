@@ -79,12 +79,18 @@ class LocationRepository:
     @staticmethod
     def get_all(
         db: Session,
-    ) -> list[Location]:
-        return (
+        skip: int = 0,
+        limit: int = 100,
+    ) -> dict:
+        total = db.query(Location).count()
+        data = (
             db.query(Location)
             .order_by(Location.location_name.asc())
+            .offset(skip)
+            .limit(limit)
             .all()
         )
+        return {"data": data, "total": total}
 
     @staticmethod
     def update(

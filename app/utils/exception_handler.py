@@ -43,6 +43,8 @@ def register_exception_handlers(app: FastAPI):
         request: Request,
         exc: SQLAlchemyError,
     ):
+        import traceback
+        traceback.print_exc()
         return JSONResponse(
             status_code=500,
             content={
@@ -55,6 +57,8 @@ def register_exception_handlers(app: FastAPI):
         request: Request,
         exc: Exception,
     ):
+        import traceback
+        traceback.print_exc()
         return JSONResponse(
             status_code=500,
             content={

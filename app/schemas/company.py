@@ -18,6 +18,7 @@ class CreateCompanyRequest(BaseModel):
     country: str
     postal_code: str
     is_active: bool = True
+    user_id: Optional[str] = None
 
 
 class UpdateCompanyRequest(BaseModel):

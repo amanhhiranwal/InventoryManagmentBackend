@@ -29,15 +29,20 @@ class LocationController:
     @staticmethod
     def get_all(
         db: Session,
+        skip: int = 0,
+        limit: int = 100,
     ):
 
-        locations = LocationService.get_all(
+        result = LocationService.get_all(
             db,
+            skip,
+            limit,
         )
 
         return {
             "success": True,
-            "data": locations,
+            "data": result["data"],
+            "total": result["total"],
         }
 
     @staticmethod
