@@ -18,13 +18,14 @@ class CompanyController:
         }
 
     @staticmethod
-    def get_all(db):
+    def get_all(db, skip: int = 0, limit: int = 100):
 
-        companies = CompanyService.get_all(db)
+        result = CompanyService.get_all(db, skip, limit)
 
         return {
             "success": True,
-            "data": companies,
+            "data": result["data"],
+            "total": result["total"],
         }
 
     @staticmethod

@@ -4,3 +4,7 @@ from app.models.permission import Permission
 from app.models.role_permission import RolePermission
 from app.models.company import Company
 from app.models.location import Location
+from app.models.user_role import UserRole
+from app.models.user_company import UserCompany
+from app.models.workflow import Workflow
+from app.models.lead import Lead

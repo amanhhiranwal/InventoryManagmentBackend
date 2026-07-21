@@ -47,5 +47,6 @@ class AuthController:
                 "first_name": user.first_name,
                 "last_name": user.last_name,
                 "email": user.email,
+                "is_super_admin": user.is_super_admin,
             },
         }

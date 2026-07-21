@@ -48,15 +48,27 @@ class CompanyService:
             is_active=request.is_active,
         )
 
-        return CompanyRepository.create(
+        company = CompanyRepository.create(
             db,
             company,
         )
 
-    @staticmethod
-    def get_all(db: Session):
+        if getattr(request, "user_id", None):
+            from app.repositories.user_repository import UserRepository
+            from app.utils.validators import validate_uuid
+            from uuid import UUID
+            validate_uuid(request.user_id, "user_id")
+            user = UserRepository.get_by_id(db, UUID(request.user_id))
+            if user:
+                user.companies.append(company)
+                db.commit()
 
-        return CompanyRepository.get_all(db)
+        return company
+
+    @staticmethod
+    def get_all(db: Session, skip: int = 0, limit: int = 100):
+
+        return CompanyRepository.get_all(db, skip, limit)
 
     @staticmethod
     def get_by_id(company_id, db: Session):

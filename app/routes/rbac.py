@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.controllers.rbac_controller import RBACController
 from app.database.dependencies import get_db
-
+from app.middleware.permission_middleware import require_super_admin, require_permission
 from app.schemas.rbac import (
     CreatePermissionRequest,
     CreateRoleRequest,
@@ -16,7 +16,10 @@ router = APIRouter(
 
 # ---------------- Permissions ---------------- #
 
-@router.post("/permissions")
+@router.post(
+    "/permissions",
+    dependencies=[Depends(require_super_admin)],
+)
 def create_permission(
     request: CreatePermissionRequest,
     db: Session = Depends(get_db),
@@ -24,14 +27,20 @@ def create_permission(
     return RBACController.create_permission(request, db)
 
 
-@router.get("/permissions")
+@router.get(
+    "/permissions",
+    dependencies=[Depends(require_permission("role.read"))],
+)
 def get_permissions(
     db: Session = Depends(get_db),
 ):
     return RBACController.get_permissions(db)
 
 
-@router.delete("/permissions/{permission_id}")
+@router.delete(
+    "/permissions/{permission_id}",
+    dependencies=[Depends(require_super_admin)],
+)
 def delete_permission(
     permission_id: int,
     db: Session = Depends(get_db),
@@ -41,7 +50,10 @@ def delete_permission(
 
 # ---------------- Roles ---------------- #
 
-@router.post("/roles")
+@router.post(
+    "/roles",
+    dependencies=[Depends(require_super_admin)],
+)
 def create_role(
     request: CreateRoleRequest,
     db: Session = Depends(get_db),
@@ -49,14 +61,20 @@ def create_role(
     return RBACController.create_role(request, db)
 
 
-@router.get("/roles")
+@router.get(
+    "/roles",
+    dependencies=[Depends(require_permission("role.read"))],
+)
 def get_roles(
     db: Session = Depends(get_db),
 ):
     return RBACController.get_roles(db)
 
 
-@router.delete("/roles/{role_id}")
+@router.delete(
+    "/roles/{role_id}",
+    dependencies=[Depends(require_super_admin)],
+)
 def delete_role(
     role_id: int,
     db: Session = Depends(get_db),
@@ -65,7 +83,8 @@ def delete_role(
 
 
 @router.post(
-    "/roles/{role_id}/permissions/{permission_id}"
+    "/roles/{role_id}/permissions/{permission_id}",
+    dependencies=[Depends(require_super_admin)],
 )
 def assign_permission(
     role_id: str,
@@ -80,7 +99,8 @@ def assign_permission(
 
 
 @router.get(
-    "/roles/{role_id}/permissions"
+    "/roles/{role_id}/permissions",
+    dependencies=[Depends(require_permission("role.read"))],
 )
 def get_role_permissions(
     role_id: str,
@@ -93,7 +113,8 @@ def get_role_permissions(
 
 
 @router.delete(
-    "/roles/{role_id}/permissions/{permission_id}"
+    "/roles/{role_id}/permissions/{permission_id}",
+    dependencies=[Depends(require_super_admin)],
 )
 def remove_permission(
     role_id: str,

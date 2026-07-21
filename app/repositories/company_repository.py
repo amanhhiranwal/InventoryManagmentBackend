@@ -53,12 +53,18 @@ class CompanyRepository:
     @staticmethod
     def get_all(
         db: Session,
-    ) -> list[Company]:
-        return (
+        skip: int = 0,
+        limit: int = 100,
+    ) -> dict:
+        total = db.query(Company).count()
+        data = (
             db.query(Company)
             .order_by(Company.company_name.asc())
+            .offset(skip)
+            .limit(limit)
             .all()
         )
+        return {"data": data, "total": total}
 
     @staticmethod
     def update(

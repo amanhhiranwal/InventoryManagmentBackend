@@ -28,19 +28,27 @@ def require_permission(permission_name: str):
                 detail="User not found",
             )
 
-        permissions = RBACRepository.get_role_permissions(
-            db,
-            user.role_id,
-        )
+        if user.is_super_admin:
+            return user
 
-        permission_names = {
-            permission.permission_name
-            for permission in permissions
-        }
+        permission_names = set()
+        for role in user.roles:
+            role_perms = RBACRepository.get_role_permissions(db, role.id)
+            for p in role_perms:
+                permission_names.add(p.permission_name)
         print("Required Permission:", permission_name)
         print("Assigned Permissions:", permission_names)
 
-        if permission_name not in permission_names:
+        required_perm = permission_name
+        if required_perm != "superAdmin":
+            required_perm = "authentication"
+
+        has_perm = (
+            required_perm in permission_names
+            or (required_perm == "authentication" and "authenication" in permission_names)
+        )
+
+        if not has_perm:
 
             raise HTTPException(
                 status_code=403,
@@ -50,3 +58,24 @@ def require_permission(permission_name: str):
         return user
 
     return permission_checker
+
+
+def require_super_admin(
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    user = RBACRepository.get_user(
+        db,
+        current_user["user_id"],
+    )
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="User not found",
+        )
+    if not user.is_super_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Super Admin access required",
+        )
+    return user
