@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: inventory-prod
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/part-of: inventory-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongo-pvc
+  namespace: inventory-prod
+  labels:
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/part-of: inventory-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-pvc
+  namespace: inventory-prod
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/part-of: inventory-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
