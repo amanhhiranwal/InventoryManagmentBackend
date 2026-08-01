@@ -91,3 +91,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+
+#Testing the workflow with the help of test runner.testing.DEPLOY TEST
