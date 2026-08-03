@@ -6,7 +6,6 @@ on:
 
 jobs:
   build-and-deploy:
-    # Directs GitHub to execute this job natively on your office server
     runs-on: self-hosted
 
     steps:
@@ -29,22 +28,32 @@ jobs:
 
       - name: Deploy Manifests to Local K3s Cluster
         run: |
-          # 1. Point kubectl to the local K3s control plane configuration
+          # Point kubectl to the K3s cluster
           export KUBECONFIG=$HOME/.kube/config
 
-          # 2. Apply declarative Kubernetes specifications
+          # Apply namespace, config and secrets
           kubectl apply -f k8s/01-namespace-and-secrets.yaml
+
+          # Apply persistent volumes
           kubectl apply -f k8s/02-persistent-volume-claims.yaml
+
+          # Apply MongoDB and Redis
           kubectl apply -f k8s/03-databases.yaml
+
+          # Apply CloudNativePG PostgreSQL cluster
+          kubectl apply -f k8s/postgres-cluster.yaml
+
+          # Deploy backend
           kubectl apply -f k8s/04-backend.yaml
 
-          # 3. Trigger zero-downtime rolling restart
+          # Zero-downtime rolling restart
           kubectl rollout restart deployment/inventory-backend -n inventory-prod
           kubectl rollout status deployment/inventory-backend -n inventory-prod --timeout=120s
 
       - name: Execute Automated Layer 7 Health Guardrail
         run: |
-          export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+          export KUBECONFIG=$HOME/.kube/config
+
           python3 scripts/validate_cluster_health.py "http://localhost:30080" || \
             (echo "CRITICAL: Health check failed! Rolling back deployment..." && \
              kubectl rollout undo deployment/inventory-backend -n inventory-prod && exit 1)
