@@ -47,10 +47,10 @@ class AuthService:
             password=hashed_password,
             phone_number=request.phone_number,
             employee_id=request.employee_id,
-            role_id=role.id,
             is_super_admin=True,
             is_active=True,
         )
+        user.roles = [role]
 
         return AuthRepository.create_super_admin(
             db,
@@ -84,11 +84,13 @@ class AuthService:
                 detail="Invalid credentials",
             )
 
+        role_ids = [str(r.id) for r in user.roles]
         token = JWTService.create_access_token(
             {
                 "user_id": str(user.id),
                 "email": user.email,
-                "role_id": str(user.role_id),
+                "role_id": role_ids[0] if role_ids else "",
+                "is_super_admin": user.is_super_admin,
             }
         )
 

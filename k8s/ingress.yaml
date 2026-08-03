@@ -1,0 +1,33 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: synergy-ingress
+  namespace: synergy-crm
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: false
+    nginx.ingress.kubernetes.io/rewrite-target-log-level: info
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /uploads
+            pathType: Prefix
+            backend:
+              service:
+                name: synergy-backend
+                port:
+                  number: 8000
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: synergy-backend
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: synergy-frontend
+                port:
+                  number: 3000

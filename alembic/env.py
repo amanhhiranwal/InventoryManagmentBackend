@@ -11,6 +11,13 @@ from app.models.user import User
 from app.models.role import Role
 from app.models.permission import Permission
 from app.models.role_permission import RolePermission
+from app.models.company import Company
+from app.models.location import Location
+from app.models.lead import Lead
+from app.models.workflow import Workflow
+from app.models.product_type import ProductType
+from app.models.category_group import CategoryGroup
+from app.models.customer_type import CustomerType
 
 from sqlalchemy import create_engine
 

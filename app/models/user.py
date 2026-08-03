@@ -31,9 +31,18 @@ class User(BaseModel):
         unique=True,
     )
 
-    role_id: Mapped[UUID] = mapped_column(
-        ForeignKey("roles.id"),
-        nullable=False,
+    from sqlalchemy.orm import relationship
+
+    roles = relationship(
+        "Role",
+        secondary="user_roles",
+        backref="users",
+    )
+
+    companies = relationship(
+        "Company",
+        secondary="user_companies",
+        backref="users",
     )
 
     is_super_admin: Mapped[bool] = mapped_column(

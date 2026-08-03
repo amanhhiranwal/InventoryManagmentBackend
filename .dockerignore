@@ -58,3 +58,4 @@ htmlcov/
 .cache/
 .noserc
 nosetests.xml
+data/
