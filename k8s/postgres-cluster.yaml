@@ -1,0 +1,20 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgres-cluster
+  namespace: inventory-prod
+
+spec:
+  instances: 11
+
+  imageName: ghcr.io/cloudnative-pg/postgresql:17
+
+  storage:
+    size: 10Gi
+
+  bootstrap:
+    initdb:
+      database: inventory_db
+      owner: admin
+      secret:
+        name: database-credentials
