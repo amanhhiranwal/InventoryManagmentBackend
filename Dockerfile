@@ -26,4 +26,11 @@ USER appuser
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers $UVICORN_WORKERS"]
+# ==============================================================================
+# Phase 4: Production-Grade Process Execution
+# ==============================================================================
+# Invokes Uvicorn cleanly. The docker-compose workflow will dynamically
+# override this command to inject '--reload' during your local development.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+
+#Testing Testing

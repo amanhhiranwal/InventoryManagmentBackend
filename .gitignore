@@ -10,7 +10,11 @@ env/
 
 # Environment Variables
 .env
-.env.example 
+.env.*
+!.env.example
+data/
+__pycache__/
+*.log
 
 # VS Code
 .vscode/
