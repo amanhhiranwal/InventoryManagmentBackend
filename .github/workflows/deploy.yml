@@ -2,7 +2,7 @@ name: Production Self-Hosted CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ staging, master ]
 
 jobs:
   build-and-deploy:
