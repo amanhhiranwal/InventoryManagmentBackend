@@ -30,7 +30,7 @@ jobs:
       - name: Deploy Manifests to Local K3s Cluster
         run: |
           # 1. Point kubectl to the local K3s control plane configuration
-          export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+          export KUBECONFIG=$HOME/.kube/config
 
           # 2. Apply declarative Kubernetes specifications
           kubectl apply -f k8s/01-namespace-and-secrets.yaml
