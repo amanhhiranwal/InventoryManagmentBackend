@@ -42,17 +42,23 @@ jobs:
           kubectl apply -f k8s/01-namespace-and-secrets.yaml
 
           echo "=================================================="
-          echo "Creating PostgreSQL bootstrap secret..."
+          echo "Ensuring PostgreSQL bootstrap secret exists..."
           echo "=================================================="
 
-          kubectl create secret generic postgres-cluster-secret \
-            --namespace inventory-prod \
-            --from-literal=username="${{ secrets.POSTGRES_USER }}" \
-            --from-literal=password="${{ secrets.POSTGRES_PASSWORD }}" \
-            --dry-run=client -o yaml | kubectl apply -f -
+          if ! kubectl get secret postgres-cluster-secret -n inventory-prod >/dev/null 2>&1; then
+            echo "Creating postgres-cluster-secret..."
+
+            kubectl create secret generic postgres-cluster-secret \
+              --namespace inventory-prod \
+              --type=kubernetes.io/basic-auth \
+              --from-literal=username="${{ secrets.POSTGRES_USER }}" \
+              --from-literal=password="${{ secrets.POSTGRES_PASSWORD }}"
+          else
+            echo "postgres-cluster-secret already exists. Skipping."
+          fi
 
           echo "=================================================="
-          echo "Creating database credentials..."
+          echo "Updating database credentials..."
           echo "=================================================="
 
           kubectl create secret generic database-credentials \
@@ -65,7 +71,7 @@ jobs:
             --dry-run=client -o yaml | kubectl apply -f -
 
           echo "=================================================="
-          echo "Creating backend credentials..."
+          echo "Updating backend credentials..."
           echo "=================================================="
 
           kubectl create secret generic backend-credentials \
@@ -112,7 +118,7 @@ jobs:
           kubectl apply -f k8s/04-backend.yaml
 
           echo "=================================================="
-          echo "Deploying HPA..."
+          echo "Deploying Horizontal Pod Autoscaler..."
           echo "=================================================="
 
           kubectl apply -f k8s/backend-hpa.yaml
