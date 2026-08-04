@@ -103,25 +103,14 @@ jobs:
 
           kubectl apply -f k8s/postgres-cluster.yaml
 
-          echo "Waiting for PostgreSQL cluster..."
-
-          kubectl wait \
-            --for=condition=Ready \
-            cluster/postgres-cluster \
-            -n inventory-prod \
-            --timeout=300s || true
+          echo "PostgreSQL cluster status:"
+          kubectl get cluster postgres-cluster -n inventory-prod || true
 
           echo "=================================================="
           echo "Deploying Backend..."
           echo "=================================================="
 
           kubectl apply -f k8s/04-backend.yaml
-
-          echo "=================================================="
-          echo "Deploying Horizontal Pod Autoscaler..."
-          echo "=================================================="
-
-          kubectl apply -f k8s/backend-hpa.yaml
 
           echo "=================================================="
           echo "Restarting Backend..."
@@ -134,6 +123,12 @@ jobs:
           kubectl rollout status deployment/inventory-backend \
             -n inventory-prod \
             --timeout=300s
+
+          echo "=================================================="
+          echo "Deploying Horizontal Pod Autoscaler..."
+          echo "=================================================="
+
+          kubectl apply -f k8s/backend-hpa.yaml
 
           echo "=================================================="
           echo "Deployment completed successfully."
