@@ -28,25 +28,15 @@ jobs:
 
       - name: Deploy Manifests to Local K3s Cluster
         run: |
-          # Point kubectl to the K3s cluster
           export KUBECONFIG=$HOME/.kube/config
 
-          # Apply namespace, config and secrets
           kubectl apply -f k8s/01-namespace-and-secrets.yaml
-
-          # Apply persistent volumes
           kubectl apply -f k8s/02-persistent-volume-claims.yaml
-
-          # Apply MongoDB and Redis
           kubectl apply -f k8s/03-databases.yaml
-
-          # Apply CloudNativePG PostgreSQL cluster
           kubectl apply -f k8s/postgres-cluster.yaml
-
-          # Deploy backend
           kubectl apply -f k8s/04-backend.yaml
+          kubectl apply -f k8s/backend-hpa.yaml
 
-          # Zero-downtime rolling restart
           kubectl rollout restart deployment/inventory-backend -n inventory-prod
           kubectl rollout status deployment/inventory-backend -n inventory-prod --timeout=120s
 
