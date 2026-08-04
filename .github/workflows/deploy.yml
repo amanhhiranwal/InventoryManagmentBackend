@@ -2,7 +2,9 @@ name: Production Self-Hosted CI/CD Pipeline
 
 on:
   push:
-    branches: [ staging, master ]
+    branches:
+      - staging
+      - master
 
 jobs:
   build-and-deploy:
@@ -26,24 +28,66 @@ jobs:
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/inventory-backend:latest
 
-      - name: Deploy Manifests to Local K3s Cluster
+      - name: Deploy Kubernetes Resources
         run: |
+          set -e
+
           export KUBECONFIG=$HOME/.kube/config
 
+          echo "Deploying namespace, secrets and config..."
           kubectl apply -f k8s/01-namespace-and-secrets.yaml
+
+          echo "Deploying Persistent Volume Claims..."
           kubectl apply -f k8s/02-persistent-volume-claims.yaml
+
+          echo "Deploying MongoDB and Redis..."
           kubectl apply -f k8s/03-databases.yaml
+
+          echo "Deploying CloudNativePG PostgreSQL..."
           kubectl apply -f k8s/postgres-cluster.yaml
+
+          echo "Waiting for PostgreSQL primary to become Ready..."
+          kubectl wait \
+            --for=condition=Ready \
+            cluster/postgres-cluster \
+            -n inventory-prod \
+            --timeout=300s || true
+
+          echo "Deploying Inventory Backend..."
           kubectl apply -f k8s/04-backend.yaml
+
+          echo "Restarting backend..."
+          kubectl rollout restart deployment/inventory-backend -n inventory-prod
+
+          echo "Waiting for backend rollout..."
+          kubectl rollout status deployment/inventory-backend \
+            -n inventory-prod \
+            --timeout=300s
+
+          echo "Deploying Horizontal Pod Autoscaler..."
           kubectl apply -f k8s/backend-hpa.yaml
 
-          kubectl rollout restart deployment/inventory-backend -n inventory-prod
-          kubectl rollout status deployment/inventory-backend -n inventory-prod --timeout=120s
+          echo "Deployment successful."
 
       - name: Execute Automated Layer 7 Health Guardrail
         run: |
+          set -e
+
           export KUBECONFIG=$HOME/.kube/config
 
-          python3 scripts/validate_cluster_health.py "http://localhost:30080" || \
-            (echo "CRITICAL: Health check failed! Rolling back deployment..." && \
-             kubectl rollout undo deployment/inventory-backend -n inventory-prod && exit 1)
+          python3 scripts/validate_cluster_health.py "http://localhost:30080"
+
+      - name: Rollback on Failure
+        if: failure()
+        run: |
+          export KUBECONFIG=$HOME/.kube/config
+
+          echo "Health check failed. Rolling back deployment..."
+
+          kubectl rollout undo deployment/inventory-backend -n inventory-prod || true
+
+          kubectl rollout status deployment/inventory-backend \
+            -n inventory-prod \
+            --timeout=300s || true
+
+          exit 1
