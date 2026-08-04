@@ -5,7 +5,7 @@ metadata:
   namespace: inventory-prod
 
 spec:
-  instances: 11
+  instances: 9
 
   imageName: ghcr.io/cloudnative-pg/postgresql:17
 
