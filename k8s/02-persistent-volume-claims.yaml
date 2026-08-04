@@ -27,3 +27,18 @@ spec:
   resources:
     requests:
       storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backend-uploads-pvc
+  namespace: inventory-prod
+  labels:
+    app.kubernetes.io/name: inventory-backend
+    app.kubernetes.io/part-of: inventory-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
