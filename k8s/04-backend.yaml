@@ -29,7 +29,7 @@ spec:
       containers:
         - name: backend
           image: atindimrimakerspace/inventory-backend:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
 
           envFrom:
             - configMapRef:
