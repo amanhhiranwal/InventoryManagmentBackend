@@ -17,4 +17,11 @@ spec:
       database: inventory_db
       owner: admin
       secret:
-        name: database-credentials
+        name: postgres-cluster-secret
+
+  postgresql:
+    parameters:
+      max_wal_senders: "32"
+      max_replication_slots: "32"
+      wal_level: "logical"
+      wal_keep_size: "512MB"
