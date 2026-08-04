@@ -29,47 +29,112 @@ jobs:
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/inventory-backend:latest
 
       - name: Deploy Kubernetes Resources
+        shell: bash
         run: |
           set -e
 
           export KUBECONFIG=$HOME/.kube/config
 
-          echo "Deploying namespace, secrets and config..."
+          echo "=================================================="
+          echo "Deploying Namespace and ConfigMap..."
+          echo "=================================================="
+
           kubectl apply -f k8s/01-namespace-and-secrets.yaml
 
+          echo "=================================================="
+          echo "Creating PostgreSQL bootstrap secret..."
+          echo "=================================================="
+
+          kubectl create secret generic postgres-cluster-secret \
+            --namespace inventory-prod \
+            --from-literal=username="${{ secrets.POSTGRES_USER }}" \
+            --from-literal=password="${{ secrets.POSTGRES_PASSWORD }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          echo "=================================================="
+          echo "Creating database credentials..."
+          echo "=================================================="
+
+          kubectl create secret generic database-credentials \
+            --namespace inventory-prod \
+            --from-literal=POSTGRES_USER="${{ secrets.POSTGRES_USER }}" \
+            --from-literal=POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
+            --from-literal=POSTGRES_DB="inventory_db" \
+            --from-literal=MONGO_INITDB_ROOT_USERNAME="${{ secrets.MONGO_ROOT_USERNAME }}" \
+            --from-literal=MONGO_INITDB_ROOT_PASSWORD="${{ secrets.MONGO_ROOT_PASSWORD }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          echo "=================================================="
+          echo "Creating backend credentials..."
+          echo "=================================================="
+
+          kubectl create secret generic backend-credentials \
+            --namespace inventory-prod \
+            --from-literal=DATABASE_URL="postgresql://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@postgres-cluster-rw.inventory-prod.svc.cluster.local:5432/inventory_db" \
+            --from-literal=POSTGRES_USER="${{ secrets.POSTGRES_USER }}" \
+            --from-literal=POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
+            --from-literal=POSTGRES_DB="inventory_db" \
+            --from-literal=MONGO_URI="mongodb://${{ secrets.MONGO_ROOT_USERNAME }}:${{ secrets.MONGO_ROOT_PASSWORD }}@mongo-service.inventory-prod.svc.cluster.local:27017" \
+            --from-literal=REDIS_URL="redis://redis-service.inventory-prod.svc.cluster.local:6379" \
+            --from-literal=JWT_SECRET_KEY="${{ secrets.JWT_SECRET_KEY }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          echo "=================================================="
           echo "Deploying Persistent Volume Claims..."
+          echo "=================================================="
+
           kubectl apply -f k8s/02-persistent-volume-claims.yaml
 
+          echo "=================================================="
           echo "Deploying MongoDB and Redis..."
+          echo "=================================================="
+
           kubectl apply -f k8s/03-databases.yaml
 
+          echo "=================================================="
           echo "Deploying CloudNativePG PostgreSQL..."
+          echo "=================================================="
+
           kubectl apply -f k8s/postgres-cluster.yaml
 
-          echo "Waiting for PostgreSQL primary to become Ready..."
+          echo "Waiting for PostgreSQL cluster..."
+
           kubectl wait \
             --for=condition=Ready \
             cluster/postgres-cluster \
             -n inventory-prod \
             --timeout=300s || true
 
-          echo "Deploying Inventory Backend..."
+          echo "=================================================="
+          echo "Deploying Backend..."
+          echo "=================================================="
+
           kubectl apply -f k8s/04-backend.yaml
 
-          echo "Restarting backend..."
+          echo "=================================================="
+          echo "Deploying HPA..."
+          echo "=================================================="
+
+          kubectl apply -f k8s/backend-hpa.yaml
+
+          echo "=================================================="
+          echo "Restarting Backend..."
+          echo "=================================================="
+
           kubectl rollout restart deployment/inventory-backend -n inventory-prod
 
           echo "Waiting for backend rollout..."
+
           kubectl rollout status deployment/inventory-backend \
             -n inventory-prod \
             --timeout=300s
 
-          echo "Deploying Horizontal Pod Autoscaler..."
-          kubectl apply -f k8s/backend-hpa.yaml
-
-          echo "Deployment successful."
+          echo "=================================================="
+          echo "Deployment completed successfully."
+          echo "=================================================="
 
       - name: Execute Automated Layer 7 Health Guardrail
+        shell: bash
         run: |
           set -e
 
@@ -79,10 +144,12 @@ jobs:
 
       - name: Rollback on Failure
         if: failure()
+        shell: bash
         run: |
           export KUBECONFIG=$HOME/.kube/config
 
-          echo "Health check failed. Rolling back deployment..."
+          echo "Deployment failed."
+          echo "Rolling back backend deployment..."
 
           kubectl rollout undo deployment/inventory-backend -n inventory-prod || true
 
