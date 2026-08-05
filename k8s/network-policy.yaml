@@ -1,0 +1,75 @@
+# Use case: Restricts network communication so only approved Kubernetes components can talk to each service.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: inventory-network-policy
+  namespace: inventory-prod
+
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Backend -> Backend (future scaling)
+    - from:
+        - podSelector:
+            matchLabels:
+              app: inventory-backend
+
+    # Allow traffic from MongoDB
+    - from:
+        - podSelector:
+            matchLabels:
+              app: mongo-db
+
+    # Allow traffic from Redis
+    - from:
+        - podSelector:
+            matchLabels:
+              app: redis-cache
+
+    # Allow traffic from PostgreSQL
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+
+  egress:
+    # Allow DNS resolution
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # Allow Backend -> MongoDB
+    - to:
+        - podSelector:
+            matchLabels:
+              app: mongo-db
+
+    # Allow Backend -> Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis-cache
+
+    # Allow Backend -> PostgreSQL
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: postgres-cluster
+
+    # Allow outbound HTTPS (Docker Hub, APIs, etc.)
+    - ports:
+        - protocol: TCP
+          port: 443
+
+    # Allow outbound HTTP if needed
+    - ports:
+        - protocol: TCP
+          port: 80
