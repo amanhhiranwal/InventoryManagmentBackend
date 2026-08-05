@@ -112,6 +112,7 @@ jobs:
 
           kubectl apply -f k8s/04-backend.yaml
           kubectl apply -f k8s/backend-pdb.yaml
+          kubectl apply -f k8s/resource-quota.yaml
 
           echo "=================================================="
           echo "Restarting Backend..."
