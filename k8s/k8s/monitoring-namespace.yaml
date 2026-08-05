@@ -1,5 +1,0 @@
-# Creates a dedicated namespace for the Kubernetes monitoring stack.
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: monitoring
