@@ -114,6 +114,7 @@ jobs:
           kubectl apply -f k8s/backend-pdb.yaml
           kubectl apply -f k8s/resource-quota.yaml
           kubectl apply -f k8s/limit-range.yaml
+          k8s/network-policy.yaml
 
           echo "=================================================="
           echo "Restarting Backend..."
