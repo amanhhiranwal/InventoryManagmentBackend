@@ -1,1 +1,23 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: inventory-resource-quota
+  namespace: inventory-prod
 
+spec:
+  hard:
+    requests.cpu: "6"
+    requests.memory: 8Gi
+
+    limits.cpu: "12"
+    limits.memory: 16Gi
+
+    persistentvolumeclaims: "10"
+
+    pods: "30"
+
+    services: "10"
+
+    secrets: "20"
+
+    configmaps: "20"
