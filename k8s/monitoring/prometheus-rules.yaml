@@ -1,0 +1,93 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: inventory-monitoring-rules
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: inventory.health
+      rules:
+        - alert: BackendDeploymentUnavailable
+          expr: kube_deployment_status_replicas_available{namespace="inventory-prod",deployment="inventory-backend"} < on(namespace, deployment) kube_deployment_spec_replicas{namespace="inventory-prod",deployment="inventory-backend"}
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Inventory backend is not fully available"
+            description: "The inventory-backend deployment has fewer available replicas than desired in namespace inventory-prod."
+
+        - alert: BackendCrashLoopBackOff
+          expr: max by (namespace, pod) (kube_pod_container_status_waiting_reason{namespace="inventory-prod",pod=~"inventory-backend-.*",reason="CrashLoopBackOff"}) > 0
+          for: 3m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Inventory backend pod is crash looping"
+            description: "One or more inventory-backend pods are in CrashLoopBackOff."
+
+        - alert: MongoDBStatefulSetNotReady
+          expr: kube_statefulset_status_replicas_ready{namespace="inventory-prod",statefulset="mongo-db"} < on(namespace, statefulset) kube_statefulset_spec_replicas{namespace="inventory-prod",statefulset="mongo-db"}
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "MongoDB is not fully ready"
+            description: "The mongo-db StatefulSet is not fully ready in namespace inventory-prod."
+
+        - alert: RedisStatefulSetNotReady
+          expr: kube_statefulset_status_replicas_ready{namespace="inventory-prod",statefulset="redis-cache"} < on(namespace, statefulset) kube_statefulset_spec_replicas{namespace="inventory-prod",statefulset="redis-cache"}
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Redis is not fully ready"
+            description: "The redis-cache StatefulSet is not fully ready in namespace inventory-prod."
+
+        - alert: PostgreSQLPodsNotReady
+          expr: sum by (namespace) (kube_pod_status_ready{namespace="inventory-prod",pod=~"postgres-cluster-.*",condition="true"} == 0) > 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "PostgreSQL pods are not ready"
+            description: "One or more postgres-cluster pods are not ready in namespace inventory-prod."
+
+        - alert: NodeNotReady
+          expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "A Kubernetes node is not ready"
+            description: "At least one cluster node is not in Ready state."
+
+    - name: inventory.capacity
+      rules:
+        - alert: BackendUploadsPVCAlmostFull
+          expr: kubelet_volume_stats_available_bytes{namespace="inventory-prod",persistentvolumeclaim="backend-uploads-pvc"} / kubelet_volume_stats_capacity_bytes{namespace="inventory-prod",persistentvolumeclaim="backend-uploads-pvc"} < 0.15
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Backend uploads PVC is almost full"
+            description: "The backend-uploads-pvc in namespace inventory-prod has less than 15% free space."
+
+        - alert: MongoPVCAlmostFull
+          expr: kubelet_volume_stats_available_bytes{namespace="inventory-prod",persistentvolumeclaim="mongo-pvc"} / kubelet_volume_stats_capacity_bytes{namespace="inventory-prod",persistentvolumeclaim="mongo-pvc"} < 0.15
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "MongoDB PVC is almost full"
+            description: "The mongo-pvc in namespace inventory-prod has less than 15% free space."
+
+        - alert: RedisPVCAlmostFull
+          expr: kubelet_volume_stats_available_bytes{namespace="inventory-prod",persistentvolumeclaim="redis-pvc"} / kubelet_volume_stats_capacity_bytes{namespace="inventory-prod",persistentvolumeclaim="redis-pvc"} < 0.15
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Redis PVC is almost full"
+            description: "The redis-pvc in namespace inventory-prod has less than 15% free space."
