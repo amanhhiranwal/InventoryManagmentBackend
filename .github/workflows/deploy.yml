@@ -111,6 +111,7 @@ jobs:
           echo "=================================================="
 
           kubectl apply -f k8s/04-backend.yaml
+          kubectl apply -f k8s/backend-pdb.yaml
 
           echo "=================================================="
           echo "Restarting Backend..."
