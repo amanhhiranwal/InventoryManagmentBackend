@@ -38,13 +38,11 @@ jobs:
           echo "=================================================="
           echo "Deploying Namespace and ConfigMap..."
           echo "=================================================="
-
           kubectl apply -f k8s/01-namespace-and-secrets.yaml
 
           echo "=================================================="
           echo "Deploying Monitoring Namespace..."
           echo "=================================================="
-
           kubectl apply -f k8s/monitoring-namespace.yaml
 
           echo "=================================================="
@@ -52,20 +50,12 @@ jobs:
           echo "=================================================="
 
           if ! kubectl get secret postgres-cluster-secret -n inventory-prod >/dev/null 2>&1; then
-            echo "Creating postgres-cluster-secret..."
-
             kubectl create secret generic postgres-cluster-secret \
               --namespace inventory-prod \
               --type=kubernetes.io/basic-auth \
               --from-literal=username="${{ secrets.POSTGRES_USER }}" \
               --from-literal=password="${{ secrets.POSTGRES_PASSWORD }}"
-          else
-            echo "postgres-cluster-secret already exists. Skipping."
           fi
-
-          echo "=================================================="
-          echo "Updating database credentials..."
-          echo "=================================================="
 
           kubectl create secret generic database-credentials \
             --namespace inventory-prod \
@@ -75,10 +65,6 @@ jobs:
             --from-literal=MONGO_INITDB_ROOT_USERNAME="${{ secrets.MONGO_ROOT_USERNAME }}" \
             --from-literal=MONGO_INITDB_ROOT_PASSWORD="${{ secrets.MONGO_ROOT_PASSWORD }}" \
             --dry-run=client -o yaml | kubectl apply -f -
-
-          echo "=================================================="
-          echo "Updating backend credentials..."
-          echo "=================================================="
 
           kubectl create secret generic backend-credentials \
             --namespace inventory-prod \
@@ -91,70 +77,45 @@ jobs:
             --from-literal=JWT_SECRET_KEY="${{ secrets.JWT_SECRET_KEY }}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
-          echo "=================================================="
-          echo "Deploying Persistent Volume Claims..."
-          echo "=================================================="
-
           kubectl apply -f k8s/02-persistent-volume-claims.yaml
-
-          echo "=================================================="
-          echo "Deploying MongoDB and Redis..."
-          echo "=================================================="
-
           kubectl apply -f k8s/03-databases.yaml
-
-          echo "=================================================="
-          echo "Deploying CloudNativePG PostgreSQL..."
-          echo "=================================================="
-
           kubectl apply -f k8s/postgres-cluster.yaml
 
-          echo "PostgreSQL cluster status:"
           kubectl get cluster postgres-cluster -n inventory-prod || true
 
-          echo "=================================================="
-          echo "Deploying Backend..."
-          echo "=================================================="
-
           kubectl apply -f k8s/04-backend.yaml
-
-          echo "=================================================="
-          echo "Deploying Cluster Policies..."
-          echo "=================================================="
-
           kubectl apply -f k8s/backend-pdb.yaml
           kubectl apply -f k8s/resource-quota.yaml
           kubectl apply -f k8s/limit-range.yaml
           kubectl apply -f k8s/network-policy.yaml
 
-          echo "=================================================="
-          echo "Restarting Backend..."
-          echo "=================================================="
-
           kubectl rollout restart deployment/inventory-backend -n inventory-prod
-
-          echo "Waiting for backend rollout..."
-
-          kubectl rollout status deployment/inventory-backend \
-            -n inventory-prod \
-            --timeout=300s
-
-          echo "=================================================="
-          echo "Deploying Horizontal Pod Autoscaler..."
-          echo "=================================================="
+          kubectl rollout status deployment/inventory-backend -n inventory-prod --timeout=300s
 
           kubectl apply -f k8s/backend-hpa.yaml
-
-          echo "=================================================="
-          echo "Deployment completed successfully."
-          echo "=================================================="
 
       - name: Execute Automated Layer 7 Health Guardrail
         shell: bash
         run: |
           set -e
-
           export KUBECONFIG=$HOME/.kube/config
+
+          echo "Waiting for Backend HTTP Endpoint..."
+
+          for i in {1..30}; do
+            if curl -fsS http://localhost:30080/docs >/dev/null; then
+              echo "Backend is reachable."
+              break
+            fi
+
+            if [ "$i" -eq 30 ]; then
+              echo "Backend never became reachable."
+              exit 1
+            fi
+
+            echo "Waiting... ($i/30)"
+            sleep 5
+          done
 
           python3 scripts/validate_cluster_health.py "http://localhost:30080"
 
@@ -163,14 +124,7 @@ jobs:
         shell: bash
         run: |
           export KUBECONFIG=$HOME/.kube/config
-
           echo "Deployment failed."
-          echo "Rolling back backend deployment..."
-
           kubectl rollout undo deployment/inventory-backend -n inventory-prod || true
-
-          kubectl rollout status deployment/inventory-backend \
-            -n inventory-prod \
-            --timeout=300s || true
-
+          kubectl rollout status deployment/inventory-backend -n inventory-prod --timeout=300s || true
           exit 1
