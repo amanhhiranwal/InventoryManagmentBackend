@@ -5,12 +5,20 @@ metadata:
   namespace: inventory-prod
 
 spec:
-  instances: 9
+  instances: 6
 
   imageName: ghcr.io/cloudnative-pg/postgresql:17
 
   storage:
     size: 10Gi
+
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"
 
   bootstrap:
     initdb:
@@ -25,3 +33,4 @@ spec:
       max_replication_slots: "32"
       wal_level: "logical"
       wal_keep_size: "512MB"
+      max_connections: "200"
