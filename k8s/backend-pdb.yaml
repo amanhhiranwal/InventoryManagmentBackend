@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: inventory-backend-pdb
+  namespace: inventory-prod
+
+spec:
+  minAvailable: 2
+
+  selector:
+    matchLabels:
+      app: inventory-backend
