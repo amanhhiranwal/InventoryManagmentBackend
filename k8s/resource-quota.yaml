@@ -12,7 +12,7 @@ spec:
     limits.cpu: "12"
     limits.memory: 16Gi
 
-    persistentvolumeclaims: "10"
+    persistentvolumeclaims: "30"
 
     pods: "30"
 
