@@ -1,0 +1,26 @@
+# Use Case: Enforces default CPU and memory requests/limits for all containers in the namespace.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: inventory-limit-range
+  namespace: inventory-prod
+
+spec:
+  limits:
+    - type: Container
+
+      default:
+        cpu: "1"
+        memory: 1Gi
+
+      defaultRequest:
+        cpu: 250m
+        memory: 512Mi
+
+      max:
+        cpu: "2"
+        memory: 2Gi
+
+      min:
+        cpu: 100m
+        memory: 128Mi
