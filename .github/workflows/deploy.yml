@@ -42,6 +42,12 @@ jobs:
           kubectl apply -f k8s/01-namespace-and-secrets.yaml
 
           echo "=================================================="
+          echo "Deploying Monitoring Namespace..."
+          echo "=================================================="
+
+          kubectl apply -f k8s/monitoring-namespace.yaml
+
+          echo "=================================================="
           echo "Ensuring PostgreSQL bootstrap secret exists..."
           echo "=================================================="
 
@@ -111,10 +117,15 @@ jobs:
           echo "=================================================="
 
           kubectl apply -f k8s/04-backend.yaml
+
+          echo "=================================================="
+          echo "Deploying Cluster Policies..."
+          echo "=================================================="
+
           kubectl apply -f k8s/backend-pdb.yaml
           kubectl apply -f k8s/resource-quota.yaml
           kubectl apply -f k8s/limit-range.yaml
-          k8s/network-policy.yaml
+          kubectl apply -f k8s/network-policy.yaml
 
           echo "=================================================="
           echo "Restarting Backend..."
