@@ -44,6 +44,35 @@ jobs:
           echo "Deploying Monitoring Namespace..."
           echo "=================================================="
           kubectl apply -f k8s/monitoring-namespace.yaml
+                    echo "=================================================="
+          echo "Deploying Monitoring Stack..."
+          echo "=================================================="
+
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
+          helm repo add grafana https://grafana.github.io/helm-charts || true
+          helm repo update
+
+          helm upgrade --install kube-prometheus-stack \
+            prometheus-community/kube-prometheus-stack \
+            --namespace monitoring \
+            --create-namespace \
+            -f k8s/monitoring/kube-prometheus-stack-values.yaml \
+            --wait \
+            --timeout 15m
+
+          helm upgrade --install loki \
+            grafana/loki \
+            --namespace monitoring \
+            -f k8s/monitoring/loki-values.yaml \
+            --wait \
+            --timeout 15m
+
+          helm upgrade --install alloy \
+            grafana/alloy \
+            --namespace monitoring \
+            -f k8s/monitoring/alloy-values.yaml \
+            --wait \
+            --timeout 15m
 
           echo "=================================================="
           echo "Ensuring PostgreSQL bootstrap secret exists..."
