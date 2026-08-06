@@ -1,0 +1,45 @@
+controller:
+  replicaCount: 2
+
+  ingressClassResource:
+    name: nginx
+    enabled: true
+    default: true
+
+  ingressClass: nginx
+
+  service:
+    type: NodePort
+
+    nodePorts:
+      http: 8001
+      https: 8443
+
+  metrics:
+    enabled: true
+
+    serviceMonitor:
+      enabled: true
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  config:
+    use-forwarded-headers: "true"
+
+    proxy-body-size: "50m"
+
+    proxy-read-timeout: "300"
+
+    proxy-send-timeout: "300"
+
+    keep-alive: "75"
+
+defaultBackend:
+  enabled: true
