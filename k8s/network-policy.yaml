@@ -1,4 +1,7 @@
-# Use case: Restricts network communication so only approved Kubernetes components can talk to each service.
+# Use case:
+# Restricts network communication so only approved Kubernetes components
+# can communicate with workloads inside inventory-prod.
+
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -7,37 +10,74 @@ metadata:
 
 spec:
   podSelector: {}
+
   policyTypes:
     - Ingress
     - Egress
 
   ingress:
-    # Backend -> Backend (future scaling)
+
+    # ---------------------------------------------------------
+    # Allow traffic from NGINX Ingress Controller
+    # ---------------------------------------------------------
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+
+    # ---------------------------------------------------------
+    # Allow monitoring stack (Prometheus scraping)
+    # ---------------------------------------------------------
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+
+    # ---------------------------------------------------------
+    # Allow communication inside inventory-prod namespace
+    # ---------------------------------------------------------
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: inventory-prod
+
+    # ---------------------------------------------------------
+    # Backend -> Backend (future horizontal scaling)
+    # ---------------------------------------------------------
     - from:
         - podSelector:
             matchLabels:
               app: inventory-backend
 
-    # Allow traffic from MongoDB
+    # ---------------------------------------------------------
+    # MongoDB
+    # ---------------------------------------------------------
     - from:
         - podSelector:
             matchLabels:
               app: mongo-db
 
-    # Allow traffic from Redis
+    # ---------------------------------------------------------
+    # Redis
+    # ---------------------------------------------------------
     - from:
         - podSelector:
             matchLabels:
               app: redis-cache
 
-    # Allow traffic from PostgreSQL
+    # ---------------------------------------------------------
+    # PostgreSQL (CloudNativePG)
+    # ---------------------------------------------------------
     - from:
         - podSelector:
             matchLabels:
               cnpg.io/cluster: postgres-cluster
 
   egress:
-    # Allow DNS resolution
+
+    # ---------------------------------------------------------
+    # DNS
+    # ---------------------------------------------------------
     - to:
         - namespaceSelector: {}
       ports:
@@ -46,30 +86,40 @@ spec:
         - protocol: TCP
           port: 53
 
-    # Allow Backend -> MongoDB
+    # ---------------------------------------------------------
+    # Backend -> MongoDB
+    # ---------------------------------------------------------
     - to:
         - podSelector:
             matchLabels:
               app: mongo-db
 
-    # Allow Backend -> Redis
+    # ---------------------------------------------------------
+    # Backend -> Redis
+    # ---------------------------------------------------------
     - to:
         - podSelector:
             matchLabels:
               app: redis-cache
 
-    # Allow Backend -> PostgreSQL
+    # ---------------------------------------------------------
+    # Backend -> PostgreSQL
+    # ---------------------------------------------------------
     - to:
         - podSelector:
             matchLabels:
               cnpg.io/cluster: postgres-cluster
 
-    # Allow outbound HTTPS (Docker Hub, APIs, etc.)
+    # ---------------------------------------------------------
+    # HTTPS
+    # ---------------------------------------------------------
     - ports:
         - protocol: TCP
           port: 443
 
-    # Allow outbound HTTP if needed
+    # ---------------------------------------------------------
+    # HTTP
+    # ---------------------------------------------------------
     - ports:
         - protocol: TCP
           port: 80
