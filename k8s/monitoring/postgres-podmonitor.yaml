@@ -1,0 +1,23 @@
+# Use Case: Prometheus scrapes CloudNativePG PostgreSQL metrics directly from every PostgreSQL Pod.
+
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: postgres-cluster-monitor
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+
+spec:
+  namespaceSelector:
+    matchNames:
+      - inventory-prod
+
+  selector:
+    matchLabels:
+      cnpg.io/cluster: postgres-cluster
+
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
