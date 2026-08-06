@@ -18,7 +18,7 @@ jobs:
         run: |
           curl -I https://registry-1.docker.io/v2/ || true
           curl -I https://auth.docker.io || true
-            
+
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -28,12 +28,13 @@ jobs:
       - name: Build Docker Image
         run: |
           docker build \
-              -t ${{ secrets.DOCKERHUB_USERNAME }}/inventory-backend:latest \
-              -f Dockerfile .
+            -t ${{ secrets.DOCKERHUB_USERNAME }}/inventory-backend:latest \
+            -f Dockerfile .
+
       - name: Push Docker Image (with retry)
         shell: bash
         run: |
-          set -e                  
+          set -e
 
           IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/inventory-backend:latest"
 
@@ -51,7 +52,7 @@ jobs:
 
           echo "Docker push failed after 5 attempts."
           exit 1
-          
+
       - name: Deploy Kubernetes Resources
         shell: bash
         run: |
@@ -70,11 +71,10 @@ jobs:
           kubectl apply -f k8s/monitoring-namespace.yaml
 
           echo "=================================================="
-          echo "Deploying Monitoring Stack..."
+          echo "Installing NGINX Ingress Controller..."
           echo "=================================================="
 
-          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
-          helm repo add grafana https://grafana.github.io/helm-charts || true
+          helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx || true
           helm repo update
 
           helm_install_with_retry() {
@@ -101,6 +101,27 @@ jobs:
             done
           }
 
+          helm_install_with_retry ingress-nginx \
+            ingress-nginx/ingress-nginx \
+            --namespace ingress-nginx \
+            --create-namespace \
+            -f k8s/ingress/ingress-nginx-values.yaml \
+            --wait \
+            --timeout 15m
+
+          echo "=================================================="
+          echo "Applying Ingress Class..."
+          echo "=================================================="
+          kubectl apply -f k8s/ingress/ingress-class.yaml
+
+          echo "=================================================="
+          echo "Deploying Monitoring Stack..."
+          echo "=================================================="
+
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
+          helm repo add grafana https://grafana.github.io/helm-charts || true
+          helm repo update
+
           helm_install_with_retry kube-prometheus-stack \
             prometheus-community/kube-prometheus-stack \
             --namespace monitoring \
@@ -122,6 +143,22 @@ jobs:
             -f k8s/monitoring/alloy-values.yaml \
             --wait \
             --timeout 15m
+
+          echo "=================================================="
+          echo "Applying ServiceMonitors and PodMonitors..."
+          echo "=================================================="
+          kubectl apply -f k8s/monitoring/backend-servicemonitor.yaml
+          kubectl apply -f k8s/monitoring/backend-podmonitor.yaml
+          kubectl apply -f k8s/monitoring/postgres-podmonitor.yaml
+
+          echo "=================================================="
+          echo "Applying Ingress Resources..."
+          echo "=================================================="
+          kubectl apply -f k8s/ingress/backend-ingress.yaml
+          kubectl apply -f k8s/ingress/grafana-ingress.yaml
+          kubectl apply -f k8s/ingress/prometheus-ingress.yaml
+          kubectl apply -f k8s/ingress/alertmanager-ingress.yaml
+          kubectl apply -f k8s/ingress/loki-ingress.yaml
 
           echo "=================================================="
           echo "Ensuring PostgreSQL bootstrap secret exists..."
