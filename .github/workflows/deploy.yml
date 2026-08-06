@@ -44,7 +44,8 @@ jobs:
           echo "Deploying Monitoring Namespace..."
           echo "=================================================="
           kubectl apply -f k8s/monitoring-namespace.yaml
-                    echo "=================================================="
+
+          echo "=================================================="
           echo "Deploying Monitoring Stack..."
           echo "=================================================="
 
@@ -52,7 +53,31 @@ jobs:
           helm repo add grafana https://grafana.github.io/helm-charts || true
           helm repo update
 
-          helm upgrade --install kube-prometheus-stack \
+          helm_install_with_retry() {
+            local release="$1"
+            shift
+
+            local max_attempts=5
+            local attempt=1
+
+            while true; do
+              if helm upgrade --install "$release" "$@"; then
+                echo "${release} installed/updated successfully."
+                break
+              fi
+
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "${release} installation failed after ${max_attempts} attempts."
+                return 1
+              fi
+
+              attempt=$((attempt + 1))
+              echo "Retrying ${release} in 15 seconds... ($attempt/${max_attempts})"
+              sleep 15
+            done
+          }
+
+          helm_install_with_retry kube-prometheus-stack \
             prometheus-community/kube-prometheus-stack \
             --namespace monitoring \
             --create-namespace \
@@ -60,14 +85,14 @@ jobs:
             --wait \
             --timeout 15m
 
-          helm upgrade --install loki \
+          helm_install_with_retry loki \
             grafana/loki \
             --namespace monitoring \
             -f k8s/monitoring/loki-values.yaml \
             --wait \
             --timeout 15m
 
-          helm upgrade --install alloy \
+          helm_install_with_retry alloy \
             grafana/alloy \
             --namespace monitoring \
             -f k8s/monitoring/alloy-values.yaml \
