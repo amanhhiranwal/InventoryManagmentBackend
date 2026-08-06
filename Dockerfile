@@ -1,15 +1,27 @@
 FROM python:3.11-slim
 
+# ==============================================================================
+# Environment Variables
+# ==============================================================================
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     UVICORN_WORKERS=4
 
+# ==============================================================================
+# Working Directory
+# ==============================================================================
 WORKDIR /app
 
+# ==============================================================================
+# Create Non-Root User
+# ==============================================================================
 RUN useradd --uid 10001 --create-home appuser
 
+# ==============================================================================
+# Install Python Dependencies
+# ==============================================================================
 COPY requirements.txt .
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -20,17 +32,37 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get purge -y --auto-remove build-essential \
     && rm -rf /var/lib/apt/lists/*
 
+# ==============================================================================
+# Copy Application Source
+# ==============================================================================
 COPY --chown=appuser:appuser . .
 
+# ==============================================================================
+# Switch to Non-Root User
+# ==============================================================================
 USER appuser
 
+# ==============================================================================
+# Expose Application Port
+# ==============================================================================
 EXPOSE 8000
 
 # ==============================================================================
-# Phase 4: Production-Grade Process Execution
+# Health Check
 # ==============================================================================
-# Invokes Uvicorn cleanly. The docker-compose workflow will dynamically
-# override this command to inject '--reload' during your local development.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"
 
-#Testing Testing
+# ==============================================================================
+# Start FastAPI
+# ==============================================================================
+CMD [
+  "uvicorn",
+  "app.main:app",
+  "--host",
+  "0.0.0.0",
+  "--port",
+  "8000",
+  "--workers",
+  "4"
+]
