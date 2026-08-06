@@ -26,7 +26,9 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build Docker Image
+        shell: bash
         run: |
+          set -e
           docker build \
             -t ${{ secrets.DOCKERHUB_USERNAME }}/inventory-backend:latest \
             -f Dockerfile .
@@ -46,8 +48,13 @@ jobs:
               exit 0
             fi
 
-            echo "Push failed. Waiting 20 seconds..."
-            sleep 20
+            echo "Push failed. Re-authenticating and waiting 30 seconds..."
+            docker logout || true
+            docker login \
+              -u "${{ secrets.DOCKERHUB_USERNAME }}" \
+              -p "${{ secrets.DOCKERHUB_TOKEN }}" || true
+
+            sleep 30
           done
 
           echo "Docker push failed after 5 attempts."
