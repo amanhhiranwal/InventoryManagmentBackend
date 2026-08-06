@@ -1,0 +1,23 @@
+# Use Case: Prometheus scrapes backend Pods directly without going through the Service.
+
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: inventory-backend-pods
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+
+spec:
+  namespaceSelector:
+    matchNames:
+      - inventory-prod
+
+  selector:
+    matchLabels:
+      app: inventory-backend
+
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
