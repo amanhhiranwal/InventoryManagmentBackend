@@ -14,20 +14,44 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
+      - name: Verify Docker Hub Connectivity
+        run: |
+          curl -I https://registry-1.docker.io/v2/ || true
+          curl -I https://auth.docker.io || true
+            
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and Push Docker Image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/inventory-backend:latest
+      - name: Build Docker Image
+        run: |
+          docker build \
+              -t ${{ secrets.DOCKERHUB_USERNAME }}/inventory-backend:latest \
+              -f Dockerfile .
+      - name: Push Docker Image (with retry)
+        shell: bash
+        run: |
+          set -e                  
 
+          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/inventory-backend:latest"
+
+          for i in {1..5}; do
+            echo "Docker Push Attempt $i..."
+
+            if docker push "$IMAGE"; then
+              echo "Docker image pushed successfully."
+              exit 0
+            fi
+
+            echo "Push failed. Waiting 20 seconds..."
+            sleep 20
+          done
+
+          echo "Docker push failed after 5 attempts."
+          exit 1
+          
       - name: Deploy Kubernetes Resources
         shell: bash
         run: |
