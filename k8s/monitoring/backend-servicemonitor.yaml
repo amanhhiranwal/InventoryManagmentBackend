@@ -1,0 +1,23 @@
+# Use Case: Prometheus scrapes the backend metrics endpoint through the Kubernetes Service.
+
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: inventory-backend-monitor
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - inventory-prod
+
+  selector:
+    matchLabels:
+      app: inventory-backend
+
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
