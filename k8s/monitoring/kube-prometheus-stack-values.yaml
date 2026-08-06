@@ -2,7 +2,13 @@
 
 grafana:
   enabled: true
+
   defaultDashboardsEnabled: true
+
+  grafana.ini:
+    server:
+      root_url: "%(protocol)s://%(domain)s:%(http_port)s/grafana"
+      serve_from_sub_path: true
 
   persistence:
     enabled: true
@@ -31,9 +37,16 @@ grafana:
 prometheus:
   prometheusSpec:
     replicas: 1
+
     retention: 7d
+
     scrapeInterval: 30s
+
     evaluationInterval: 30s
+
+    routePrefix: /prometheus
+
+    externalUrl: http://localhost:8001/prometheus
 
     resources:
       requests:
@@ -56,11 +69,15 @@ prometheus:
     serviceMonitorSelectorNilUsesHelmValues: false
     podMonitorSelectorNilUsesHelmValues: false
     ruleSelectorNilUsesHelmValues: false
-
     probeSelectorNilUsesHelmValues: false
 
 alertmanager:
   enabled: true
+
+  alertmanagerSpec:
+    routePrefix: /alerts
+
+    externalUrl: http://localhost:8001/alerts
 
 kubeStateMetrics:
   enabled: true
