@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
 
+from prometheus_fastapi_instrumentator import Instrumentator
+
 from app.core.config import settings
 from app.routes.api import api_router
 from app.utils.exception_handler import register_exception_handlers
@@ -46,6 +48,14 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 # API Routes
 # -----------------------------
 app.include_router(api_router)
+
+# -----------------------------
+# Prometheus Metrics
+# -----------------------------
+Instrumentator(
+    should_ignore_untemplated=True,
+    excluded_handlers=["/metrics"],
+).instrument(app).expose(app, include_in_schema=False, should_gzip=True)
 
 # -----------------------------
 # Root Health Check
