@@ -12,8 +12,8 @@ controller:
     type: NodePort
 
     nodePorts:
-      http: 8001
-      https: 8443
+      http: 30081
+      https: 30443
 
   metrics:
     enabled: true
@@ -32,13 +32,9 @@ controller:
 
   config:
     use-forwarded-headers: "true"
-
     proxy-body-size: "50m"
-
     proxy-read-timeout: "300"
-
     proxy-send-timeout: "300"
-
     keep-alive: "75"
 
 defaultBackend:
