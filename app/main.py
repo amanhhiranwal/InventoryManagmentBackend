@@ -67,3 +67,14 @@ async def root():
         "message": "Enterprise SaaS Backend",
         "version": settings.APP_VERSION,
     }
+
+# -----------------------------
+# Health Check Endpoint
+# -----------------------------
+@app.get("/health", tags=["Health"])
+async def health():
+    return {
+        "status": "healthy",
+        "service": settings.APP_NAME,
+        "version": settings.APP_VERSION,
+    }
