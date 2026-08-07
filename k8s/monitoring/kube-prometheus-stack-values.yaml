@@ -1,88 +1,82 @@
 # Monitoring stack values for inventory-prod (single-node K3s friendly)
 
 grafana:
-  enabled: true
-  defaultDashboardsEnabled: true
+enabled: true
+defaultDashboardsEnabled: true
 
-  grafana.ini:
-    server:
-      root_url: "%(protocol)s://%(domain)s:%(http_port)s/grafana/"
-      serve_from_sub_path: true
+grafana.ini:
+server:
+root_url: "%(protocol)s://%(domain)s:%(http_port)s/grafana/"
+serve_from_sub_path: true
 
-  persistence:
-    enabled: true
-    type: pvc
-    storageClassName: local-path
-    accessModes:
-      - ReadWriteOnce
-    size: 2Gi
+persistence:
+enabled: true
+type: pvc
+storageClassName: local-path
+accessModes:
+- ReadWriteOnce
+size: 2Gi
 
-  resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: 500m
-      memory: 512Mi
+resources:
+requests:
+cpu: 100m
+memory: 128Mi
+limits:
+cpu: 500m
+memory: 512Mi
 
-  sidecar:
-    dashboards:
-      enabled: true
-      searchNamespace: ALL
-    datasources:
-      enabled: true
-      searchNamespace: ALL
+sidecar:
+dashboards:
+enabled: true
+searchNamespace: ALL
+datasources:
+enabled: true
+searchNamespace: ALL
 
 prometheus:
-  prometheusSpec:
-    replicas: 1
+prometheusSpec:
+replicas: 1
+retention: 7d
+scrapeInterval: 30s
+evaluationInterval: 30s
+routePrefix: /prometheus
+externalUrl: http://192.168.1.173:30081/prometheus
 
-    retention: 7d
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
 
-    scrapeInterval: 30s
+storageSpec:
+  volumeClaimTemplate:
+    spec:
+      storageClassName: local-path
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 10Gi
 
-    evaluationInterval: 30s
-
-    routePrefix: /prometheus
-
-    externalUrl: http://localhost:8001/prometheus
-
-    resources:
-      requests:
-        cpu: 250m
-        memory: 512Mi
-      limits:
-        cpu: "1"
-        memory: 1Gi
-
-    storageSpec:
-      volumeClaimTemplate:
-        spec:
-          storageClassName: local-path
-          accessModes:
-            - ReadWriteOnce
-          resources:
-            requests:
-              storage: 10Gi
-
-    serviceMonitorSelectorNilUsesHelmValues: false
-    podMonitorSelectorNilUsesHelmValues: false
-    ruleSelectorNilUsesHelmValues: false
-    probeSelectorNilUsesHelmValues: false
+serviceMonitorSelectorNilUsesHelmValues: false
+podMonitorSelectorNilUsesHelmValues: false
+ruleSelectorNilUsesHelmValues: false
+probeSelectorNilUsesHelmValues: false
 
 alertmanager:
-  enabled: true
+enabled: true
 
-  alertmanagerSpec:
-    routePrefix: /alerts
-
-    externalUrl: http://localhost:8001/alerts
+alertmanagerSpec:
+routePrefix: /alerts
+externalUrl: http://192.168.1.173:30081/alerts
 
 kubeStateMetrics:
-  enabled: true
+enabled: true
 
 nodeExporter:
-  enabled: true
+enabled: true
 
 prometheusOperator:
-  enabled: true
+enabled: true
