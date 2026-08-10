@@ -1,4 +1,4 @@
-# Use Case: Prometheus scrapes backend Pods directly without going through the Service.
+# Use Case: Prometheus scrapes backend Pods directly without going through the Service..
 
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
