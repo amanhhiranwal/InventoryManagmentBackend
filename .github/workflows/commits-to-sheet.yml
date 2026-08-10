@@ -1,0 +1,20 @@
+name: Send Commits to Google Sheet
+
+on:
+  push:
+
+jobs:
+  send-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send commit data to Google Sheet
+        env:
+          GOOGLE_SCRIPT_URL: ${{ secrets.GOOGLE_SCRIPT_URL }}
+          GOOGLE_SCRIPT_SECRET: ${{ secrets.GOOGLE_SCRIPT_SECRET }}
+        run: |
+          curl -L \
+            -X POST \
+            "${GOOGLE_SCRIPT_URL}?secret=${GOOGLE_SCRIPT_SECRET}" \
+            -H "Content-Type: application/json" \
+            -d '${{ toJson(github.event) }}'
