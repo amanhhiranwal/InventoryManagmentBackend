@@ -42,7 +42,7 @@ def get_permissions(
     dependencies=[Depends(require_super_admin)],
 )
 def delete_permission(
-    permission_id: int,
+    permission_id: str,
     db: Session = Depends(get_db),
 ):
     return RBACController.delete_permission(permission_id, db)
@@ -76,7 +76,7 @@ def get_roles(
     dependencies=[Depends(require_super_admin)],
 )
 def delete_role(
-    role_id: int,
+    role_id: str,
     db: Session = Depends(get_db),
 ):
     return RBACController.delete_role(role_id, db)
