@@ -26,24 +26,7 @@ class CustomerTypeService:
 
     @staticmethod
     def get_all(db: Session) -> list[CustomerType]:
-        types = db.query(CustomerType).order_by(CustomerType.created_at.desc()).all()
-        if not types:
-            initial = [
-                {"name": "Distributor", "code": "DIST", "description": "B2B bulk trade channels"},
-                {"name": "Retailer", "code": "RET", "description": "Direct consumer trade POS outlets"},
-                {"name": "Enterprise Customer", "code": "ENT", "description": "Large corporate entities and conglomerates"},
-                {"name": "Individual Consumer", "code": "IND", "description": "Retail individual purchases"}
-            ]
-            for it in initial:
-                ct = CustomerType(
-                    name=it["name"],
-                    code=it["code"],
-                    description=it["description"]
-                )
-                db.add(ct)
-            db.commit()
-            types = db.query(CustomerType).order_by(CustomerType.created_at.desc()).all()
-        return types
+        return db.query(CustomerType).order_by(CustomerType.created_at.desc()).all()
 
     @staticmethod
     def delete(ct_id: str, db: Session) -> None:
