@@ -1,23 +1,25 @@
 services:
-  backend:
+  auth_service:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: inventory_backend_dev
+    container_name: auth_service
     restart: unless-stopped
     ports:
-      - "${BACKEND_EXTERNAL_PORT:-8000}:8000"
+      - "8001:8001"
     volumes:
       - .:/app
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn services.auth_service.main:app --host 0.0.0.0 --port 8001 --reload
     env_file:
       - .env
     environment:
       - POSTGRES_HOST=${DOCKER_POSTGRES_HOST:-postgres_db}
       - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DB=${AUTH_DB:-auth_db}
       - MONGO_URI=${DOCKER_MONGO_URI:-mongodb://mongo_db:27017/}
       - REDIS_HOST=${DOCKER_REDIS_HOST:-redis_cache}
       - REDIS_PORT=${DOCKER_REDIS_PORT:-6379}
+      - PYTHONPATH=/app
     depends_on:
       postgres_db:
         condition: service_healthy
@@ -25,6 +27,107 @@ services:
         condition: service_healthy
       redis_cache:
         condition: service_healthy
+
+  crm_service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crm_service
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    volumes:
+      - .:/app
+    command: uvicorn services.crm_service.main:app --host 0.0.0.0 --port 8002 --reload
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=${DOCKER_POSTGRES_HOST:-postgres_db}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DB=${CRM_DB:-crm_db}
+      - MONGO_URI=${DOCKER_MONGO_URI:-mongodb://mongo_db:27017/}
+      - REDIS_HOST=${DOCKER_REDIS_HOST:-redis_cache}
+      - REDIS_PORT=${DOCKER_REDIS_PORT:-6379}
+      - PYTHONPATH=/app
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+      mongo_db:
+        condition: service_healthy
+      redis_cache:
+        condition: service_healthy
+
+  inventory_service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: inventory_service
+    restart: unless-stopped
+    ports:
+      - "8003:8003"
+    volumes:
+      - .:/app
+    command: uvicorn services.inventory_service.main:app --host 0.0.0.0 --port 8003 --reload
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=${DOCKER_POSTGRES_HOST:-postgres_db}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DB=${INVENTORY_DB:-inventory_db}
+      - MONGO_URI=${DOCKER_MONGO_URI:-mongodb://mongo_db:27017/}
+      - REDIS_HOST=${DOCKER_REDIS_HOST:-redis_cache}
+      - REDIS_PORT=${DOCKER_REDIS_PORT:-6379}
+      - PYTHONPATH=/app
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+      mongo_db:
+        condition: service_healthy
+      redis_cache:
+        condition: service_healthy
+
+  sales_service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sales_service
+    restart: unless-stopped
+    ports:
+      - "8004:8004"
+    volumes:
+      - .:/app
+    command: uvicorn services.sales_service.main:app --host 0.0.0.0 --port 8004 --reload
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=${DOCKER_POSTGRES_HOST:-postgres_db}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DB=${SALES_DB:-sales_db}
+      - MONGO_URI=${DOCKER_MONGO_URI:-mongodb://mongo_db:27017/}
+      - REDIS_HOST=${DOCKER_REDIS_HOST:-redis_cache}
+      - REDIS_PORT=${DOCKER_REDIS_PORT:-6379}
+      - PYTHONPATH=/app
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+      mongo_db:
+        condition: service_healthy
+      redis_cache:
+        condition: service_healthy
+
+  gateway:
+    image: nginx:alpine
+    container_name: api_gateway
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_EXTERNAL_PORT:-8000}:8000"
+    volumes:
+      - ./services/gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - auth_service
+      - crm_service
+      - inventory_service
+      - sales_service
 
   postgres_db:
     image: postgres:16-alpine
