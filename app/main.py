@@ -13,19 +13,11 @@ app = FastAPI(
 )
 
 # -----------------------------
-# CORS Configuration
+# CORS Configuration (Accessible from everywhere)
 # -----------------------------
-origins = [
-    "http://localhost:3000",
-    "http://localhost:3001",
-    "http://127.0.0.1:3000",
-    "http://192.168.1.73:3000",
-    "http://192.168.1.73:3001",
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origin_regex="https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
