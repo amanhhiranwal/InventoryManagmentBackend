@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: synergy-inventory-service
+  namespace: synergy-crm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: synergy-inventory-service
+  template:
+    metadata:
+      labels:
+        app: synergy-inventory-service
+    spec:
+      containers:
+        - name: inventory-service
+          image: synergy-backend:latest
+          imagePullPolicy: IfNotPresent
+          command: ["uvicorn", "services.inventory_service.main:app", "--host", "0.0.0.0", "--port", "8003"]
+          env:
+            - name: POSTGRES_HOST
+              value: postgres-db
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: synergy-secrets
+                  key: postgres-user
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: synergy-secrets
+                  key: postgres-password
+            - name: POSTGRES_DB
+              value: "inventory_db"
+            - name: MONGO_URI
+              valueFrom:
+                secretKeyRef:
+                  name: synergy-secrets
+                  key: mongo-uri
+            - name: REDIS_HOST
+              value: redis-cache
+            - name: REDIS_PORT
+              value: "6379"
+            - name: PYTHONPATH
+              value: "/app"
+            - name: AUTH_SERVICE_HOST
+              value: "synergy-auth-service"
+            - name: AUTH_SERVICE_PORT
+              value: "8000"
+          ports:
+            - containerPort: 8003
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: synergy-inventory-service
+  namespace: synergy-crm
+spec:
+  ports:
+    - port: 8000
+      targetPort: 8003
+  selector:
+    app: synergy-inventory-service

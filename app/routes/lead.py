@@ -1,16 +1,35 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+import requests
+import os
+from uuid import UUID
+
 from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.schemas.lead import CreateLeadRequest, ProgressLeadRequest
 from app.services.lead_service import LeadService
-from app.repositories.rbac_repository import RBACRepository
-from uuid import UUID
 
 router = APIRouter(
     prefix="/leads",
     tags=["Leads"],
 )
+
+def get_user_names_http(user_ids: list[str]) -> dict[str, str]:
+    if not user_ids:
+        return {}
+    try:
+        auth_host = os.getenv("AUTH_SERVICE_HOST", "auth_service")
+        auth_port = os.getenv("AUTH_SERVICE_PORT", "8001")
+        response = requests.get(
+            f"http://{auth_host}:{auth_port}/api/v1/users/names",
+            params={"user_ids": user_ids},
+            timeout=5
+        )
+        if response.status_code == 200:
+            return response.json().get("names", {})
+    except Exception as e:
+        print("Failed to query auth service for user names:", e)
+    return {}
 
 @router.post("/")
 def create_lead(
@@ -18,10 +37,12 @@ def create_lead(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    user = RBACRepository.get_user(db, current_user["user_id"])
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-    lead = LeadService.create_lead(request, user.id, db)
+    user_id = current_user["user_id"]
+    first_name = current_user.get("first_name", "")
+    last_name = current_user.get("last_name", "")
+    creator_name = f"{first_name} {last_name}".strip() or "User"
+    
+    lead = LeadService.create_lead(request, UUID(user_id), db)
     return {
         "success": True,
         "message": "Lead created successfully.",
@@ -31,7 +52,7 @@ def create_lead(
             "description": lead.description,
             "status": lead.status,
             "creator_id": str(lead.creator_id),
-            "creator_name": f"{user.first_name} {user.last_name}",
+            "creator_name": creator_name,
             "created_at": lead.created_at.isoformat(),
         }
     }
@@ -41,10 +62,17 @@ def get_leads(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    user = RBACRepository.get_user(db, current_user["user_id"])
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-    leads = LeadService.get_visible_leads(user, db)
+    user_id = current_user["user_id"]
+    is_super_admin = current_user.get("is_super_admin", False)
+    role_id = current_user.get("role_id")
+    role_ids = {role_id} if role_id else set()
+    
+    leads = LeadService.get_visible_leads(user_id, is_super_admin, role_ids, db)
+    
+    # Resolve names of creators in bulk via HTTP to avoid DB joins
+    creator_ids = list({str(l.creator_id) for l in leads})
+    names_map = get_user_names_http(creator_ids)
+    
     return {
         "success": True,
         "data": [
@@ -59,13 +87,12 @@ def get_leads(
                 "quotation_type": l.quotation_type,
                 "quotation_items": l.quotation_items,
                 "creator_id": str(l.creator_id),
-                "creator_name": f"{l.creator.first_name} {l.creator.last_name}" if l.creator else "Unknown",
+                "creator_name": names_map.get(str(l.creator_id), "Unknown"),
                 "created_at": l.created_at.isoformat(),
             }
             for l in leads
         ]
     }
-
 
 @router.put("/{lead_id}/progress")
 def progress_lead(
@@ -74,10 +101,12 @@ def progress_lead(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    user = RBACRepository.get_user(db, current_user["user_id"])
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-    lead = LeadService.progress_lead(lead_id, request, user, db)
+    user_id = current_user["user_id"]
+    is_super_admin = current_user.get("is_super_admin", False)
+    role_id = current_user.get("role_id")
+    role_ids = {role_id} if role_id else set()
+    
+    lead = LeadService.progress_lead(lead_id, request, user_id, is_super_admin, role_ids, db)
     return {
         "success": True,
         "message": f"Lead progressed to {lead.stage} successfully.",

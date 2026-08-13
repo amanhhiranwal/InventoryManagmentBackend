@@ -7,7 +7,7 @@ class Lead(BaseModel):
     __tablename__ = "leads"
 
     title: Mapped[str] = mapped_column(String(100))
-    description: Mapped[str] = mapped_column(String(255), nullable=True)
+    description: Mapped[str] = mapped_column(String(2000), nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="new")
     creator_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
     
