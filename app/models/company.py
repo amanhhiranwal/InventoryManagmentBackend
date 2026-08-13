@@ -78,6 +78,11 @@ class Company(Base):
         nullable=False,
     )
 
+    logo_url = Column(
+        String(500),
+        nullable=True,
+    )
+
     is_active = Column(
         Boolean,
         default=True,

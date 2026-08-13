@@ -1,8 +1,10 @@
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+import requests
+import os
+
 from app.models.location import Location
-from app.repositories.company_repository import CompanyRepository
 from app.repositories.location_repository import LocationRepository
 
 
@@ -10,13 +12,18 @@ class LocationService:
 
     @staticmethod
     def create(request, db: Session):
+        auth_host = os.getenv("AUTH_SERVICE_HOST", "auth_service")
+        auth_port = os.getenv("AUTH_SERVICE_PORT", "8001")
+        try:
+            response = requests.get(
+                f"http://{auth_host}:{auth_port}/api/v1/companies/{request.company_id}/exists-internal",
+                timeout=5
+            )
+            exists = response.status_code == 200 and response.json().get("exists", False)
+        except Exception:
+            exists = False
 
-        company = CompanyRepository.get_by_id(
-            db,
-            request.company_id,
-        )
-
-        if company is None:
+        if not exists:
             raise HTTPException(
                 status_code=404,
                 detail="Company not found.",

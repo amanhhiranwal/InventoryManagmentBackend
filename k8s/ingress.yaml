@@ -10,20 +10,134 @@ spec:
   rules:
     - http:
         paths:
+          # 1. Auth Service Routes
           - path: /uploads
             pathType: Prefix
             backend:
               service:
-                name: synergy-backend
+                name: synergy-auth-service
                 port:
                   number: 8000
-          - path: /api
+          - path: /api/v1/auth
             pathType: Prefix
             backend:
               service:
-                name: synergy-backend
+                name: synergy-auth-service
                 port:
                   number: 8000
+          - path: /api/v1/users
+            pathType: Prefix
+            backend:
+              service:
+                name: synergy-auth-service
+                port:
+                  number: 8000
+          - path: /api/v1/roles
+            pathType: Prefix
+            backend:
+              service:
+                name: synergy-auth-service
+                port:
+                  number: 8000
+          - path: /api/v1/rbac
+            pathType: Prefix
+            backend:
+              service:
+                name: synergy-auth-service
+                port:
+                  number: 8000
+          - path: /api/v1/profile
+            pathType: Prefix
+            backend:
+              service:
+                name: synergy-auth-service
+                port:
+                  number: 8000
+          - path: /api/v1/companies
+            pathType: Prefix
+            backend:
+              service:
+                name: synergy-auth-service
+                port:
+                  number: 8000
+
+          # 2. CRM Service Routes
+          - path: /api/v1/leads
+            pathType: Prefix
+            backend:
+              service:
+                name: synergy-crm-service
+                port:
+                  number: 8000
+          - path: /api/v1/workflows
+            pathType: Prefix
+            backend:
+              service:
+                name: synergy-crm-service
+                port:
+                  number: 8000
+
+          # 3. Inventory Service Routes
+          - path: /api/v1/inventory
+            pathType: Prefix
+            backend:
+              service:
+                name: synergy-inventory-service
+                port:
+                  number: 8000
+          - path: /api/v1/product-types
+            pathType: Prefix
+            backend:
+              service:
+                name: synergy-inventory-service
+                port:
+                  number: 8000
+          - path: /api/v1/category-groups
+            pathType: Prefix
+            backend:
+              service:
+                name: synergy-inventory-service
+                port:
+                  number: 8000
+          - path: /api/v1/units
+            pathType: Prefix
+            backend:
+              service:
+                name: synergy-inventory-service
+                port:
+                  number: 8000
+
+          # 4. Sales & Customer Service Routes
+          - path: /api/v1/orders
+            pathType: Prefix
+            backend:
+              service:
+                name: synergy-sales-service
+                port:
+                  number: 8000
+          - path: /api/v1/customers
+            pathType: Prefix
+            backend:
+              service:
+                name: synergy-sales-service
+                port:
+                  number: 8000
+          - path: /api/v1/customer-types
+            pathType: Prefix
+            backend:
+              service:
+                name: synergy-sales-service
+                port:
+                  number: 8000
+          - path: /api/v1/locations
+            pathType: Prefix
+            backend:
+              service:
+                name: synergy-sales-service
+                port:
+                  number: 8000
+
+          # 5. Frontend UI
           - path: /
             pathType: Prefix
             backend:

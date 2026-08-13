@@ -14,7 +14,7 @@ class RBACController:
         return RBACService.get_permissions(db)
 
     @staticmethod
-    def delete_permission(permission_id: int, db: Session):
+    def delete_permission(permission_id: str, db: Session):
         return RBACService.delete_permission(permission_id, db)
 
     @staticmethod
@@ -26,7 +26,7 @@ class RBACController:
         return RBACService.get_roles(db)
 
     @staticmethod
-    def delete_role(role_id: int, db: Session):
+    def delete_role(role_id: str, db: Session):
         return RBACService.delete_role(role_id, db)
 
     @staticmethod

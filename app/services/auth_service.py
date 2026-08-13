@@ -84,13 +84,24 @@ class AuthService:
                 detail="Invalid credentials",
             )
 
+        from app.repositories.rbac_repository import RBACRepository
         role_ids = [str(r.id) for r in user.roles]
+        
+        permissions = []
+        for role in user.roles:
+            role_perms = RBACRepository.get_role_permissions(db, role.id)
+            for p in role_perms:
+                permissions.append(p.permission_name)
+                
         token = JWTService.create_access_token(
             {
                 "user_id": str(user.id),
                 "email": user.email,
                 "role_id": role_ids[0] if role_ids else "",
                 "is_super_admin": user.is_super_admin,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "permissions": permissions,
             }
         )
 

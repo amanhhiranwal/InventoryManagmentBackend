@@ -17,6 +17,7 @@ class CreateCompanyRequest(BaseModel):
     state: str
     country: str
     postal_code: str
+    logo_url: Optional[str] = None
     is_active: bool = True
     user_id: Optional[str] = None
 
@@ -34,6 +35,7 @@ class UpdateCompanyRequest(BaseModel):
     state: Optional[str] = None
     country: Optional[str] = None
     postal_code: Optional[str] = None
+    logo_url: Optional[str] = None
     is_active: Optional[bool] = None
 
 
@@ -53,4 +55,5 @@ class CompanyResponse(BaseModel):
     state: str
     country: str
     postal_code: str
+    logo_url: Optional[str] = None
     is_active: bool

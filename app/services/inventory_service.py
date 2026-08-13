@@ -75,7 +75,21 @@ class InventoryService:
                 
                 validated_attrs[f_name] = val
 
-        # 2. Insert to collection
+        # 2. Explicitly preserve standard stock parameters if passed in attributes
+        standard_fields = ["rate", "rate_per_unit", "unit", "instock", "stock", "case_size"]
+        for key in standard_fields:
+            if key in attributes:
+                val = attributes[key]
+                if key in ["rate", "rate_per_unit", "instock", "stock", "case_size"]:
+                    try:
+                        val = float(val)
+                    except (ValueError, TypeError):
+                        val = 0.0
+                else:
+                    val = str(val).strip()
+                validated_attrs[key] = val
+
+        # 3. Insert to collection
         doc = {
             "name": name.strip(),
             "serial_number": serial_number.strip().upper(),
@@ -159,6 +173,20 @@ class InventoryService:
                     val = str(val).strip()
                 
                 validated_attrs[f_name] = val
+
+        # 2. Explicitly preserve standard stock parameters if passed in attributes
+        standard_fields = ["rate", "rate_per_unit", "unit", "instock", "stock", "case_size"]
+        for key in standard_fields:
+            if key in attributes:
+                val = attributes[key]
+                if key in ["rate", "rate_per_unit", "instock", "stock", "case_size"]:
+                    try:
+                        val = float(val)
+                    except (ValueError, TypeError):
+                        val = 0.0
+                else:
+                    val = str(val).strip()
+                validated_attrs[key] = val
 
         # Check duplicate serial number (excluding current item)
         serial_upper = serial_number.strip().upper()

@@ -13,55 +13,55 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: synergy-backend
+  name: synergy-auth-service
   namespace: synergy-crm
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: synergy-backend
+      app: synergy-auth-service
   template:
     metadata:
       labels:
-        app: synergy-backend
+        app: synergy-auth-service
     spec:
       securityContext:
         fsGroup: 10001
       containers:
-        - name: backend
+        - name: auth-service
           image: synergy-backend:latest
           imagePullPolicy: IfNotPresent
+          command: ["uvicorn", "services.auth_service.main:app", "--host", "0.0.0.0", "--port", "8001"]
           env:
             - name: POSTGRES_HOST
               value: postgres-db
             - name: POSTGRES_PORT
-              value: 5432
+              value: "5432"
             - name: POSTGRES_USER
               valueFrom:
-                secretKeyRef:
-                  name: synergy-secrets
-                  key: postgres-user
+                  secretKeyRef:
+                    name: synergy-secrets
+                    key: postgres-user
             - name: POSTGRES_PASSWORD
               valueFrom:
-                secretKeyRef:
-                  name: synergy-secrets
-                  key: postgres-password
+                  secretKeyRef:
+                    name: synergy-secrets
+                    key: postgres-password
             - name: POSTGRES_DB
-              valueFrom:
-                secretKeyRef:
-                  name: synergy-secrets
-                  key: postgres-db
+              value: "auth_db"
             - name: MONGO_URI
               valueFrom:
-                secretKeyRef:
-                  name: synergy-secrets
-                  key: mongo-uri
+                  secretKeyRef:
+                    name: synergy-secrets
+                    key: mongo-uri
             - name: REDIS_HOST
               value: redis-cache
             - name: REDIS_PORT
-              value: 6379
+              value: "6379"
+            - name: PYTHONPATH
+              value: "/app"
           ports:
-            - containerPort: 8000
+            - containerPort: 8001
           volumeMounts:
             - name: uploads-storage
               mountPath: /app/uploads
@@ -73,11 +73,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: synergy-backend
+  name: synergy-auth-service
   namespace: synergy-crm
 spec:
   ports:
     - port: 8000
-      targetPort: 8000
+      targetPort: 8001
   selector:
-    app: synergy-backend
+    app: synergy-auth-service

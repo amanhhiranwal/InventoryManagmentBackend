@@ -25,23 +25,7 @@ class CategoryGroupService:
 
     @staticmethod
     def get_all(db: Session) -> list[CategoryGroup]:
-        groups = db.query(CategoryGroup).order_by(CategoryGroup.created_at.desc()).all()
-        if not groups:
-            initial = [
-                {"name": "Software", "code": "SOFTWARE"},
-                {"name": "Hardware", "code": "HARDWARE"},
-                {"name": "Services", "code": "SERVICES"},
-                {"name": "Support", "code": "SUPPORT"}
-            ]
-            for it in initial:
-                cg = CategoryGroup(
-                    name=it["name"],
-                    code=it["code"]
-                )
-                db.add(cg)
-            db.commit()
-            groups = db.query(CategoryGroup).order_by(CategoryGroup.created_at.desc()).all()
-        return groups
+        return db.query(CategoryGroup).order_by(CategoryGroup.created_at.desc()).all()
 
     @staticmethod
     def delete(cg_id: str, db: Session) -> None:

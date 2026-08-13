@@ -1,25 +1,72 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from app.models.lead import Lead
-from app.models.user import User
-from app.models.user_role import UserRole
 from app.models.workflow import Workflow
 from uuid import UUID
 from fastapi import HTTPException
+import requests
+import os
+
+def get_users_by_roles_http(role_ids: list[str]) -> list[str]:
+    if not role_ids:
+        return []
+    try:
+        auth_host = os.getenv("AUTH_SERVICE_HOST", "auth_service")
+        auth_port = os.getenv("AUTH_SERVICE_PORT", "8001")
+        response = requests.get(
+            f"http://{auth_host}:{auth_port}/api/v1/users/by-roles",
+            params={"role_ids": role_ids},
+            timeout=5
+        )
+        if response.status_code == 200:
+            return response.json().get("user_ids", [])
+    except Exception as e:
+        print("Failed to query auth service for roles:", e)
+    return []
+
+def get_user_roles_http(user_id: str) -> list[str]:
+    try:
+        auth_host = os.getenv("AUTH_SERVICE_HOST", "auth_service")
+        auth_port = os.getenv("AUTH_SERVICE_PORT", "8001")
+        response = requests.get(
+            f"http://{auth_host}:{auth_port}/api/v1/users/{user_id}/role-ids",
+            timeout=5
+        )
+        if response.status_code == 200:
+            return response.json().get("role_ids", [])
+    except Exception as e:
+        print("Failed to query auth service for user roles:", e)
+    return []
+
+def get_visible_creator_user_ids(current_user: dict, db: Session) -> list[str]:
+    user_id = current_user.get("user_id")
+    if not user_id:
+        return []
+    is_super_admin = current_user.get("is_super_admin", False)
+    if is_super_admin:
+        return []  # Empty list signifies unrestricted Super Admin access
+
+    role_id = current_user.get("role_id")
+    user_role_ids = {role_id} if role_id else set()
+
+    junior_role_ids = LeadService.get_junior_roles_for_user(user_role_ids, db)
+    junior_user_ids = []
+    if junior_role_ids:
+        junior_user_ids = get_users_by_roles_http(list(junior_role_ids))
+
+    return list(set([user_id] + junior_user_ids))
+
 
 class LeadService:
     @staticmethod
-    def get_junior_roles_for_user(user: User, db: Session) -> set[str]:
-        user_role_ids = {str(role.id) for role in user.roles}
+    def get_junior_roles_for_user(user_role_ids: set[str], db: Session) -> set[str]:
         workflows = db.query(Workflow).all()
         
         junior_role_ids = set()
         for wf in workflows:
-            # handle nodes and edges format
             nodes_list = wf.nodes if isinstance(wf.nodes, list) else []
             edges_list = wf.edges if isinstance(wf.edges, list) else []
             
-            # build adjacency list
             adj = {}
             for edge in edges_list:
                 src = edge.get("source")
@@ -27,14 +74,12 @@ class LeadService:
                 if src and tgt:
                     adj.setdefault(src, []).append(tgt)
             
-            # find start nodes corresponding to user roles
             start_nodes = []
             for n in nodes_list:
                 role_id = n.get("data", {}).get("role_id")
                 if role_id in user_role_ids:
                     start_nodes.append(n.get("id"))
             
-            # BFS traverse downwards
             visited = set()
             queue = list(start_nodes)
             while queue:
@@ -45,7 +90,6 @@ class LeadService:
                         if neighbor not in visited:
                             queue.append(neighbor)
             
-            # extract junior roles
             for n in nodes_list:
                 if n.get("id") in visited:
                     role_id = n.get("data", {}).get("role_id")
@@ -55,25 +99,20 @@ class LeadService:
         return junior_role_ids
 
     @staticmethod
-    def get_visible_leads(user: User, db: Session) -> list[Lead]:
-        if user.is_super_admin:
+    def get_visible_leads(user_id: str, is_super_admin: bool, user_role_ids: set[str], db: Session) -> list[Lead]:
+        if is_super_admin:
             return db.query(Lead).order_by(Lead.created_at.desc()).all()
             
-        junior_role_ids = LeadService.get_junior_roles_for_user(user, db)
+        junior_role_ids = LeadService.get_junior_roles_for_user(user_role_ids, db)
         
-        # Find all users who have these junior roles
         junior_user_ids = []
         if junior_role_ids:
-            junior_user_roles = db.query(UserRole.user_id).filter(
-                UserRole.role_id.in_([UUID(rid) for rid in junior_role_ids])
-            ).all()
-            junior_user_ids = [ur.user_id for ur in junior_user_roles]
+            junior_user_ids = get_users_by_roles_http(list(junior_role_ids))
             
-        # Visible leads are created by user OR created by juniors
         query = db.query(Lead).filter(
             or_(
-                Lead.creator_id == user.id,
-                Lead.creator_id.in_(junior_user_ids)
+                Lead.creator_id == UUID(user_id),
+                Lead.creator_id.in_([UUID(uid) for uid in junior_user_ids])
             )
         )
         return query.order_by(Lead.created_at.desc()).all()
@@ -92,24 +131,22 @@ class LeadService:
         return lead
 
     @staticmethod
-    def progress_lead(lead_id: str, request, user: User, db: Session) -> Lead:
+    def progress_lead(lead_id: str, request, user_id: str, is_super_admin: bool, user_role_ids: set[str], db: Session) -> Lead:
         lead = db.query(Lead).filter(Lead.id == UUID(lead_id)).first()
         if not lead:
             raise HTTPException(status_code=404, detail="Lead not found")
             
         is_authorized = False
-        if user.is_super_admin:
+        if is_super_admin:
             is_authorized = True
-        elif lead.creator_id == user.id:
+        elif str(lead.creator_id) == user_id:
             is_authorized = True
         else:
-            junior_role_ids = LeadService.get_junior_roles_for_user(user, db)
+            junior_role_ids = LeadService.get_junior_roles_for_user(user_role_ids, db)
             if junior_role_ids:
-                creator = db.query(User).filter(User.id == lead.creator_id).first()
-                if creator:
-                    creator_role_ids = {str(r.id) for r in creator.roles}
-                    if creator_role_ids.intersection(junior_role_ids):
-                        is_authorized = True
+                creator_role_ids = set(get_user_roles_http(str(lead.creator_id)))
+                if creator_role_ids.intersection(junior_role_ids):
+                    is_authorized = True
                         
         if not is_authorized:
             raise HTTPException(status_code=403, detail="Only the lead creator and their reporting superiors can progress this lead")

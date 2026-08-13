@@ -32,7 +32,7 @@ class RBACService:
         return RBACRepository.get_permissions(db)
 
     @staticmethod
-    def delete_permission(permission_id: int, db: Session):
+    def delete_permission(permission_id: str, db: Session):
 
         permission = RBACRepository.get_permission_by_id(
             db,
@@ -72,7 +72,7 @@ class RBACService:
         return RBACRepository.get_roles(db)
 
     @staticmethod
-    def delete_role(role_id: int, db: Session):
+    def delete_role(role_id: str, db: Session):
 
         role = RBACRepository.get_role_by_id(
             db,
