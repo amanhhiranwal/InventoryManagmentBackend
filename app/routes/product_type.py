@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from app.database.dependencies import get_db
 from app.services.product_type_service import ProductTypeService
 from app.schemas.product_type import CreateProductTypeRequest
-from app.middleware.permission_middleware import require_super_admin
+from app.middleware.permission_middleware import require_permission, require_super_admin
 
 router = APIRouter(
     prefix="/product-types",
@@ -14,7 +14,7 @@ router = APIRouter(
 def create_product_type(
     request: CreateProductTypeRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(require_super_admin)
+    current_user=Depends(require_permission("product_type.create"))
 ):
     pt = ProductTypeService.create(request, db)
     return {
@@ -32,7 +32,7 @@ def create_product_type(
 @router.get("/")
 def get_product_types(
     db: Session = Depends(get_db),
-    current_user=Depends(require_super_admin)
+    current_user=Depends(require_permission("product_type.read"))
 ):
     pts = ProductTypeService.get_all(db)
     return {
@@ -54,7 +54,7 @@ def update_product_type(
     pt_id: str,
     request: CreateProductTypeRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(require_super_admin)
+    current_user=Depends(require_permission("product_type.update"))
 ):
     pt = ProductTypeService.update(pt_id, request, db)
     return {
@@ -73,7 +73,7 @@ def update_product_type(
 def delete_product_type(
     pt_id: str,
     db: Session = Depends(get_db),
-    current_user=Depends(require_super_admin)
+    current_user=Depends(require_permission("product_type.delete"))
 ):
     ProductTypeService.delete(pt_id, db)
     return {

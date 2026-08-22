@@ -112,6 +112,7 @@ class LeadService:
         query = db.query(Lead).filter(
             or_(
                 Lead.creator_id == UUID(user_id),
+                Lead.assigned_to_id == UUID(user_id),
                 Lead.creator_id.in_([UUID(uid) for uid in junior_user_ids])
             )
         )
@@ -119,13 +120,42 @@ class LeadService:
 
     @staticmethod
     def create_lead(request, creator_id: UUID, db: Session) -> Lead:
+        assigned_to_uuid = UUID(request.assigned_to_id) if getattr(request, "assigned_to_id", None) else None
         lead = Lead(
             title=request.title,
             description=request.description,
             status=request.status or "new",
             creator_id=creator_id,
+            assigned_to_id=assigned_to_uuid
         )
         db.add(lead)
+        db.commit()
+        db.refresh(lead)
+        return lead
+
+    @staticmethod
+    def assign_lead(lead_id: str, target_user_id: str, assigner_id: str, is_super_admin: bool, user_role_ids: set[str], db: Session) -> Lead:
+        lead = db.query(Lead).filter(Lead.id == UUID(lead_id)).first()
+        if not lead:
+            raise HTTPException(status_code=404, detail="Lead not found")
+
+        is_authorized = False
+        if is_super_admin:
+            is_authorized = True
+        elif str(lead.creator_id) == assigner_id or (lead.assigned_to_id and str(lead.assigned_to_id) == assigner_id):
+            is_authorized = True
+        else:
+            junior_role_ids = LeadService.get_junior_roles_for_user(user_role_ids, db)
+            if junior_role_ids:
+                creator_role_ids = set(get_user_roles_http(str(lead.creator_id)))
+                if creator_role_ids.intersection(junior_role_ids):
+                    is_authorized = True
+
+        if not is_authorized:
+            raise HTTPException(status_code=403, detail="Only superiors within authority scope or lead owners can reassign this lead")
+
+        lead.assigned_to_id = UUID(target_user_id)
+        lead.assigned_by_id = UUID(assigner_id)
         db.commit()
         db.refresh(lead)
         return lead
@@ -139,7 +169,7 @@ class LeadService:
         is_authorized = False
         if is_super_admin:
             is_authorized = True
-        elif str(lead.creator_id) == user_id:
+        elif str(lead.creator_id) == user_id or (lead.assigned_to_id and str(lead.assigned_to_id) == user_id):
             is_authorized = True
         else:
             junior_role_ids = LeadService.get_junior_roles_for_user(user_role_ids, db)
@@ -149,7 +179,7 @@ class LeadService:
                     is_authorized = True
                         
         if not is_authorized:
-            raise HTTPException(status_code=403, detail="Only the lead creator and their reporting superiors can progress this lead")
+            raise HTTPException(status_code=403, detail="Only the lead creator, assigned user, and their reporting superiors can progress this lead")
             
         lead.stage = request.stage
         if request.status is not None:

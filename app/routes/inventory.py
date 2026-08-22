@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional, Any
 from app.services.inventory_service import InventoryService
-from app.middleware.permission_middleware import require_super_admin
+from app.middleware.permission_middleware import require_permission, require_super_admin
 
 router = APIRouter(
     prefix="/inventory",
@@ -24,7 +24,7 @@ class CreateItemRequest(BaseModel):
 @router.post("/templates")
 def save_template(
     request: SaveTemplateRequest,
-    current_user=Depends(require_super_admin)
+    current_user=Depends(require_permission("inventory.create"))
 ):
     doc = InventoryService.save_template(request.product_type_code, request.fields)
     return {
@@ -36,7 +36,7 @@ def save_template(
 @router.get("/templates/{product_type_code}")
 def get_template(
     product_type_code: str,
-    current_user=Depends(require_super_admin)
+    current_user=Depends(require_permission("inventory.read"))
 ):
     template = InventoryService.get_template(product_type_code)
     return {
@@ -47,7 +47,7 @@ def get_template(
 @router.post("/items")
 def create_item(
     request: CreateItemRequest,
-    current_user=Depends(require_super_admin)
+    current_user=Depends(require_permission("inventory.create"))
 ):
     doc = InventoryService.create_item(
         name=request.name,
@@ -67,7 +67,7 @@ def create_item(
 def get_items(
     product_type_code: Optional[str] = None,
     search: Optional[str] = None,
-    current_user=Depends(require_super_admin)
+    current_user=Depends(require_permission("inventory.read"))
 ):
     items = InventoryService.get_items(product_type_code=product_type_code, search=search)
     return {
@@ -79,7 +79,7 @@ def get_items(
 def update_item(
     item_id: str,
     request: CreateItemRequest,
-    current_user=Depends(require_super_admin)
+    current_user=Depends(require_permission("inventory.update"))
 ):
     doc = InventoryService.update_item(
         item_id=item_id,
@@ -99,7 +99,7 @@ def update_item(
 @router.delete("/items/{item_id}")
 def delete_item(
     item_id: str,
-    current_user=Depends(require_super_admin)
+    current_user=Depends(require_permission("inventory.delete"))
 ):
     InventoryService.delete_item(item_id)
     return {

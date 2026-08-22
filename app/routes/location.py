@@ -23,7 +23,7 @@ router = APIRouter(
 @router.post(
     "/",
     dependencies=[
-        Depends(require_super_admin)
+        Depends(require_permission("location.create"))
     ],
 )
 def create_location(
@@ -40,7 +40,7 @@ def create_location(
 @router.get(
     "/",
     dependencies=[
-        Depends(require_permission("location.view"))
+        Depends(require_permission("location.read"))
     ],
 )
 def get_locations(
@@ -59,7 +59,7 @@ def get_locations(
 @router.get(
     "/{location_id}",
     dependencies=[
-        Depends(require_permission("location.view"))
+        Depends(require_permission("location.read"))
     ],
 )
 def get_location(
@@ -76,7 +76,7 @@ def get_location(
 @router.get(
     "/company/{company_id}",
     dependencies=[
-        Depends(require_permission("location.view"))
+        Depends(require_permission("location.read"))
     ],
 )
 def get_company_locations(

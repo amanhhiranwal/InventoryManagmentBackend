@@ -5,6 +5,7 @@ class CreateLeadRequest(BaseModel):
     title: str
     description: Optional[str] = None
     status: Optional[str] = "new"
+    assigned_to_id: Optional[str] = None
 
 class ProgressLeadRequest(BaseModel):
     stage: str
@@ -13,3 +14,7 @@ class ProgressLeadRequest(BaseModel):
     requirements: Optional[str] = None
     quotation_type: Optional[str] = None
     quotation_items: Optional[List[Dict[str, Any]]] = None
+
+class AssignLeadRequest(BaseModel):
+    assigned_to_id: str
+
