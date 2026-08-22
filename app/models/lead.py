@@ -10,6 +10,8 @@ class Lead(BaseModel):
     description: Mapped[str] = mapped_column(String(2000), nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="new")
     creator_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    assigned_to_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    assigned_by_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     
     stage: Mapped[str] = mapped_column(String(50), default="lead") # lead | opportunity | quotation | dead
     demo_status: Mapped[str] = mapped_column(String(50), default="none") # none | pending | given | skipped
@@ -17,4 +19,6 @@ class Lead(BaseModel):
     quotation_type: Mapped[str] = mapped_column(String(50), nullable=True) # quotation | purchase_indent
     quotation_items: Mapped[list] = mapped_column(JSON, nullable=True)
 
-    creator = relationship("User", backref="leads")
+    creator = relationship("User", foreign_keys=[creator_id], backref="created_leads")
+    assigned_to = relationship("User", foreign_keys=[assigned_to_id], backref="assigned_leads")
+    assigned_by = relationship("User", foreign_keys=[assigned_by_id], backref="assigned_by_leads")

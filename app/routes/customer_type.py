@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from app.database.dependencies import get_db
 from app.services.customer_type_service import CustomerTypeService
 from app.schemas.customer_type import CreateCustomerTypeRequest
-from app.middleware.permission_middleware import require_super_admin
+from app.middleware.permission_middleware import require_permission, require_super_admin
 
 router = APIRouter(
     prefix="/customer-types",
@@ -14,7 +14,7 @@ router = APIRouter(
 def create_customer_type(
     request: CreateCustomerTypeRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(require_super_admin)
+    current_user=Depends(require_permission("customer_type.create"))
 ):
     ct = CustomerTypeService.create(request, db)
     return {
@@ -31,7 +31,7 @@ def create_customer_type(
 @router.get("/")
 def get_customer_types(
     db: Session = Depends(get_db),
-    current_user=Depends(require_super_admin)
+    current_user=Depends(require_permission("customer_type.read"))
 ):
     cts = CustomerTypeService.get_all(db)
     return {
@@ -51,7 +51,7 @@ def get_customer_types(
 def delete_customer_type(
     ct_id: str,
     db: Session = Depends(get_db),
-    current_user=Depends(require_super_admin)
+    current_user=Depends(require_permission("customer_type.delete"))
 ):
     CustomerTypeService.delete(ct_id, db)
     return {

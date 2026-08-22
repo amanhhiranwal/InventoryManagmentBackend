@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from app.database.dependencies import get_db
 from app.services.category_group_service import CategoryGroupService
 from app.schemas.category_group import CreateCategoryGroupRequest
-from app.middleware.permission_middleware import require_super_admin
+from app.middleware.permission_middleware import require_permission, require_super_admin
 
 router = APIRouter(
     prefix="/category-groups",
@@ -14,7 +14,7 @@ router = APIRouter(
 def create_category_group(
     request: CreateCategoryGroupRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(require_super_admin)
+    current_user=Depends(require_permission("category_group.create"))
 ):
     cg = CategoryGroupService.create(request, db)
     return {
@@ -30,7 +30,7 @@ def create_category_group(
 @router.get("/")
 def get_category_groups(
     db: Session = Depends(get_db),
-    current_user=Depends(require_super_admin)
+    current_user=Depends(require_permission("category_group.read"))
 ):
     cgs = CategoryGroupService.get_all(db)
     return {
@@ -49,7 +49,7 @@ def get_category_groups(
 def delete_category_group(
     cg_id: str,
     db: Session = Depends(get_db),
-    current_user=Depends(require_super_admin)
+    current_user=Depends(require_permission("category_group.delete"))
 ):
     CategoryGroupService.delete(cg_id, db)
     return {

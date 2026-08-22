@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database.dependencies import get_db
-from app.middleware.permission_middleware import require_super_admin
+from app.middleware.permission_middleware import require_permission, require_super_admin
 from app.middleware.auth_middleware import get_current_user
 from app.schemas.workflow import CreateWorkflowRequest
 from app.services.workflow_service import WorkflowService
@@ -15,7 +15,7 @@ router = APIRouter(
 def create_workflow(
     request: CreateWorkflowRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(require_super_admin),
+    current_user=Depends(require_permission("workflow.create")),
 ):
     wf = WorkflowService.create(request, db)
     return {
@@ -34,7 +34,7 @@ def create_workflow(
 @router.get("/")
 def get_workflows(
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_permission("workflow.read")),
 ):
     workflows = WorkflowService.get_all(db)
     return {
@@ -56,7 +56,7 @@ def get_workflows(
 def delete_workflow(
     workflow_id: str,
     db: Session = Depends(get_db),
-    current_user=Depends(require_super_admin),
+    current_user=Depends(require_permission("workflow.delete")),
 ):
     WorkflowService.delete(workflow_id, db)
     return {
@@ -70,7 +70,7 @@ def update_workflow(
     workflow_id: str,
     request: CreateWorkflowRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(require_super_admin),
+    current_user=Depends(require_permission("workflow.update")),
 ):
     wf = WorkflowService.update(workflow_id, request, db)
     return {

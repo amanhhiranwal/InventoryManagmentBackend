@@ -17,7 +17,7 @@ router = APIRouter(
 def create_user(
     request: CreateUserRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(require_super_admin),
+    current_user=Depends(require_permission("user.create")),
 ):
     return UserController.create(request, db)
 
@@ -47,7 +47,7 @@ def update_user_role(
 def delete_user(
     user_id: str,
     db: Session = Depends(get_db),
-    current_user=Depends(require_super_admin),
+    current_user=Depends(require_permission("user.delete")),
 ):
     return UserController.delete(user_id, db)
 
@@ -57,7 +57,7 @@ def update_user(
     user_id: str,
     request: UpdateUserRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(require_super_admin),
+    current_user=Depends(require_permission("user.update")),
 ):
     return UserController.update(user_id, request, db)
 

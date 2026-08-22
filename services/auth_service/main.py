@@ -12,6 +12,7 @@ from app.routes.user import router as user_router
 from app.routes.rbac import router as rbac_router
 from app.routes.profile import router as profile_router
 from app.routes.company import router as company_router
+from app.routes.menu import router as menu_router
 
 app = FastAPI(
     title=f"{settings.APP_NAME} - Auth Service",
@@ -42,6 +43,7 @@ api_router.include_router(user_router)
 api_router.include_router(rbac_router)
 api_router.include_router(profile_router)
 api_router.include_router(company_router)
+api_router.include_router(menu_router)
 
 app.include_router(api_router)
 

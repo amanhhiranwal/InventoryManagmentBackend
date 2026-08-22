@@ -81,12 +81,13 @@ class RBACRepository:
         permission: Permission,
     ):
         try:
+            db.query(RolePermission).filter(RolePermission.permission_id == permission.id).delete(synchronize_session=False)
             db.delete(permission)
             db.commit()
 
-        except SQLAlchemyError:
+        except SQLAlchemyError as e:
             db.rollback()
-            raise HTTPException(status_code=500, detail="Failed to delete permission.")
+            raise HTTPException(status_code=500, detail=f"Failed to delete permission: {str(e)}")
 
     # =========================
     # Role CRUD
@@ -141,13 +142,24 @@ class RBACRepository:
         db: Session,
         role: Role,
     ):
+        if role.role_name == "Super Admin":
+            raise HTTPException(
+                status_code=400,
+                detail="The system 'Super Admin' role cannot be deleted."
+            )
+
+        from app.models.user_role import UserRole
         try:
+            # Delete associated role permissions and user roles first to prevent foreign key violations
+            db.query(RolePermission).filter(RolePermission.role_id == role.id).delete(synchronize_session=False)
+            db.query(UserRole).filter(UserRole.role_id == role.id).delete(synchronize_session=False)
+            
             db.delete(role)
             db.commit()
 
-        except SQLAlchemyError:
+        except SQLAlchemyError as e:
             db.rollback()
-            raise HTTPException(status_code=500, detail="Failed to delete role.")
+            raise HTTPException(status_code=500, detail=f"Failed to delete role: {str(e)}")
 
     # =========================
     # Role Permissions
