@@ -16,6 +16,8 @@ from app.routes.profile import router as profile_router
 from app.routes.order import router as order_router
 from app.routes.unit import router as unit_router
 from app.routes.customer import router as customer_router
+from app.routes.menu import router as menu_router
+from app.routes.lead_source import router as lead_source_router
 
 
 api_router = APIRouter(
@@ -48,3 +50,5 @@ api_router.include_router(profile_router)
 api_router.include_router(order_router)
 api_router.include_router(unit_router)
 api_router.include_router(customer_router)
+api_router.include_router(menu_router)
+api_router.include_router(lead_source_router)
