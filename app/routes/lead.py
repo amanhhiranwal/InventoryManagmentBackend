@@ -6,7 +6,7 @@ from uuid import UUID
 
 from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
-from app.schemas.lead import CreateLeadRequest, ProgressLeadRequest
+from app.schemas.lead import CreateLeadRequest, ProgressLeadRequest, AssignLeadRequest
 from app.services.lead_service import LeadService
 
 router = APIRouter(
@@ -53,6 +53,7 @@ def create_lead(
             "status": lead.status,
             "creator_id": str(lead.creator_id),
             "creator_name": creator_name,
+            "assigned_to_id": str(lead.assigned_to_id) if lead.assigned_to_id else None,
             "created_at": lead.created_at.isoformat(),
         }
     }
@@ -69,9 +70,17 @@ def get_leads(
     
     leads = LeadService.get_visible_leads(user_id, is_super_admin, role_ids, db)
     
-    # Resolve names of creators in bulk via HTTP to avoid DB joins
-    creator_ids = list({str(l.creator_id) for l in leads})
-    names_map = get_user_names_http(creator_ids)
+    # Resolve names of creators & assigned users in bulk via HTTP
+    all_user_ids = set()
+    for l in leads:
+        if l.creator_id:
+            all_user_ids.add(str(l.creator_id))
+        if l.assigned_to_id:
+            all_user_ids.add(str(l.assigned_to_id))
+        if l.assigned_by_id:
+            all_user_ids.add(str(l.assigned_by_id))
+            
+    names_map = get_user_names_http(list(all_user_ids))
     
     return {
         "success": True,
@@ -88,10 +97,44 @@ def get_leads(
                 "quotation_items": l.quotation_items,
                 "creator_id": str(l.creator_id),
                 "creator_name": names_map.get(str(l.creator_id), "Unknown"),
+                "assigned_to_id": str(l.assigned_to_id) if l.assigned_to_id else None,
+                "assigned_to_name": names_map.get(str(l.assigned_to_id), None) if l.assigned_to_id else None,
+                "assigned_by_id": str(l.assigned_by_id) if l.assigned_by_id else None,
+                "assigned_by_name": names_map.get(str(l.assigned_by_id), None) if l.assigned_by_id else None,
                 "created_at": l.created_at.isoformat(),
             }
             for l in leads
         ]
+    }
+
+@router.put("/{lead_id}/assign")
+def assign_lead(
+    lead_id: str,
+    request: AssignLeadRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    user_id = current_user["user_id"]
+    is_super_admin = current_user.get("is_super_admin", False)
+    role_id = current_user.get("role_id")
+    role_ids = {role_id} if role_id else set()
+    
+    lead = LeadService.assign_lead(lead_id, request.assigned_to_id, user_id, is_super_admin, role_ids, db)
+    names_map = get_user_names_http([str(lead.creator_id), str(lead.assigned_to_id)])
+    
+    return {
+        "success": True,
+        "message": "Lead assigned successfully.",
+        "data": {
+            "id": str(lead.id),
+            "title": lead.title,
+            "status": lead.status,
+            "stage": lead.stage,
+            "creator_id": str(lead.creator_id),
+            "creator_name": names_map.get(str(lead.creator_id), "Unknown"),
+            "assigned_to_id": str(lead.assigned_to_id),
+            "assigned_to_name": names_map.get(str(lead.assigned_to_id), "Unknown"),
+        }
     }
 
 @router.put("/{lead_id}/progress")

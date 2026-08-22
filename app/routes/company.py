@@ -24,7 +24,7 @@ router = APIRouter(
 def create_company(
     request: CreateCompanyRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(require_super_admin),
+    current_user=Depends(require_permission("company.create")),
 ):
 
     return CompanyController.create(
@@ -38,7 +38,7 @@ def get_companies(
     page: int = 1,
     size: int = 20,
     db: Session = Depends(get_db),
-    current_user=Depends(require_permission("company.view")),
+    current_user=Depends(require_permission("company.read")),
 ):
 
     skip = (page - 1) * size
@@ -107,7 +107,7 @@ def upload_company_logo(
     company_id: UUID,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user=Depends(require_super_admin),
+    current_user=Depends(require_permission("company.update")),
 ):
     company = CompanyController.get_by_id(company_id, db)
     if not company:
