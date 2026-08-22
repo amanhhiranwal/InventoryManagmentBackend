@@ -54,7 +54,7 @@ def get_postgres_pods(v1, namespace, cluster_name):
 
 
 # ---------------------------------------------------------
-# Check pod phases
+# Check pod phases 
 # ---------------------------------------------------------
 
 def check_pod_phases(postgres_pods):
@@ -329,7 +329,7 @@ def run_health_checker():
         return False
 
     # -------------------------
-    # Database connection
+    # Database connection and ping
     # -------------------------
 
     print(
