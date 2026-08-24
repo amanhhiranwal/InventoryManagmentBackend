@@ -22,6 +22,7 @@ from app.models.user_role import UserRole
 from app.services.password_service import PasswordService
 from uuid import uuid4
 
+
 def sync_db_and_seed():
     print("--- 1. Syncing Database Schemas (create_all) ---")
     try:
@@ -34,7 +35,9 @@ def sync_db_and_seed():
     db = SessionLocal()
     try:
         print("\n--- 2. Checking / Creating Super Admin User ---")
-        super_admin = db.query(User).filter(User.email == "superadmin@example.com").first()
+        super_admin = (
+            db.query(User).filter(User.email == "superadmin@example.com").first()
+        )
         if not super_admin:
             print("Creating superadmin@example.com...")
             role = db.query(Role).filter(Role.role_name == "Super Admin").first()
@@ -50,6 +53,7 @@ def sync_db_and_seed():
                 last_name="Admin",
                 email="superadmin@example.com",
                 password=hashed_pw,
+                employee_id="EMP-SUPERADMIN",
                 is_super_admin=True,
                 is_active=True,
             )
@@ -76,18 +80,51 @@ def sync_db_and_seed():
         db.commit()
 
         default_perms = [
-            "dashboard.read", "customer.read", "customer.create", "customer.update", "customer.delete",
-            "sales.menu", "lead.read", "lead.create", "lead.update", "lead.delete",
-            "opportunity.read", "order.read", "inventory.menu", "inventory.read", "inventory.create",
-            "masters.menu", "company.read", "company.create", "company.update", "company.delete",
-            "location.read", "location.create", "location.update", "location.delete",
-            "customer_type.read", "product_type.read", "category_group.read", "unit.read",
-            "role.read", "user.read", "user.create", "user.update", "user.delete", "workflow.read"
+            "dashboard.read",
+            "customer.read",
+            "customer.create",
+            "customer.update",
+            "customer.delete",
+            "sales.menu",
+            "lead.read",
+            "lead.create",
+            "lead.update",
+            "lead.delete",
+            "opportunity.read",
+            "order.read",
+            "inventory.menu",
+            "inventory.read",
+            "inventory.create",
+            "masters.menu",
+            "company.read",
+            "company.create",
+            "company.update",
+            "company.delete",
+            "location.read",
+            "location.create",
+            "location.update",
+            "location.delete",
+            "customer_type.read",
+            "product_type.read",
+            "category_group.read",
+            "unit.read",
+            "role.read",
+            "user.read",
+            "user.create",
+            "user.update",
+            "user.delete",
+            "workflow.read",
         ]
         for p_key in default_perms:
-            p_obj = db.query(Permission).filter(Permission.permission_name == p_key).first()
+            p_obj = (
+                db.query(Permission).filter(Permission.permission_name == p_key).first()
+            )
             if not p_obj:
-                p_obj = Permission(permission_name=p_key, module=p_key.split(".")[0], description=f"Permission for {p_key}")
+                p_obj = Permission(
+                    permission_name=p_key,
+                    module=p_key.split(".")[0],
+                    description=f"Permission for {p_key}",
+                )
                 db.add(p_obj)
         db.commit()
 
@@ -97,6 +134,7 @@ def sync_db_and_seed():
         db.rollback()
     finally:
         db.close()
+
 
 if __name__ == "__main__":
     sync_db_and_seed()
