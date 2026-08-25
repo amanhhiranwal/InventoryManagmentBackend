@@ -7,35 +7,54 @@ from fastapi import HTTPException
 import requests
 import os
 
-def get_users_by_roles_http(role_ids: list[str]) -> list[str]:
+def get_users_by_roles_helper(role_ids: list[str], db: Session = None) -> list[str]:
     if not role_ids:
         return []
+    if db is not None:
+        try:
+            from app.models.user_role import UserRole
+            role_uuids = [UUID(rid) for rid in role_ids if rid]
+            user_roles = db.query(UserRole.user_id).filter(UserRole.role_id.in_(role_uuids)).all()
+            if user_roles:
+                return [str(ur.user_id) for ur in user_roles]
+        except Exception:
+            pass
     try:
         auth_host = os.getenv("AUTH_SERVICE_HOST", "auth_service")
         auth_port = os.getenv("AUTH_SERVICE_PORT", "8001")
         response = requests.get(
             f"http://{auth_host}:{auth_port}/api/v1/users/by-roles",
             params={"role_ids": role_ids},
-            timeout=5
+            timeout=1
         )
         if response.status_code == 200:
             return response.json().get("user_ids", [])
-    except Exception as e:
-        print("Failed to query auth service for roles:", e)
+    except Exception:
+        pass
     return []
 
-def get_user_roles_http(user_id: str) -> list[str]:
+def get_user_roles_helper(user_id: str, db: Session = None) -> list[str]:
+    if not user_id:
+        return []
+    if db is not None:
+        try:
+            from app.models.user_role import UserRole
+            user_roles = db.query(UserRole.role_id).filter(UserRole.user_id == UUID(user_id)).all()
+            if user_roles:
+                return [str(ur.role_id) for ur in user_roles]
+        except Exception:
+            pass
     try:
         auth_host = os.getenv("AUTH_SERVICE_HOST", "auth_service")
         auth_port = os.getenv("AUTH_SERVICE_PORT", "8001")
         response = requests.get(
             f"http://{auth_host}:{auth_port}/api/v1/users/{user_id}/role-ids",
-            timeout=5
+            timeout=1
         )
         if response.status_code == 200:
             return response.json().get("role_ids", [])
-    except Exception as e:
-        print("Failed to query auth service for user roles:", e)
+    except Exception:
+        pass
     return []
 
 def get_visible_creator_user_ids(current_user: dict, db: Session) -> list[str]:
@@ -52,7 +71,7 @@ def get_visible_creator_user_ids(current_user: dict, db: Session) -> list[str]:
     junior_role_ids = LeadService.get_junior_roles_for_user(user_role_ids, db)
     junior_user_ids = []
     if junior_role_ids:
-        junior_user_ids = get_users_by_roles_http(list(junior_role_ids))
+        junior_user_ids = get_users_by_roles_helper(list(junior_role_ids), db)
 
     return list(set([user_id] + junior_user_ids))
 
@@ -107,7 +126,7 @@ class LeadService:
         
         junior_user_ids = []
         if junior_role_ids:
-            junior_user_ids = get_users_by_roles_http(list(junior_role_ids))
+            junior_user_ids = get_users_by_roles_helper(list(junior_role_ids), db)
             
         query = db.query(Lead).filter(
             or_(
