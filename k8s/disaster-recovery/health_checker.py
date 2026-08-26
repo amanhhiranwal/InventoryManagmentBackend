@@ -317,7 +317,7 @@ def run_health_checker():
     )
 
     # -------------------------
-    # Primary / replicaa roles
+  .;l
     # -------------------------
 
     primary_pod, replica_pods = identify_pod_roles(
@@ -361,7 +361,7 @@ def run_health_checker():
         return False
 
     # -------------------------
-    # Final result
+    # Final resultt
     # -------------------------
 
     print("\n--------------------------------")
