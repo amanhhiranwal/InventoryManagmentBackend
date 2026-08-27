@@ -13,7 +13,7 @@ from app.services.password_service import PasswordService
 from app.services.menu_service import MenuService
 
 DB_NAMES = ["solutions", "auth_db", "crm_db", "inventory_db", "sales_db"]
-BASE_URL = "postgresql+psycopg2://amanhiranwal:aman%4015@localhost:5433/"
+BASE_URL = "postgresql+psycopg2://qonevo:qonevo@postgres_db:5432/"
 
 def sync_databases():
     print("=== 1. Ensuring All Microservice Databases Exist ===")
