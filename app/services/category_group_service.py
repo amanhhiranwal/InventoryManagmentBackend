@@ -24,7 +24,23 @@ class CategoryGroupService:
         return cg
 
     @staticmethod
+    def seed_default_category_groups(db: Session):
+        if db.query(CategoryGroup).count() > 0:
+            return
+        defaults = [
+            {"name": "Hardware Solutions", "code": "HARDWARE"},
+            {"name": "Consumer Electronics", "code": "ELECTRONICS"},
+            {"name": "Software & Licenses", "code": "SOFTWARE"},
+            {"name": "Office Infrastructure", "code": "INFRASTRUCTURE"},
+            {"name": "General", "code": "GENERAL"},
+        ]
+        for d in defaults:
+            db.add(CategoryGroup(name=d["name"], code=d["code"]))
+        db.commit()
+
+    @staticmethod
     def get_all(db: Session) -> list[CategoryGroup]:
+        CategoryGroupService.seed_default_category_groups(db)
         return db.query(CategoryGroup).order_by(CategoryGroup.created_at.desc()).all()
 
     @staticmethod

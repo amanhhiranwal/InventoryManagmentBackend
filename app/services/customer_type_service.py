@@ -25,7 +25,23 @@ class CustomerTypeService:
         return ct
 
     @staticmethod
+    def seed_default_customer_types(db: Session):
+        if db.query(CustomerType).count() > 0:
+            return
+        defaults = [
+            {"name": "Distributor", "code": "DISTRIBUTOR", "description": "Wholesale distribution partner"},
+            {"name": "Retailer", "code": "RETAILER", "description": "Retail outlet / shop owner"},
+            {"name": "Enterprise", "code": "ENTERPRISE", "description": "Large corporate enterprise client"},
+            {"name": "OEM Client", "code": "OEM", "description": "Original equipment manufacturer"},
+            {"name": "Direct Customer", "code": "DIRECT", "description": "End consumer / direct customer"},
+        ]
+        for d in defaults:
+            db.add(CustomerType(name=d["name"], code=d["code"], description=d["description"]))
+        db.commit()
+
+    @staticmethod
     def get_all(db: Session) -> list[CustomerType]:
+        CustomerTypeService.seed_default_customer_types(db)
         return db.query(CustomerType).order_by(CustomerType.created_at.desc()).all()
 
     @staticmethod
