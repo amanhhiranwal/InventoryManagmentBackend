@@ -240,7 +240,7 @@ jobs:
           done
 
           python3 scripts/validate_cluster_health.py "http://localhost:30080"
-
+  
       - name: Rollback on Failure
         if: failure()
         shell: bash

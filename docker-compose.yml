@@ -11,7 +11,7 @@ services:
       - .:/app
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     env_file:
-       .env
+      - .env
     depends_on:
       postgres_db:
         condition: service_healthy
@@ -19,7 +19,7 @@ services:
         condition: service_healthy
       redis_cache:
         condition: service_healthy
-
+  
   postgres_db:
     image: postgres:16-alpine
     container_name: postgres_db
@@ -29,26 +29,28 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "${POSTGRES_EXTERNAL_PORT:-5433}:5432"
+      # Bind strictly to localhost so it isn't accessible to your local network
+      - "127.0.0.1:${POSTGRES_EXTERNAL_PORT:-5433}:5432"
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data # Named volume
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
   mongo_db:
     image: mongo:7.0
     container_name: mongo_db
     restart: unless-stopped
     ports:
-      - "${MONGO_EXTERNAL_PORT:-27017}:27017"
+      - "127.0.0.1:${MONGO_EXTERNAL_PORT:-27017}:27017"
     volumes:
-      - ./data/mongo:/data/db
+      - mongo_data:/data/db # Named volume
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 5
 
@@ -57,13 +59,16 @@ services:
     container_name: redis_cache
     restart: unless-stopped
     ports:
-      - "${REDIS_EXTERNAL_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_EXTERNAL_PORT:-6379}:6379"
     volumes:
-      - ./data/redis:/data
+      - redis_data:/data # Named volume
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 5
 
-#Testing the workflow with the help of test runner.testing.DEPLOY TEST
+volumes:
+  postgres_data:
+  mongo_data:
+  redis_data:
