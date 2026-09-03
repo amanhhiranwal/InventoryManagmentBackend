@@ -6,7 +6,7 @@ from uuid import UUID
 
 from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
-from app.schemas.lead import CreateLeadRequest, ProgressLeadRequest, AssignLeadRequest
+from app.schemas.lead import CreateLeadRequest, UpdateLeadRequest, ProgressLeadRequest, AssignLeadRequest
 from app.services.lead_service import LeadService
 
 router = APIRouter(
@@ -56,10 +56,30 @@ def create_lead(
         "success": True,
         "message": "Lead created successfully.",
         "data": {
-            "id": str(lead.id),
+            "id": lead.id,
             "title": lead.title,
             "description": lead.description,
             "status": lead.status,
+            "contact_name": lead.contact_name,
+            "organization_name": lead.organization_name,
+            "email": lead.email,
+            "mobile_number": lead.mobile_number,
+            "website": lead.website,
+            "office_address": lead.office_address,
+            "city": lead.city,
+            "zip_code": lead.zip_code,
+            "country": lead.country,
+            "gst_number": lead.gst_number,
+            "pan_number": lead.pan_number,
+            "coi_number": lead.coi_number,
+            "designation": lead.designation,
+            "remarks": lead.remarks,
+            "customer_type_id": lead.customer_type_id,
+            "customer_type_name": lead.customer_type.name if lead.customer_type else None,
+            "state_id": lead.state_id,
+            "state_name": lead.state.name if lead.state else None,
+            "lead_source_id": lead.lead_source_id,
+            "lead_source_name": lead.lead_source.name if lead.lead_source else None,
             "creator_id": str(lead.creator_id),
             "creator_name": creator_name,
             "assigned_to_id": str(lead.assigned_to_id) if lead.assigned_to_id else None,
@@ -95,7 +115,7 @@ def get_leads(
         "success": True,
         "data": [
             {
-                "id": str(l.id),
+                "id": l.id,
                 "title": l.title,
                 "description": l.description,
                 "status": l.status,
@@ -104,6 +124,26 @@ def get_leads(
                 "requirements": l.requirements,
                 "quotation_type": l.quotation_type,
                 "quotation_items": l.quotation_items,
+                "contact_name": l.contact_name,
+                "organization_name": l.organization_name,
+                "email": l.email,
+                "mobile_number": l.mobile_number,
+                "website": l.website,
+                "office_address": l.office_address,
+                "city": l.city,
+                "zip_code": l.zip_code,
+                "country": l.country,
+                "gst_number": l.gst_number,
+                "pan_number": l.pan_number,
+                "coi_number": l.coi_number,
+                "designation": l.designation,
+                "remarks": l.remarks,
+                "customer_type_id": l.customer_type_id,
+                "customer_type_name": l.customer_type.name if l.customer_type else None,
+                "state_id": l.state_id,
+                "state_name": l.state.name if l.state else None,
+                "lead_source_id": l.lead_source_id,
+                "lead_source_name": l.lead_source.name if l.lead_source else None,
                 "creator_id": str(l.creator_id),
                 "creator_name": names_map.get(str(l.creator_id), "Unknown"),
                 "assigned_to_id": str(l.assigned_to_id) if l.assigned_to_id else None,
@@ -173,6 +213,54 @@ def progress_lead(
             "quotation_type": lead.quotation_type,
             "quotation_items": lead.quotation_items,
             "creator_id": str(lead.creator_id),
+            "created_at": lead.created_at.isoformat(),
+        }
+    }
+
+@router.put("/{lead_id}")
+def update_lead(
+    lead_id: str,
+    request: UpdateLeadRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    user_id = current_user["user_id"]
+    is_super_admin = current_user.get("is_super_admin", False)
+    role_id = current_user.get("role_id")
+    role_ids = {role_id} if role_id else set()
+
+    lead = LeadService.update_lead(lead_id, request, user_id, is_super_admin, role_ids, db)
+    return {
+        "success": True,
+        "message": "Lead updated successfully.",
+        "data": {
+            "id": lead.id,
+            "title": lead.title,
+            "description": lead.description,
+            "status": lead.status,
+            "stage": lead.stage,
+            "contact_name": lead.contact_name,
+            "organization_name": lead.organization_name,
+            "email": lead.email,
+            "mobile_number": lead.mobile_number,
+            "website": lead.website,
+            "office_address": lead.office_address,
+            "city": lead.city,
+            "zip_code": lead.zip_code,
+            "country": lead.country,
+            "gst_number": lead.gst_number,
+            "pan_number": lead.pan_number,
+            "coi_number": lead.coi_number,
+            "designation": lead.designation,
+            "remarks": lead.remarks,
+            "customer_type_id": lead.customer_type_id,
+            "customer_type_name": lead.customer_type.name if lead.customer_type else None,
+            "state_id": lead.state_id,
+            "state_name": lead.state.name if lead.state else None,
+            "lead_source_id": lead.lead_source_id,
+            "lead_source_name": lead.lead_source.name if lead.lead_source else None,
+            "creator_id": str(lead.creator_id),
+            "assigned_to_id": str(lead.assigned_to_id) if lead.assigned_to_id else None,
             "created_at": lead.created_at.isoformat(),
         }
     }

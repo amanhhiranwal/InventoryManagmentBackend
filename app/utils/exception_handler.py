@@ -24,10 +24,17 @@ def register_exception_handlers(app: FastAPI):
             )
 
         if "violates foreign key constraint" in error:
+            # Extract detailed PostgreSQL message if available
+            detail_msg = "Invalid foreign key reference."
+            if "Key (" in error:
+                try:
+                    detail_msg = f"Invalid reference: {error.split('DETAIL:')[1].strip()}"
+                except Exception:
+                    detail_msg = f"Invalid reference: {error}"
             return JSONResponse(
                 status_code=400,
                 content={
-                    "detail": "Invalid reference."
+                    "detail": detail_msg
                 },
             )
 
