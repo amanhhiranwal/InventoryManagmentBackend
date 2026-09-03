@@ -18,7 +18,8 @@ from app.models.workflow import Workflow
 from app.models.product_type import ProductType
 from app.models.category_group import CategoryGroup
 from app.models.customer_type import CustomerType
-
+from app.models.lead_source import LeadSource
+from app.models.state import State
 from sqlalchemy import create_engine
 
 config = context.config

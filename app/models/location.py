@@ -3,11 +3,9 @@ import uuid
 from sqlalchemy import (
     Boolean,
     Column,
-    ForeignKey,
     String,
 )
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship
 
 from app.database.base import Base
 
@@ -23,7 +21,6 @@ class Location(Base):
 
     company_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("companies.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -91,9 +88,4 @@ class Location(Base):
         Boolean,
         default=True,
         nullable=False,
-    )
-
-    company = relationship(
-        "Company",
-        backref="locations",
     )
