@@ -129,6 +129,14 @@ def sync_db_and_seed():
         db.commit()
 
         print("All default master roles and permissions seeded successfully.")
+
+        from app.services.customer_type_service import CustomerTypeService
+        CustomerTypeService.seed_default_customer_types(db)
+        print("Default sales_customer_type seeded successfully.")
+
+        from app.services.state_service import StateService
+        StateService.seed_default_states(db)
+        print("Default sales_state seeded successfully.")
     except Exception as e:
         print("Error during seeding:", e)
         db.rollback()

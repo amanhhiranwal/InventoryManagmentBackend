@@ -8,6 +8,7 @@ from app.routes.order import router as order_router
 from app.routes.customer import router as customer_router
 from app.routes.customer_type import router as customer_type_router
 from app.routes.location import router as location_router
+from app.routes.state import router as state_router
 
 app = FastAPI(
     title=f"{settings.APP_NAME} - Sales Service",
@@ -32,6 +33,7 @@ api_router.include_router(order_router)
 api_router.include_router(customer_router)
 api_router.include_router(customer_type_router)
 api_router.include_router(location_router)
+api_router.include_router(state_router)
 
 app.include_router(api_router)
 

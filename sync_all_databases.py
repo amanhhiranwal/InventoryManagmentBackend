@@ -1,5 +1,6 @@
 import sys
 import os
+from uuid import UUID
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sqlalchemy import create_engine, text
@@ -63,7 +64,9 @@ def sync_databases():
                     db.commit()
                     db.refresh(role)
 
+                SUPERADMIN_UUID = UUID("84466f6a-4d02-4db8-88c8-7e93ac554d67")
                 super_admin = User(
+                    id=SUPERADMIN_UUID,
                     first_name="Super",
                     last_name="Admin",
                     email="superadmin@example.com",
@@ -126,6 +129,13 @@ def sync_databases():
                         db.add(RolePermission(role_id=r_obj.id, permission_id=p_obj.id))
             db.commit()
             print(f"Standard executive role permissions verified in '{db_name}'.")
+            from app.services.customer_type_service import CustomerTypeService
+            CustomerTypeService.seed_default_customer_types(db)
+            print(f"Default sales_customer_type seeded in '{db_name}'.")
+
+            from app.services.state_service import StateService
+            StateService.seed_default_states(db)
+            print(f"Default sales_state seeded in '{db_name}'.")
         except Exception as e:
             print(f"Error seeding '{db_name}':", e)
             db.rollback()

@@ -7,35 +7,54 @@ from fastapi import HTTPException
 import requests
 import os
 
-def get_users_by_roles_http(role_ids: list[str]) -> list[str]:
+def get_users_by_roles_helper(role_ids: list[str], db: Session = None) -> list[str]:
     if not role_ids:
         return []
+    if db is not None:
+        try:
+            from app.models.user_role import UserRole
+            role_uuids = [UUID(rid) for rid in role_ids if rid]
+            user_roles = db.query(UserRole.user_id).filter(UserRole.role_id.in_(role_uuids)).all()
+            if user_roles:
+                return [str(ur.user_id) for ur in user_roles]
+        except Exception:
+            pass
     try:
         auth_host = os.getenv("AUTH_SERVICE_HOST", "auth_service")
         auth_port = os.getenv("AUTH_SERVICE_PORT", "8001")
         response = requests.get(
             f"http://{auth_host}:{auth_port}/api/v1/users/by-roles",
             params={"role_ids": role_ids},
-            timeout=5
+            timeout=1
         )
         if response.status_code == 200:
             return response.json().get("user_ids", [])
-    except Exception as e:
-        print("Failed to query auth service for roles:", e)
+    except Exception:
+        pass
     return []
 
-def get_user_roles_http(user_id: str) -> list[str]:
+def get_user_roles_helper(user_id: str, db: Session = None) -> list[str]:
+    if not user_id:
+        return []
+    if db is not None:
+        try:
+            from app.models.user_role import UserRole
+            user_roles = db.query(UserRole.role_id).filter(UserRole.user_id == UUID(user_id)).all()
+            if user_roles:
+                return [str(ur.role_id) for ur in user_roles]
+        except Exception:
+            pass
     try:
         auth_host = os.getenv("AUTH_SERVICE_HOST", "auth_service")
         auth_port = os.getenv("AUTH_SERVICE_PORT", "8001")
         response = requests.get(
             f"http://{auth_host}:{auth_port}/api/v1/users/{user_id}/role-ids",
-            timeout=5
+            timeout=1
         )
         if response.status_code == 200:
             return response.json().get("role_ids", [])
-    except Exception as e:
-        print("Failed to query auth service for user roles:", e)
+    except Exception:
+        pass
     return []
 
 def get_visible_creator_user_ids(current_user: dict, db: Session) -> list[str]:
@@ -52,7 +71,7 @@ def get_visible_creator_user_ids(current_user: dict, db: Session) -> list[str]:
     junior_role_ids = LeadService.get_junior_roles_for_user(user_role_ids, db)
     junior_user_ids = []
     if junior_role_ids:
-        junior_user_ids = get_users_by_roles_http(list(junior_role_ids))
+        junior_user_ids = get_users_by_roles_helper(list(junior_role_ids), db)
 
     return list(set([user_id] + junior_user_ids))
 
@@ -107,7 +126,7 @@ class LeadService:
         
         junior_user_ids = []
         if junior_role_ids:
-            junior_user_ids = get_users_by_roles_http(list(junior_role_ids))
+            junior_user_ids = get_users_by_roles_helper(list(junior_role_ids), db)
             
         query = db.query(Lead).filter(
             or_(
@@ -121,10 +140,31 @@ class LeadService:
     @staticmethod
     def create_lead(request, creator_id: UUID, db: Session) -> Lead:
         assigned_to_uuid = UUID(request.assigned_to_id) if getattr(request, "assigned_to_id", None) else None
+
         lead = Lead(
             title=request.title,
             description=request.description,
             status=request.status or "new",
+
+            contact_name=getattr(request, "contact_name", None),
+            organization_name=getattr(request, "organization_name", None),
+            email=getattr(request, "email", None),
+            mobile_number=getattr(request, "mobile_number", None),
+            website=getattr(request, "website", None),
+            office_address=getattr(request, "office_address", None),
+            city=getattr(request, "city", None),
+            zip_code=getattr(request, "zip_code", None),
+            country=getattr(request, "country", "India"),
+            gst_number=getattr(request, "gst_number", None),
+            pan_number=getattr(request, "pan_number", None),
+            coi_number=getattr(request, "coi_number", None),
+            designation=getattr(request, "designation", None),
+            remarks=getattr(request, "remarks", None),
+
+            customer_type_id=getattr(request, "customer_type_id", None),
+            state_id=getattr(request, "state_id", None),
+            lead_source_id=getattr(request, "lead_source_id", None),
+
             creator_id=creator_id,
             assigned_to_id=assigned_to_uuid
         )
@@ -135,7 +175,7 @@ class LeadService:
 
     @staticmethod
     def assign_lead(lead_id: str, target_user_id: str, assigner_id: str, is_super_admin: bool, user_role_ids: set[str], db: Session) -> Lead:
-        lead = db.query(Lead).filter(Lead.id == UUID(lead_id)).first()
+        lead = db.query(Lead).filter(Lead.id == int(lead_id)).first()
         if not lead:
             raise HTTPException(status_code=404, detail="Lead not found")
 
@@ -162,7 +202,7 @@ class LeadService:
 
     @staticmethod
     def progress_lead(lead_id: str, request, user_id: str, is_super_admin: bool, user_role_ids: set[str], db: Session) -> Lead:
-        lead = db.query(Lead).filter(Lead.id == UUID(lead_id)).first()
+        lead = db.query(Lead).filter(Lead.id == int(lead_id)).first()
         if not lead:
             raise HTTPException(status_code=404, detail="Lead not found")
             
@@ -193,6 +233,46 @@ class LeadService:
         if request.quotation_items is not None:
             lead.quotation_items = request.quotation_items
             
+        db.commit()
+        db.refresh(lead)
+        return lead
+
+    @staticmethod
+    def update_lead(lead_id: str, request, user_id: str, is_super_admin: bool, user_role_ids: set[str], db: Session) -> Lead:
+        lead = db.query(Lead).filter(Lead.id == int(lead_id)).first()
+        if not lead:
+            raise HTTPException(status_code=404, detail="Lead not found")
+
+        is_authorized = False
+        if is_super_admin:
+            is_authorized = True
+        elif str(lead.creator_id) == user_id or (lead.assigned_to_id and str(lead.assigned_to_id) == user_id):
+            is_authorized = True
+        else:
+            junior_role_ids = LeadService.get_junior_roles_for_user(user_role_ids, db)
+            if junior_role_ids:
+                creator_role_ids = set(get_user_roles_http(str(lead.creator_id)))
+                if creator_role_ids.intersection(junior_role_ids):
+                    is_authorized = True
+
+        if not is_authorized:
+            raise HTTPException(status_code=403, detail="Not authorized to edit this lead")
+
+        fields_to_update = [
+            "title", "description", "status", "stage",
+            "contact_name", "organization_name", "email", "mobile_number",
+            "website", "office_address", "city", "zip_code", "country",
+            "gst_number", "pan_number", "coi_number", "designation", "remarks",
+            "customer_type_id", "state_id", "lead_source_id"
+        ]
+        for field in fields_to_update:
+            val = getattr(request, field, None)
+            if val is not None:
+                setattr(lead, field, val)
+
+        if getattr(request, "assigned_to_id", None) is not None:
+            lead.assigned_to_id = UUID(request.assigned_to_id) if request.assigned_to_id else None
+
         db.commit()
         db.refresh(lead)
         return lead

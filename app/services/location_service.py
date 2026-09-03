@@ -12,16 +12,27 @@ class LocationService:
 
     @staticmethod
     def create(request, db: Session):
-        auth_host = os.getenv("AUTH_SERVICE_HOST", "auth_service")
-        auth_port = os.getenv("AUTH_SERVICE_PORT", "8001")
-        try:
-            response = requests.get(
-                f"http://{auth_host}:{auth_port}/api/v1/companies/{request.company_id}/exists-internal",
-                timeout=5
-            )
-            exists = response.status_code == 200 and response.json().get("exists", False)
-        except Exception:
-            exists = False
+        exists = False
+        if db is not None:
+            try:
+                from app.models.company import Company
+                comp = db.query(Company).filter(Company.id == request.company_id).first()
+                if comp:
+                    exists = True
+            except Exception:
+                pass
+
+        if not exists:
+            auth_host = os.getenv("AUTH_SERVICE_HOST", "auth_service")
+            auth_port = os.getenv("AUTH_SERVICE_PORT", "8001")
+            try:
+                response = requests.get(
+                    f"http://{auth_host}:{auth_port}/api/v1/companies/{request.company_id}/exists-internal",
+                    timeout=1
+                )
+                exists = response.status_code == 200 and response.json().get("exists", False)
+            except Exception:
+                exists = False
 
         if not exists:
             raise HTTPException(

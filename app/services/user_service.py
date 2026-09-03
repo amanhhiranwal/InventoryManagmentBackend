@@ -69,7 +69,41 @@ class UserService:
         user.roles = roles_list
         user.companies = companies_list
 
-        return UserRepository.create(db, user)
+        created_user = UserRepository.create(db, user)
+        
+        # Mirror user record across all microservice databases
+        try:
+            from sqlalchemy import create_engine, text
+            from app.core.config import settings
+            db_names = ["solutions", "crm_db", "inventory_db", "sales_db"]
+            for target_db in db_names:
+                try:
+                    db_url = f"postgresql+psycopg2://{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{target_db}"
+                    t_engine = create_engine(db_url)
+                    with t_engine.connect() as conn:
+                        exists = conn.execute(text(f"SELECT id FROM users WHERE id = '{created_user.id}';")).fetchone()
+                        if not exists:
+                            conn.execute(text("""
+                                INSERT INTO users (id, first_name, last_name, email, password, phone_number, employee_id, is_super_admin, is_active)
+                                VALUES (:id, :first_name, :last_name, :email, :password, :phone_number, :employee_id, :is_super_admin, :is_active)
+                            """), {
+                                "id": str(created_user.id),
+                                "first_name": created_user.first_name,
+                                "last_name": created_user.last_name,
+                                "email": created_user.email,
+                                "password": created_user.password,
+                                "phone_number": created_user.phone_number,
+                                "employee_id": created_user.employee_id,
+                                "is_super_admin": created_user.is_super_admin,
+                                "is_active": created_user.is_active,
+                            })
+                            conn.commit()
+                except Exception as inner_e:
+                    print(f"User sync error to {target_db}:", inner_e)
+        except Exception as e:
+            print("User replication error:", e)
+
+        return created_user
 
     @staticmethod
     def get_all(db: Session, skip: int = 0, limit: int = 100) -> dict:
