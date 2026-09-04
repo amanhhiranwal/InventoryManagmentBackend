@@ -1,4 +1,29 @@
 services:
+  backend_app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: backend_app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=${POSTGRES_HOST:-192.168.1.173}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_USER=${POSTGRES_USER:-crm_admin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-Masters@123}
+      - POSTGRES_DB=${POSTGRES_DB:-solutions}
+      - MONGO_URI=${MONGO_URI:-mongodb://192.168.1.173:27017}
+      - MONGO_DB=${MONGO_DB:-solutions}
+      - REDIS_HOST=${REDIS_HOST:-192.168.1.173}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - PYTHONPATH=/app
+
   auth_service:
     build:
       context: .
@@ -13,20 +38,13 @@ services:
     env_file:
       - .env
     environment:
-      - POSTGRES_HOST=${DOCKER_POSTGRES_HOST:-postgres_db}
+      - POSTGRES_HOST=${POSTGRES_HOST:-192.168.1.173}
       - POSTGRES_PORT=${POSTGRES_PORT:-5432}
       - POSTGRES_DB=${AUTH_DB:-auth_db}
-      - MONGO_URI=${DOCKER_MONGO_URI:-mongodb://mongo_db:27017/}
-      - REDIS_HOST=${DOCKER_REDIS_HOST:-redis_cache}
-      - REDIS_PORT=${DOCKER_REDIS_PORT:-6379}
+      - MONGO_URI=${MONGO_URI:-mongodb://192.168.1.173:27017/}
+      - REDIS_HOST=${REDIS_HOST:-192.168.1.173}
+      - REDIS_PORT=${REDIS_PORT:-6379}
       - PYTHONPATH=/app
-    depends_on:
-      postgres_db:
-        condition: service_healthy
-      mongo_db:
-        condition: service_healthy
-      redis_cache:
-        condition: service_healthy
 
   crm_service:
     build:
@@ -42,20 +60,13 @@ services:
     env_file:
       - .env
     environment:
-      - POSTGRES_HOST=${DOCKER_POSTGRES_HOST:-postgres_db}
+      - POSTGRES_HOST=${POSTGRES_HOST:-192.168.1.173}
       - POSTGRES_PORT=${POSTGRES_PORT:-5432}
       - POSTGRES_DB=${CRM_DB:-crm_db}
-      - MONGO_URI=${DOCKER_MONGO_URI:-mongodb://mongo_db:27017/}
-      - REDIS_HOST=${DOCKER_REDIS_HOST:-redis_cache}
-      - REDIS_PORT=${DOCKER_REDIS_PORT:-6379}
+      - MONGO_URI=${MONGO_URI:-mongodb://192.168.1.173:27017/}
+      - REDIS_HOST=${REDIS_HOST:-192.168.1.173}
+      - REDIS_PORT=${REDIS_PORT:-6379}
       - PYTHONPATH=/app
-    depends_on:
-      postgres_db:
-        condition: service_healthy
-      mongo_db:
-        condition: service_healthy
-      redis_cache:
-        condition: service_healthy
 
   inventory_service:
     build:
@@ -71,20 +82,13 @@ services:
     env_file:
       - .env
     environment:
-      - POSTGRES_HOST=${DOCKER_POSTGRES_HOST:-postgres_db}
+      - POSTGRES_HOST=${POSTGRES_HOST:-192.168.1.173}
       - POSTGRES_PORT=${POSTGRES_PORT:-5432}
       - POSTGRES_DB=${INVENTORY_DB:-inventory_db}
-      - MONGO_URI=${DOCKER_MONGO_URI:-mongodb://mongo_db:27017/}
-      - REDIS_HOST=${DOCKER_REDIS_HOST:-redis_cache}
-      - REDIS_PORT=${DOCKER_REDIS_PORT:-6379}
+      - MONGO_URI=${MONGO_URI:-mongodb://192.168.1.173:27017/}
+      - REDIS_HOST=${REDIS_HOST:-192.168.1.173}
+      - REDIS_PORT=${REDIS_PORT:-6379}
       - PYTHONPATH=/app
-    depends_on:
-      postgres_db:
-        condition: service_healthy
-      mongo_db:
-        condition: service_healthy
-      redis_cache:
-        condition: service_healthy
 
   sales_service:
     build:
@@ -100,27 +104,20 @@ services:
     env_file:
       - .env
     environment:
-      - POSTGRES_HOST=${DOCKER_POSTGRES_HOST:-postgres_db}
+      - POSTGRES_HOST=${POSTGRES_HOST:-192.168.1.173}
       - POSTGRES_PORT=${POSTGRES_PORT:-5432}
       - POSTGRES_DB=${SALES_DB:-sales_db}
-      - MONGO_URI=${DOCKER_MONGO_URI:-mongodb://mongo_db:27017/}
-      - REDIS_HOST=${DOCKER_REDIS_HOST:-redis_cache}
-      - REDIS_PORT=${DOCKER_REDIS_PORT:-6379}
+      - MONGO_URI=${MONGO_URI:-mongodb://192.168.1.173:27017/}
+      - REDIS_HOST=${REDIS_HOST:-192.168.1.173}
+      - REDIS_PORT=${REDIS_PORT:-6379}
       - PYTHONPATH=/app
-    depends_on:
-      postgres_db:
-        condition: service_healthy
-      mongo_db:
-        condition: service_healthy
-      redis_cache:
-        condition: service_healthy
 
   gateway:
     image: nginx:alpine
     container_name: api_gateway
     restart: unless-stopped
     ports:
-      - "${BACKEND_EXTERNAL_PORT:-8000}:8000"
+      - "${BACKEND_EXTERNAL_PORT:-8080}:8000"
     volumes:
       - ./services/gateway/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
@@ -128,49 +125,3 @@ services:
       - crm_service
       - inventory_service
       - sales_service
-
-  postgres_db:
-    image: postgres:16-alpine
-    container_name: postgres_db
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-    ports:
-      - "${POSTGRES_EXTERNAL_PORT:-5433}:5432"
-    volumes:
-      - ./data/postgres:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  mongo_db:
-    image: mongo:7.0
-    container_name: mongo_db
-    restart: unless-stopped
-    ports:
-      - "${MONGO_EXTERNAL_PORT:-27017}:27017"
-    volumes:
-      - ./data/mongo:/data/db
-    healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  redis_cache:
-    image: redis:7.2-alpine
-    container_name: redis_cache
-    restart: unless-stopped
-    ports:
-      - "${REDIS_EXTERNAL_PORT:-6379}:6379"
-    volumes:
-      - ./data/redis:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
