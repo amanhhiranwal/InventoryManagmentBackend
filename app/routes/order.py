@@ -17,12 +17,14 @@ router = APIRouter(
 
 
 class OrderItem(BaseModel):
-    product_id: str
-    description: str
-    rate: float
-    quantity_case: float
-    quantity_kg_ltr: float
-    price: float
+    product_id: Optional[str] = None
+    item: Optional[str] = None
+    description: Optional[str] = None
+    rate: Optional[float] = 0.0
+    price: Optional[float] = 0.0
+    qty: Optional[float] = 0.0
+    quantity_case: Optional[float] = 0.0
+    quantity_kg_ltr: Optional[float] = 0.0
 
 
 class CreateOrderRequest(BaseModel):
@@ -34,9 +36,9 @@ class CreateOrderRequest(BaseModel):
     aging_121_180: Optional[float] = 0.0
     aging_above_180: Optional[float] = 0.0
     items: List[OrderItem]
-    total_amount: float
-    gst_amount: float
-    grand_total: float
+    total_amount: Optional[float] = 0.0
+    gst_amount: Optional[float] = 0.0
+    grand_total: Optional[float] = 0.0
 
 
 @router.post("")
