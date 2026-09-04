@@ -13,8 +13,12 @@ from app.models import (
 from app.services.password_service import PasswordService
 from app.services.menu_service import MenuService
 
+from urllib.parse import quote_plus
+from app.core.config import settings
+
 DB_NAMES = ["solutions", "auth_db", "crm_db", "inventory_db", "sales_db"]
-BASE_URL = "postgresql+psycopg2://amanhiranwal:aman%4015@localhost:5433/"
+encoded_pw = quote_plus(settings.POSTGRES_PASSWORD)
+BASE_URL = f"postgresql+psycopg2://{settings.POSTGRES_USER}:{encoded_pw}@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/"
 
 def sync_databases():
     print("=== 1. Ensuring All Microservice Databases Exist ===")
@@ -37,14 +41,23 @@ def sync_databases():
         Base.metadata.create_all(bind=engine)
         print(f"Base metadata tables created for '{db_name}'.")
 
-        # 2. Add any missing columns
+        # 2. Add any missing columns safely
         with engine.connect() as conn:
-            conn.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS assigned_to_id UUID;"))
-            conn.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS assigned_by_id UUID;"))
-            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS location_id UUID;"))
-            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
-            conn.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
-            conn.execute(text("ALTER TABLE locations ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
+            try:
+                conn.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS assigned_to_id UUID;"))
+                conn.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS assigned_by_id UUID;"))
+            except Exception:
+                pass
+            try:
+                conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS location_id UUID;"))
+                conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
+            except Exception:
+                pass
+            try:
+                conn.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
+                conn.execute(text("ALTER TABLE locations ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
+            except Exception:
+                pass
             conn.commit()
 
         # 3. Seed superadmin user in db
@@ -131,16 +144,32 @@ def sync_databases():
             print(f"Standard executive role permissions verified in '{db_name}'.")
             from app.services.customer_type_service import CustomerTypeService
             CustomerTypeService.seed_default_customer_types(db)
-            print(f"Default sales_customer_type seeded in '{db_name}'.")
 
             from app.services.state_service import StateService
             StateService.seed_default_states(db)
-            print(f"Default sales_state seeded in '{db_name}'.")
+
+            from app.services.category_group_service import CategoryGroupService
+            CategoryGroupService.seed_default_category_groups(db)
+
+            from app.services.lead_source_service import LeadSourceService
+            LeadSourceService.seed_default_lead_sources(db)
+            print(f"Default master values seeded in '{db_name}'.")
         except Exception as e:
             print(f"Error seeding '{db_name}':", e)
             db.rollback()
         finally:
             db.close()
+
+    # Seed MongoDB standard collections
+    try:
+        from app.database.mongodb import sync_mongo_db
+        for m_db in ["solutions", "crm_db", "inventory_db", "sales_db"]:
+            col = sync_mongo_db.client[m_db]["inventory_units"]
+            if col.count_documents({}) == 0:
+                col.insert_many([{"name": "Pcs"}, {"name": "Box"}, {"name": "Kg"}, {"name": "Meter"}, {"name": "Litre"}])
+                print(f"Seeded standard inventory units in Mongo '{m_db}'.")
+    except Exception as me:
+        print("Mongo seeding info:", me)
 
 if __name__ == "__main__":
     sync_databases()
