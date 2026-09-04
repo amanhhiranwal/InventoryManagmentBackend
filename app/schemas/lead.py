@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 
 class CreateLeadRequest(BaseModel):
-    title: str
+    title: Optional[str] = None
     description: Optional[str] = None
     status: Optional[str] = "new"
     

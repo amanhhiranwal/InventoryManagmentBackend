@@ -13,9 +13,10 @@ router = APIRouter(prefix="/customers", tags=["Customers Master"])
 
 
 class CustomerCreate(BaseModel):
-    name: str
-    email: str
-    phone: str
+    name: Optional[str] = None
+    customer_name: Optional[str] = None
+    email: Optional[str] = ""
+    phone: Optional[str] = ""
     address: Optional[str] = ""
     gst: Optional[str] = ""
     pan: Optional[str] = ""
@@ -58,9 +59,12 @@ def create_customer(
 ):
     col = sync_mongo_db["customers"]
     doc = request.dict()
+    cust_name = request.name or request.customer_name or "Unnamed Customer"
+    doc["name"] = cust_name
+    doc["customer_name"] = cust_name
 
-    if col.find_one({"name": doc["name"]}):
-        raise HTTPException(status_code=400, detail=f"Customer with name '{doc['name']}' already exists.")
+    if col.find_one({"name": cust_name}):
+        raise HTTPException(status_code=400, detail=f"Customer with name '{cust_name}' already exists.")
 
     first_name = current_user.get("first_name", "")
     last_name = current_user.get("last_name", "")

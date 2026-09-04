@@ -74,18 +74,20 @@ class UserService:
         # Mirror user record across all microservice databases
         try:
             from sqlalchemy import create_engine, text
+            from urllib.parse import quote_plus
             from app.core.config import settings
             db_names = ["solutions", "crm_db", "inventory_db", "sales_db"]
+            encoded_pw = quote_plus(settings.POSTGRES_PASSWORD)
             for target_db in db_names:
                 try:
-                    db_url = f"postgresql+psycopg2://{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{target_db}"
+                    db_url = f"postgresql+psycopg2://{settings.POSTGRES_USER}:{encoded_pw}@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{target_db}"
                     t_engine = create_engine(db_url)
                     with t_engine.connect() as conn:
                         exists = conn.execute(text(f"SELECT id FROM users WHERE id = '{created_user.id}';")).fetchone()
                         if not exists:
                             conn.execute(text("""
-                                INSERT INTO users (id, first_name, last_name, email, password, phone_number, employee_id, is_super_admin, is_active)
-                                VALUES (:id, :first_name, :last_name, :email, :password, :phone_number, :employee_id, :is_super_admin, :is_active)
+                                INSERT INTO users (id, first_name, last_name, email, password, phone_number, employee_id, is_super_admin, is_active, created_at, updated_at)
+                                VALUES (:id, :first_name, :last_name, :email, :password, :phone_number, :employee_id, :is_super_admin, :is_active, NOW(), NOW())
                             """), {
                                 "id": str(created_user.id),
                                 "first_name": created_user.first_name,

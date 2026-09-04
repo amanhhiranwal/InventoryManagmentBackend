@@ -141,8 +141,10 @@ class LeadService:
     def create_lead(request, creator_id: UUID, db: Session) -> Lead:
         assigned_to_uuid = UUID(request.assigned_to_id) if getattr(request, "assigned_to_id", None) else None
 
+        title_val = getattr(request, "title", None) or getattr(request, "organization_name", None) or getattr(request, "contact_name", None) or "New Lead"
+
         lead = Lead(
-            title=request.title,
+            title=title_val,
             description=request.description,
             status=request.status or "new",
 
