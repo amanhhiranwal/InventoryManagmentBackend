@@ -22,6 +22,21 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
 
+    # -----------------------------
+    # Password reset / outbound email
+    # -----------------------------
+    FRONTEND_URL: str = "http://localhost:3000"
+
+    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 30
+
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = ""
+    SMTP_TLS: bool = True
+    SMTP_SSL: bool = False
+
     BACKEND_CORS_ORIGINS: list[str] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",

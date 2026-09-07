@@ -19,6 +19,7 @@ from app.models.product_type import ProductType
 from app.models.category_group import CategoryGroup
 from app.models.user_company import UserCompany
 from app.models.user_role import UserRole
+from app.models.password_reset_token import PasswordResetToken
 from app.services.password_service import PasswordService
 from uuid import uuid4
 

@@ -11,3 +11,4 @@ from app.models.lead import Lead
 from app.models.lead_source import LeadSource
 from app.models.state import State
 from app.models.customer_type import CustomerType
+from app.models.password_reset_token import PasswordResetToken

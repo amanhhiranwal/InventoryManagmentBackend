@@ -1,7 +1,13 @@
 from sqlalchemy.orm import Session
 
-from app.schemas.auth import RegisterSuperAdminRequest
+from app.core.config import settings
+from app.schemas.auth import (
+    ForgotPasswordRequest,
+    RegisterSuperAdminRequest,
+    ResetPasswordRequest,
+)
 from app.services.auth_service import AuthService
+from app.services.password_reset_service import PasswordResetService
 
 
 class AuthController:
@@ -49,4 +55,50 @@ class AuthController:
                 "email": user.email,
                 "is_super_admin": user.is_super_admin,
             },
+        }
+
+
+    @staticmethod
+    def forgot_password(
+        request: ForgotPasswordRequest,
+        db: Session,
+    ):
+
+        reset_link = PasswordResetService.forgot_password(
+            request.email,
+            db,
+        )
+
+        response = {
+            "success": True,
+            "message": (
+                "If an account exists for that email, "
+                "a password reset link has been sent."
+            ),
+        }
+
+        # Outside production the link is echoed back so the flow can be
+        # exercised without a configured mail server.
+        if reset_link and settings.ENV != "production" and not settings.SMTP_HOST:
+            response["reset_link"] = reset_link
+
+        return response
+
+
+    @staticmethod
+    def reset_password(
+        request: ResetPasswordRequest,
+        db: Session,
+    ):
+
+        PasswordResetService.reset_password(
+            token=request.token,
+            new_password=request.password,
+            db=db,
+            email=request.email,
+        )
+
+        return {
+            "success": True,
+            "message": "Password reset successful. You can now sign in with your new password.",
         }

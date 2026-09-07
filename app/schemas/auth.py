@@ -50,3 +50,17 @@ class LoginResponse(BaseModel):
     token_type: str
 
     user: UserResponse
+
+
+class ForgotPasswordRequest(BaseModel):
+
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+
+    token: str = Field(..., min_length=1)
+
+    password: str = Field(..., min_length=8)
+
+    email: EmailStr | None = None
