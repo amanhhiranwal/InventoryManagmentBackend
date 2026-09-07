@@ -7,6 +7,7 @@ from app.utils.exception_handler import register_exception_handlers
 from app.routes.lead import router as lead_router
 from app.routes.workflow import router as workflow_router
 from app.routes.lead_source import router as lead_source_router
+from app.routes.customer_type import router as customer_type_router
 
 app = FastAPI(
     title=f"{settings.APP_NAME} - CRM Service",
@@ -30,7 +31,7 @@ api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(lead_router)
 api_router.include_router(workflow_router)
 api_router.include_router(lead_source_router)
-
+api_router.include_router(customer_type_router)
 app.include_router(api_router)
 
 @app.get("/", tags=["Root"])

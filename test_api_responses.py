@@ -1,6 +1,8 @@
 import urllib.request
 import urllib.parse
+import urllib.error
 import json
+import time
 
 try:
     print("Logging in...")
@@ -69,10 +71,12 @@ try:
         print("Payload:", response.read().decode("utf-8"))
 
     print("\nCreating new company...")
+    test_suffix = int(time.time())
+
     create_company_data = json.dumps({
-        "company_name": "Integration Test Company",
-        "company_code": "TEST-COMP",
-        "email": "test-comp@example.com",
+    "company_name": f"Integration Test Company {test_suffix}",
+    "company_code": f"TEST-COMP-{test_suffix}",
+    "email": f"test-comp-{test_suffix}@example.com",
         "phone_number": "1234567890",
         "address_line_1": "123 Test St",
         "city": "Testville",
@@ -96,8 +100,8 @@ try:
     create_loc_data = json.dumps({
         "company_id": company_id,
         "location_name": "Integration Test Location",
-        "location_code": "TEST-LOC",
-        "email": "test-loc@example.com",
+        "location_code": f"TEST-LOC-{test_suffix}",
+        "email": f"test-location-{test_suffix}@example.com",
         "phone_number": "0987654321",
         "address_line_1": "456 Test Rd",
         "city": "Locality",
@@ -161,5 +165,8 @@ try:
             print("Status:", response.status)
             print("Payload:", response.read().decode("utf-8"))
 
+except urllib.error.HTTPError as e:
+    print("HTTP Error:", e.code)
+    print("Response:", e.read().decode("utf-8"))
 except Exception as e:
     print("Error:", e)

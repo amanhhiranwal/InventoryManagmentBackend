@@ -39,9 +39,9 @@ class Lead(Base):
     lead_source_id = Column(Integer, ForeignKey("sales_lead_source.id"), nullable=True)
 
     # Auth User UUID Foreign Keys
-    creator_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    assigned_to_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
-    assigned_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    creator_id = Column(UUID(as_uuid=True), nullable=False)
+    assigned_to_id = Column(UUID(as_uuid=True), nullable=True)
+    assigned_by_id = Column(UUID(as_uuid=True), nullable=True)
 
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
@@ -49,7 +49,3 @@ class Lead(Base):
     customer_type = relationship("CustomerType", foreign_keys=[customer_type_id])
     state = relationship("State", foreign_keys=[state_id])
     lead_source = relationship("LeadSource", foreign_keys=[lead_source_id])
-
-    creator = relationship("User", foreign_keys=[creator_id], backref="created_leads")
-    assigned_to = relationship("User", foreign_keys=[assigned_to_id], backref="assigned_leads")
-    assigned_by = relationship("User", foreign_keys=[assigned_by_id], backref="assigned_by_leads")

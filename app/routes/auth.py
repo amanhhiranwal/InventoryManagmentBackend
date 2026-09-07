@@ -6,8 +6,10 @@ from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.repositories.rbac_repository import RBACRepository
 from app.schemas.auth import (
+    ForgotPasswordRequest,
     LoginRequest,
     RegisterSuperAdminRequest,
+    ResetPasswordRequest,
 )
 
 router = APIRouter(
@@ -93,3 +95,25 @@ async def logout():
         "success": True,
         "message": "Logged out successfully"
     }
+
+
+@router.post("/forgot-password")
+def forgot_password(
+    request: ForgotPasswordRequest,
+    db: Session = Depends(get_db),
+):
+    return AuthController.forgot_password(
+        request,
+        db,
+    )
+
+
+@router.post("/reset-password")
+def reset_password(
+    request: ResetPasswordRequest,
+    db: Session = Depends(get_db),
+):
+    return AuthController.reset_password(
+        request,
+        db,
+    )
