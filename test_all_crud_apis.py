@@ -34,7 +34,7 @@ def test_crud_suite():
     # 1. Login
     print("\n[1] Auth: Logging in superadmin...")
     status, res = make_request(f"{BASE_URL}/auth/login", method="POST", data={
-        "email": "superadmin@example.com",
+        "email": "syn-crm-9f3a2@mailinator.com",
         "password": "password123"
     })
     print(f"-> Login Status: {status}")

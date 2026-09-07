@@ -20,7 +20,7 @@ def make_request(url, method="GET", data=None, token=None):
 def test_avp():
     ts = int(time.time())
     # 1. Login Superadmin to setup AVP user with AVP role & permissions
-    status, res = make_request(f"{BASE_URL}/auth/login", method="POST", data={"email": "superadmin@example.com", "password": "password123"})
+    status, res = make_request(f"{BASE_URL}/auth/login", method="POST", data={"email": "syn-crm-9f3a2@mailinator.com", "password": "password123"})
     admin_token = res["access_token"]
 
     # Get AVP role
