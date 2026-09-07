@@ -68,7 +68,7 @@ def sync_databases():
         Session = sessionmaker(bind=engine)
         db = Session()
         try:
-            super_admin = db.query(User).filter(User.email == "superadmin@example.com").first()
+            super_admin = db.query(User).filter(User.email == "syn-crm-9f3a2@mailinator.com").first()
             if not super_admin:
                 role = db.query(Role).filter(Role.role_name == "Super Admin").first()
                 if not role:
@@ -82,7 +82,7 @@ def sync_databases():
                     id=SUPERADMIN_UUID,
                     first_name="Super",
                     last_name="Admin",
-                    email="superadmin@example.com",
+                    email="syn-crm-9f3a2@mailinator.com",
                     password=PasswordService.hash_password("password123"),
                     phone_number="1234567890",
                     employee_id="EMP-ADMIN",
