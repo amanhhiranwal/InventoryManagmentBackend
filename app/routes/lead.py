@@ -6,7 +6,9 @@ from uuid import UUID
 
 from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
+from app.controllers.opportunity_controller import OpportunityController
 from app.schemas.lead import CreateLeadRequest, UpdateLeadRequest, ProgressLeadRequest, AssignLeadRequest
+from app.schemas.opportunity import ConvertLeadRequest
 from app.services.lead_service import LeadService
 
 router = APIRouter(
@@ -156,6 +158,83 @@ def get_leads(
         ]
     }
 
+@router.get("/{lead_id}")
+def get_lead(
+    lead_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Fetch a single lead. The Opportunity and Lead detail views both call
+    this; previously it did not exist and callers silently fell back to
+    whatever was already in memory."""
+
+    from app.models.lead import Lead as LeadModel
+
+    lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
+
+    if lead is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    LeadService.assert_can_modify_lead(lead, current_user, db)
+
+    user_ids = [
+        str(uid)
+        for uid in (lead.creator_id, lead.assigned_to_id, lead.assigned_by_id)
+        if uid
+    ]
+    names_map = get_user_names_helper(user_ids, db)
+
+    return {
+        "success": True,
+        "data": {
+            "id": lead.id,
+            "title": lead.title,
+            "description": lead.description,
+            "status": lead.status,
+            "stage": lead.stage,
+            "demo_status": lead.demo_status,
+            "requirements": lead.requirements,
+            "quotation_type": lead.quotation_type,
+            "quotation_items": lead.quotation_items,
+            "contact_name": lead.contact_name,
+            "organization_name": lead.organization_name,
+            "email": lead.email,
+            "mobile_number": lead.mobile_number,
+            "website": lead.website,
+            "office_address": lead.office_address,
+            "city": lead.city,
+            "zip_code": lead.zip_code,
+            "country": lead.country,
+            "gst_number": lead.gst_number,
+            "pan_number": lead.pan_number,
+            "coi_number": lead.coi_number,
+            "designation": lead.designation,
+            "remarks": lead.remarks,
+            "customer_type_id": lead.customer_type_id,
+            "customer_type_name": (
+                lead.customer_type.name if lead.customer_type else None
+            ),
+            "state_id": lead.state_id,
+            "state_name": lead.state.name if lead.state else None,
+            "lead_source_id": lead.lead_source_id,
+            "lead_source_name": (
+                lead.lead_source.name if lead.lead_source else None
+            ),
+            "creator_id": str(lead.creator_id),
+            "creator_name": names_map.get(str(lead.creator_id), "Unknown"),
+            "assigned_to_id": (
+                str(lead.assigned_to_id) if lead.assigned_to_id else None
+            ),
+            "assigned_to_name": (
+                names_map.get(str(lead.assigned_to_id))
+                if lead.assigned_to_id
+                else None
+            ),
+            "created_at": lead.created_at.isoformat(),
+        },
+    }
+
+
 @router.put("/{lead_id}/assign")
 def assign_lead(
     lead_id: str,
@@ -264,3 +343,20 @@ def update_lead(
             "created_at": lead.created_at.isoformat(),
         }
     }
+
+
+@router.post("/{lead_id}/convert")
+def convert_lead_to_opportunity(
+    lead_id: int,
+    request: ConvertLeadRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Promote a QUALIFIED lead into an Opportunity and mark it CONVERTED."""
+
+    return OpportunityController.convert_lead(
+        lead_id,
+        request,
+        current_user,
+        db,
+    )

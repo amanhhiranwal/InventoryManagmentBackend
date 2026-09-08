@@ -1,5 +1,11 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
+from app.core.workflow_status import (
+    LEAD_TRANSITIONS,
+    LeadStatus,
+    assert_transition,
+    normalize_lead_status,
+)
 from app.models.lead import Lead
 from app.models.workflow import Workflow
 from uuid import UUID
@@ -78,6 +84,39 @@ def get_visible_creator_user_ids(current_user: dict, db: Session) -> list[str]:
 
 class LeadService:
     @staticmethod
+    def assert_can_modify_lead(lead: Lead, current_user: dict, db: Session) -> None:
+        """Shared authorisation check for lead mutations.
+
+        Creator, assignee, super admin, or a reporting superior may modify.
+        Extracted so Opportunity conversion applies the same rule instead of
+        reimplementing it.
+        """
+
+        if current_user.get("is_super_admin", False):
+            return
+
+        user_id = current_user.get("user_id")
+
+        if str(lead.creator_id) == user_id:
+            return
+
+        if lead.assigned_to_id and str(lead.assigned_to_id) == user_id:
+            return
+
+        visible_ids = get_visible_creator_user_ids(current_user, db)
+
+        if visible_ids and str(lead.creator_id) in visible_ids:
+            return
+
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Only the lead creator, assigned user, and their reporting "
+                "superiors can modify this lead"
+            ),
+        )
+
+    @staticmethod
     def get_junior_roles_for_user(user_role_ids: set[str], db: Session) -> set[str]:
         workflows = db.query(Workflow).all()
         
@@ -146,7 +185,7 @@ class LeadService:
         lead = Lead(
             title=title_val,
             description=request.description,
-            status=request.status or "new",
+            status=normalize_lead_status(getattr(request, "status", None)),
 
             contact_name=getattr(request, "contact_name", None),
             organization_name=getattr(request, "organization_name", None),
@@ -225,7 +264,14 @@ class LeadService:
             
         lead.stage = request.stage
         if request.status is not None:
-            lead.status = request.status
+            target_status = normalize_lead_status(request.status)
+            assert_transition(
+                "lead",
+                LEAD_TRANSITIONS,
+                normalize_lead_status(lead.status),
+                target_status,
+            )
+            lead.status = target_status
         if request.demo_status is not None:
             lead.demo_status = request.demo_status
         if request.requirements is not None:
@@ -260,8 +306,9 @@ class LeadService:
         if not is_authorized:
             raise HTTPException(status_code=403, detail="Not authorized to edit this lead")
 
+        # "status" is handled separately so the transition can be validated.
         fields_to_update = [
-            "title", "description", "status", "stage",
+            "title", "description", "stage",
             "contact_name", "organization_name", "email", "mobile_number",
             "website", "office_address", "city", "zip_code", "country",
             "gst_number", "pan_number", "coi_number", "designation", "remarks",
@@ -271,6 +318,16 @@ class LeadService:
             val = getattr(request, field, None)
             if val is not None:
                 setattr(lead, field, val)
+
+        if getattr(request, "status", None) is not None:
+            target_status = normalize_lead_status(request.status)
+            assert_transition(
+                "lead",
+                LEAD_TRANSITIONS,
+                normalize_lead_status(lead.status),
+                target_status,
+            )
+            lead.status = target_status
 
         if getattr(request, "assigned_to_id", None) is not None:
             lead.assigned_to_id = UUID(request.assigned_to_id) if request.assigned_to_id else None
