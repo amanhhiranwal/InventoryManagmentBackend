@@ -63,6 +63,13 @@ class Opportunity(Base):
     pan_number = Column(String(50), nullable=True)
     coi_number = Column(String(50), nullable=True)
 
+    # Shipping address; the columns above are the billing address.
+    shipping_address = Column(String(255), nullable=True)
+    shipping_city = Column(String(100), nullable=True)
+    shipping_state = Column(String(100), nullable=True)
+    shipping_zip_code = Column(String(20), nullable=True)
+    shipping_country = Column(String(100), nullable=True)
+
     requirements = Column(String(1000), nullable=True)
     remarks = Column(String(1000), nullable=True)
     demo_status = Column(String(50), default="none", nullable=True)
