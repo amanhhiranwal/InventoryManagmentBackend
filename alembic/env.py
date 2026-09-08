@@ -21,6 +21,8 @@ from app.models.customer_type import CustomerType
 from app.models.lead_source import LeadSource
 from app.models.state import State
 from app.models.password_reset_token import PasswordResetToken
+from app.models.opportunity import Opportunity
+from app.models.sales_order import SalesOrder
 from sqlalchemy import create_engine
 
 config = context.config

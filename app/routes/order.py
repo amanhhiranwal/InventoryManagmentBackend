@@ -1,14 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
-from typing import Optional, List
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from bson import ObjectId
-import datetime
 
-from app.database.mongodb import sync_mongo_db
+from app.controllers.sales_order_controller import SalesOrderController
 from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
-from app.services.lead_service import get_visible_creator_user_ids
+from app.schemas.sales_order import (
+    CreateSalesOrderRequest,
+    UpdateSalesOrderRequest,
+    UpdateSalesOrderStatusRequest,
+)
 
 router = APIRouter(
     prefix="/orders",
@@ -16,54 +16,13 @@ router = APIRouter(
 )
 
 
-class OrderItem(BaseModel):
-    product_id: Optional[str] = None
-    item: Optional[str] = None
-    description: Optional[str] = None
-    rate: Optional[float] = 0.0
-    price: Optional[float] = 0.0
-    qty: Optional[float] = 0.0
-    quantity_case: Optional[float] = 0.0
-    quantity_kg_ltr: Optional[float] = 0.0
-
-
-class CreateOrderRequest(BaseModel):
-    customer_name: str
-    aging_0_30: Optional[float] = 0.0
-    aging_31_60: Optional[float] = 0.0
-    aging_61_90: Optional[float] = 0.0
-    aging_91_120: Optional[float] = 0.0
-    aging_121_180: Optional[float] = 0.0
-    aging_above_180: Optional[float] = 0.0
-    items: List[OrderItem]
-    total_amount: Optional[float] = 0.0
-    gst_amount: Optional[float] = 0.0
-    grand_total: Optional[float] = 0.0
-
-
 @router.post("")
 def create_order(
-    request: CreateOrderRequest,
+    request: CreateSalesOrderRequest,
+    db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    orders_col = sync_mongo_db["sales_orders"]
-    doc = request.dict()
-    doc["created_at"] = datetime.datetime.utcnow().isoformat()
-
-    first_name = current_user.get("first_name", "")
-    last_name = current_user.get("last_name", "")
-    creator_name = f"{first_name} {last_name}".strip() or "User"
-
-    doc["creator_id"] = current_user.get("user_id")
-    doc["creator_name"] = creator_name
-
-    orders_col.insert_one(doc)
-    doc["_id"] = str(doc["_id"])
-    return {
-        "success": True,
-        "message": "Order created successfully.",
-        "data": doc
-    }
+    return SalesOrderController.create(request, current_user, db)
 
 
 @router.get("")
@@ -71,54 +30,47 @@ def get_orders(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    orders_col = sync_mongo_db["sales_orders"]
-    visible_user_ids = get_visible_creator_user_ids(current_user, db)
+    return SalesOrderController.get_all(current_user, db)
 
-    query = {}
-    if visible_user_ids:
-        query = {
-            "$or": [
-                {"creator_id": {"$in": visible_user_ids}},
-                {"creator_id": {"$exists": False}},
-                {"creator_id": None}
-            ]
-        }
 
-    cursor = orders_col.find(query).sort("_id", -1)
-    orders = []
-    for doc in cursor:
-        doc["_id"] = str(doc["_id"])
-        orders.append(doc)
-    return {
-        "success": True,
-        "data": orders
-    }
+@router.get("/{order_id}")
+def get_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    return SalesOrderController.get_by_id(order_id, db)
+
+
+@router.put("/{order_id}")
+def update_order(
+    order_id: int,
+    request: UpdateSalesOrderRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    return SalesOrderController.update(order_id, request, current_user, db)
+
+
+@router.put("/{order_id}/status")
+def update_order_status(
+    order_id: int,
+    request: UpdateSalesOrderStatusRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    return SalesOrderController.update_status(
+        order_id,
+        request,
+        current_user,
+        db,
+    )
 
 
 @router.delete("/{order_id}")
 def delete_order(
-    order_id: str,
+    order_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    orders_col = sync_mongo_db["sales_orders"]
-    try:
-        obj_id = ObjectId(order_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid Order ID format.")
-
-    doc = orders_col.find_one({"_id": obj_id})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Order not found.")
-
-    visible_user_ids = get_visible_creator_user_ids(current_user, db)
-    if visible_user_ids:
-        target_creator = doc.get("creator_id")
-        if target_creator and target_creator not in visible_user_ids:
-            raise HTTPException(status_code=403, detail="Permission denied. You can only delete orders created by yourself or your subordinates.")
-
-    orders_col.delete_one({"_id": obj_id})
-    return {
-        "success": True,
-        "message": "Order deleted successfully."
-    }
+    return SalesOrderController.delete(order_id, current_user, db)

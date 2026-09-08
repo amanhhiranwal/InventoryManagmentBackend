@@ -13,6 +13,7 @@ from app.routes.product_type import router as product_type_router
 from app.routes.category_group import router as category_group_router
 from app.routes.customer_type import router as customer_type_router
 from app.routes.profile import router as profile_router
+from app.routes.opportunity import router as opportunity_router
 from app.routes.order import router as order_router
 from app.routes.unit import router as unit_router
 from app.routes.customer import router as customer_router
@@ -48,6 +49,7 @@ api_router.include_router(product_type_router)
 api_router.include_router(category_group_router)
 api_router.include_router(customer_type_router)
 api_router.include_router(profile_router)
+api_router.include_router(opportunity_router)
 api_router.include_router(order_router)
 api_router.include_router(unit_router)
 api_router.include_router(customer_router)
