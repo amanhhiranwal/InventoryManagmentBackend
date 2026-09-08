@@ -202,6 +202,7 @@ class LeadService:
             designation=getattr(request, "designation", None),
             remarks=getattr(request, "remarks", None),
 
+
             customer_type_id=getattr(request, "customer_type_id", None),
             state_id=getattr(request, "state_id", None),
             lead_source_id=getattr(request, "lead_source_id", None),

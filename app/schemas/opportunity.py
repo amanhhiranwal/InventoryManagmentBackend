@@ -31,6 +31,12 @@ class CreateOpportunityRequest(BaseModel):
     pan_number: Optional[str] = None
     coi_number: Optional[str] = None
 
+    shipping_address: Optional[str] = None
+    shipping_city: Optional[str] = None
+    shipping_state: Optional[str] = None
+    shipping_zip_code: Optional[str] = None
+    shipping_country: Optional[str] = None
+
     requirements: Optional[str] = None
     remarks: Optional[str] = None
     demo_status: Optional[str] = None
@@ -63,6 +69,12 @@ class UpdateOpportunityRequest(BaseModel):
     gst_number: Optional[str] = None
     pan_number: Optional[str] = None
     coi_number: Optional[str] = None
+
+    shipping_address: Optional[str] = None
+    shipping_city: Optional[str] = None
+    shipping_state: Optional[str] = None
+    shipping_zip_code: Optional[str] = None
+    shipping_country: Optional[str] = None
 
     requirements: Optional[str] = None
     remarks: Optional[str] = None
@@ -109,6 +121,12 @@ class ConvertLeadRequest(BaseModel):
     gst_number: Optional[str] = None
     pan_number: Optional[str] = None
     coi_number: Optional[str] = None
+
+    shipping_address: Optional[str] = None
+    shipping_city: Optional[str] = None
+    shipping_state: Optional[str] = None
+    shipping_zip_code: Optional[str] = None
+    shipping_country: Optional[str] = None
 
     requirements: Optional[str] = None
     remarks: Optional[str] = None
