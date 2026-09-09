@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
     SMTP_FROM: str = ""
+    #: Display name on outbound mail. Recipients see this rather than the
+    #: raw mailbox, and it is what the Send Quotation dialog shows as the
+    #: sender - mail always leaves through this one SMTP account, so the
+    #: sender is not per-user and is not selectable in the UI.
+    SMTP_FROM_NAME: str = "Synergy CRM Portal"
     SMTP_TLS: bool = True
     SMTP_SSL: bool = False
 

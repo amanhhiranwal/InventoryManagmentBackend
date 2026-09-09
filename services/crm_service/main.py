@@ -6,6 +6,7 @@ from app.utils.exception_handler import register_exception_handlers
 
 from app.routes.lead import router as lead_router
 from app.routes.opportunity import router as opportunity_router
+from app.routes.quotation import router as quotation_router
 from app.routes.workflow import router as workflow_router
 from app.routes.lead_source import router as lead_source_router
 from app.routes.customer_type import router as customer_type_router
@@ -31,6 +32,7 @@ register_exception_handlers(app)
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(lead_router)
 api_router.include_router(opportunity_router)
+api_router.include_router(quotation_router)
 api_router.include_router(workflow_router)
 api_router.include_router(lead_source_router)
 api_router.include_router(customer_type_router)

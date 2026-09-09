@@ -130,7 +130,7 @@ SALES_ORDER_TRANSITIONS: dict[str, set[str]] = {
 
 
 # ---------------------------------------------------------------------------
-# Downstream workflow entities - defined, not yet wired to a model.
+# Quotation
 # ---------------------------------------------------------------------------
 class QuotationStatus:
     DRAFT = "DRAFT"
@@ -140,6 +140,32 @@ class QuotationStatus:
     EXPIRED = "EXPIRED"
 
     ALL = [DRAFT, SENT, ACCEPTED, REJECTED, EXPIRED]
+
+
+QUOTATION_TRANSITIONS: dict[str, set[str]] = {
+    # A draft is only ever sent, or allowed to lapse past its validity date.
+    QuotationStatus.DRAFT: {
+        QuotationStatus.SENT,
+        QuotationStatus.EXPIRED,
+    },
+    # Once with the client it is theirs to accept or reject; it can also
+    # expire while they sit on it.
+    QuotationStatus.SENT: {
+        QuotationStatus.ACCEPTED,
+        QuotationStatus.REJECTED,
+        QuotationStatus.EXPIRED,
+    },
+    QuotationStatus.ACCEPTED: _terminal(),
+    QuotationStatus.REJECTED: _terminal(),
+    # An expired quotation is superseded by a new revision rather than
+    # being revived in place.
+    QuotationStatus.EXPIRED: _terminal(),
+}
+
+
+# ---------------------------------------------------------------------------
+# Downstream workflow entities - defined, not yet wired to a model.
+# ---------------------------------------------------------------------------
 
 
 class CustomerPOStatus:
@@ -298,6 +324,20 @@ def normalize_sales_order_status(value: str | None) -> str:
         candidate.lower(),
         SalesOrderStatus.DRAFT,
     )
+
+
+def normalize_quotation_status(value: str | None) -> str:
+    """Map any incoming quotation status onto a canonical value."""
+
+    if not value:
+        return QuotationStatus.DRAFT
+
+    candidate = str(value).strip().upper().replace(" ", "_")
+
+    if candidate in QuotationStatus.ALL:
+        return candidate
+
+    return QuotationStatus.DRAFT
 
 
 def assert_transition(
