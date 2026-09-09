@@ -69,6 +69,27 @@ class SalesOrder(Base):
     gst_amount = Column(Float, default=0.0, nullable=True)
     grand_total = Column(Float, default=0.0, nullable=True)
 
+    # Summary charges. The New Sales Order form showed inputs for these but
+    # they were never bound to anything, so nothing entered was kept or
+    # included in the total.
+    orc_amount = Column(Float, default=0.0, nullable=True)
+    orc_percent = Column(Float, default=0.0, nullable=True)
+    freight_charges = Column(Float, default=0.0, nullable=True)
+    installation_lumpsum = Column(Float, default=0.0, nullable=True)
+    taxable_amount = Column(Float, default=0.0, nullable=True)
+    gst_percent = Column(Float, default=18.0, nullable=True)
+
+    #: How discount and ORC were entered: "PERCENT" or "AMOUNT".
+    discount_mode = Column(String(10), default="AMOUNT", nullable=True)
+    orc_mode = Column(String(10), default="AMOUNT", nullable=True)
+    discount_input = Column(Float, nullable=True)
+    orc_input = Column(Float, nullable=True)
+
+    #: Payment tracking. Outstanding is stored rather than derived on read so
+    #: an order always reports the balance it was saved with.
+    advance_received = Column(Float, default=0.0, nullable=True)
+    outstanding_balance = Column(Float, default=0.0, nullable=True)
+
     aging_0_30 = Column(Float, default=0.0, nullable=True)
     aging_31_60 = Column(Float, default=0.0, nullable=True)
     aging_61_90 = Column(Float, default=0.0, nullable=True)
