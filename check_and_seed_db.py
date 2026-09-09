@@ -93,6 +93,7 @@ def sync_db_and_seed():
             "lead.delete",
             "opportunity.read",
             "order.read",
+            "quotation.read",
             "inventory.menu",
             "inventory.read",
             "inventory.create",

@@ -30,7 +30,8 @@ DEFAULT_MENUS_DATA = [
     "children": [
       {"title": "Leads", "icon": "LuUser", "path": "/leads", "permission_key": "lead.read", "order_index": 1},
       {"title": "Oppurtunity", "icon": "LuStar", "path": "/sales/opportunities", "permission_key": "opportunity.read", "order_index": 2},
-      {"title": "Sales Orders", "icon": "LuFileText", "path": "/sales/orders", "permission_key": "order.read", "order_index": 3},
+      {"title": "Quotation", "icon": "LuQuoteOpen", "path": "/sales/quotations", "permission_key": "quotation.read", "order_index": 3},
+      {"title": "Sales Orders", "icon": "LuFileText", "path": "/sales/orders", "permission_key": "order.read", "order_index": 4},
     ]
   },
   {
@@ -87,34 +88,63 @@ class MenuService:
 
     @staticmethod
     def seed_default_menus(db: Session):
-        count = db.query(MenuItem).count()
-        if count > 0:
-            return
-        
-        for parent_idx, g_item in enumerate(DEFAULT_MENUS_DATA):
-            parent_menu = MenuItem(
-                title=g_item["title"],
-                icon=g_item["icon"],
-                path=g_item.get("path"),
-                permission_key=g_item["permission_key"],
-                order_index=g_item["order_index"],
-                is_active=True,
-            )
-            db.add(parent_menu)
-            db.commit()
-            db.refresh(parent_menu)
+        """Ensure every default menu item exists.
 
-            for c_item in g_item.get("children", []):
-                child_menu = MenuItem(
-                    title=c_item["title"],
-                    icon=c_item["icon"],
-                    path=c_item.get("path"),
-                    permission_key=c_item["permission_key"],
-                    parent_id=parent_menu.id,
-                    order_index=c_item["order_index"],
+        Previously this returned early whenever the table held any rows, so a
+        newly added default (Quotation, for instance) could only ever appear
+        in a database seeded from empty. It now backfills anything missing,
+        matched on title within its parent, and leaves existing rows -
+        including any the user has renamed or reordered - untouched.
+        """
+
+        for g_item in DEFAULT_MENUS_DATA:
+            parent_menu = (
+                db.query(MenuItem)
+                .filter(
+                    MenuItem.title == g_item["title"],
+                    MenuItem.parent_id.is_(None),
+                )
+                .first()
+            )
+
+            if parent_menu is None:
+                parent_menu = MenuItem(
+                    title=g_item["title"],
+                    icon=g_item["icon"],
+                    path=g_item.get("path"),
+                    permission_key=g_item["permission_key"],
+                    order_index=g_item["order_index"],
                     is_active=True,
                 )
-                db.add(child_menu)
+                db.add(parent_menu)
+                db.commit()
+                db.refresh(parent_menu)
+
+            for c_item in g_item.get("children", []):
+                exists = (
+                    db.query(MenuItem)
+                    .filter(
+                        MenuItem.title == c_item["title"],
+                        MenuItem.parent_id == parent_menu.id,
+                    )
+                    .first()
+                )
+
+                if exists is not None:
+                    continue
+
+                db.add(
+                    MenuItem(
+                        title=c_item["title"],
+                        icon=c_item["icon"],
+                        path=c_item.get("path"),
+                        permission_key=c_item["permission_key"],
+                        parent_id=parent_menu.id,
+                        order_index=c_item["order_index"],
+                        is_active=True,
+                    )
+                )
+
             db.commit()
 
     @staticmethod

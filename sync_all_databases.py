@@ -109,7 +109,7 @@ def sync_databases():
             
             all_perms_keys = [
                 "dashboard.read", "customer.read", "sales.menu", "lead.read", "lead.create", "lead.update",
-                "opportunity.read", "order.read", "inventory.menu", "inventory.read", "inventory.create",
+                "opportunity.read", "order.read", "quotation.read", "inventory.menu", "inventory.read", "inventory.create",
                 "masters.menu", "company.read", "location.read", "customer_type.read", "product_type.read",
                 "category_group.read", "unit.read", "role.read", "user.read", "workflow.read", "reports.read"
             ]

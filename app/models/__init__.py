@@ -13,4 +13,5 @@ from app.models.state import State
 from app.models.customer_type import CustomerType
 from app.models.password_reset_token import PasswordResetToken
 from app.models.opportunity import Opportunity
+from app.models.quotation import Quotation
 from app.models.sales_order import SalesOrder

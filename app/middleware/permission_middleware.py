@@ -44,6 +44,7 @@ ALIAS_MAP = {
     "lead.read": {"lead.read", "lead.view", "lead.create", "sales.menu"},
     "opportunity.read": {"opportunity.read", "opportunity.view", "sales.menu"},
     "order.read": {"order.read", "order.view", "sales.menu"},
+    "quotation.read": {"quotation.read", "quotation.view", "sales.menu"},
     "inventory.read": {"inventory.read", "inventory.view", "lead.read", "lead.create", "sales.menu"},
     "unit.read": {"unit.read", "unit.view", "lead.read", "sales.menu"},
     "customer.read": {"customer.read", "customer.view", "sales.menu"},
