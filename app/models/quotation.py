@@ -77,6 +77,18 @@ class Quotation(Base):
     discount_amount = Column(Float, default=0.0, nullable=True)
     orc_amount = Column(Float, default=0.0, nullable=True)
     orc_percent = Column(Float, default=0.0, nullable=True)
+
+    #: How the user entered the discount and ORC on the form: "PERCENT" or
+    #: "AMOUNT". Stored so the figure round-trips into the same field it was
+    #: typed into rather than being silently converted.
+    discount_mode = Column(String(10), default="AMOUNT", nullable=True)
+    orc_mode = Column(String(10), default="AMOUNT", nullable=True)
+
+    #: Raw value as typed, in the unit named by the matching mode. A discount
+    #: entered here overrides the sum of the per-line discounts; leave it
+    #: null to keep deriving the total from the line items.
+    discount_input = Column(Float, nullable=True)
+    orc_input = Column(Float, nullable=True)
     freight_charges = Column(Float, default=0.0, nullable=True)
     installation_lumpsum = Column(Float, default=0.0, nullable=True)
     taxable_amount = Column(Float, default=0.0, nullable=True)

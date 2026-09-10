@@ -113,6 +113,10 @@ def compute_totals(
     installation_lumpsum: float = 0.0,
     gst_percent: float = 18.0,
     advance_percent: float = 30.0,
+    discount_mode: str | None = None,
+    discount_input: float | None = None,
+    orc_mode: str | None = None,
+    orc_input: float | None = None,
 ) -> dict:
     """Derive every money figure on the quotation from its line items.
 
@@ -141,13 +145,36 @@ def compute_totals(
         subtotal += line_total
         discount_amount += line_total * discount_pct / 100.0
 
+    # A discount typed into the summary overrides the per-line total, in
+    # whichever unit it was entered.
+    discount_mode = (discount_mode or "AMOUNT").upper()
+
+    if discount_input is not None:
+        typed = _as_float(discount_input)
+
+        discount_amount = (
+            subtotal * typed / 100.0 if discount_mode == "PERCENT" else typed
+        )
+
+    # A discount can never exceed what is being discounted.
+    discount_amount = max(0.0, min(discount_amount, subtotal))
+
+    orc_mode = (orc_mode or "AMOUNT").upper()
     orc_percent = _as_float(orc_percent)
     orc_amount = _as_float(orc_amount)
 
-    # An explicit ORC amount wins; otherwise derive it from the percentage.
-    # Whichever way round, the other value is back-filled so the UI can label
-    # the row "ORC (1.02%)" against a flat amount.
-    if orc_amount:
+    # An explicit entry wins; otherwise the other side is back-filled so the
+    # UI can label the row "ORC (1.02%)" against a flat amount.
+    if orc_input is not None:
+        typed = _as_float(orc_input)
+
+        if orc_mode == "PERCENT":
+            orc_percent = typed
+            orc_amount = subtotal * typed / 100.0
+        else:
+            orc_amount = typed
+            orc_percent = orc_amount / subtotal * 100.0 if subtotal else 0.0
+    elif orc_amount:
         if subtotal:
             orc_percent = orc_amount / subtotal * 100.0
     elif orc_percent:
@@ -186,6 +213,10 @@ def compute_totals(
         "advance_percent": round(advance_percent, 2),
         "advance_amount": round(advance_amount, 2),
         "on_delivery_amount": round(total_payable - advance_amount, 2),
+        "discount_mode": discount_mode,
+        "orc_mode": orc_mode,
+        "discount_input": discount_input,
+        "orc_input": orc_input,
     }
 
 
@@ -237,6 +268,10 @@ def serialize_quotation(quotation: Quotation) -> dict:
         "advance_percent": quotation.advance_percent or 0.0,
         "advance_amount": quotation.advance_amount or 0.0,
         "on_delivery_amount": quotation.on_delivery_amount or 0.0,
+        "discount_mode": quotation.discount_mode or "AMOUNT",
+        "orc_mode": quotation.orc_mode or "AMOUNT",
+        "discount_input": quotation.discount_input,
+        "orc_input": quotation.orc_input,
 
         "attachments": quotation.attachments or [],
         "terms": quotation.terms or [],
@@ -373,6 +408,10 @@ class QuotationService:
             installation_lumpsum=request.installation_lumpsum,
             gst_percent=request.gst_percent,
             advance_percent=request.advance_percent,
+            discount_mode=request.discount_mode,
+            discount_input=request.discount_input,
+            orc_mode=request.orc_mode,
+            orc_input=request.orc_input,
         )
 
         quotation = Quotation(
@@ -501,6 +540,7 @@ class QuotationService:
             for field in (
                 "items", "orc_percent", "orc_amount", "freight_charges",
                 "installation_lumpsum", "gst_percent", "advance_percent",
+                "discount_mode", "discount_input", "orc_mode", "orc_input",
             )
         )
 
@@ -536,6 +576,26 @@ class QuotationService:
                     request.advance_percent
                     if request.advance_percent is not None
                     else quotation.advance_percent
+                ),
+                discount_mode=(
+                    request.discount_mode
+                    if request.discount_mode is not None
+                    else quotation.discount_mode
+                ),
+                discount_input=(
+                    request.discount_input
+                    if request.discount_input is not None
+                    else quotation.discount_input
+                ),
+                orc_mode=(
+                    request.orc_mode
+                    if request.orc_mode is not None
+                    else quotation.orc_mode
+                ),
+                orc_input=(
+                    request.orc_input
+                    if request.orc_input is not None
+                    else quotation.orc_input
                 ),
             )
 

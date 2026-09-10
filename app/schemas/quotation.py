@@ -45,6 +45,13 @@ class CreateQuotationRequest(BaseModel):
 
     orc_percent: Optional[float] = 0.0
     orc_amount: Optional[float] = 0.0
+
+    #: "AMOUNT" or "PERCENT" - the unit the figure below was typed in.
+    discount_mode: Optional[str] = None
+    orc_mode: Optional[str] = None
+    #: Raw values as entered. A discount here overrides the per-line total.
+    discount_input: Optional[float] = None
+    orc_input: Optional[float] = None
     freight_charges: Optional[float] = 0.0
     installation_lumpsum: Optional[float] = 0.0
     gst_percent: Optional[float] = 18.0
@@ -79,6 +86,11 @@ class UpdateQuotationRequest(BaseModel):
 
     orc_percent: Optional[float] = None
     orc_amount: Optional[float] = None
+
+    discount_mode: Optional[str] = None
+    orc_mode: Optional[str] = None
+    discount_input: Optional[float] = None
+    orc_input: Optional[float] = None
     freight_charges: Optional[float] = None
     installation_lumpsum: Optional[float] = None
     gst_percent: Optional[float] = None

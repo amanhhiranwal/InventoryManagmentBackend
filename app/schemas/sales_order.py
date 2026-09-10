@@ -40,10 +40,24 @@ class CreateSalesOrderRequest(BaseModel):
 
     items: List[SalesOrderItem] = []
 
+    #: Totals are recomputed server-side from the line items; these are
+    #: accepted for backward compatibility but never trusted.
     total_amount: Optional[float] = 0.0
     discount_amount: Optional[float] = 0.0
     gst_amount: Optional[float] = 0.0
     grand_total: Optional[float] = 0.0
+
+    #: "AMOUNT" or "PERCENT" - the unit the figure below was typed in.
+    discount_mode: Optional[str] = None
+    orc_mode: Optional[str] = None
+    #: Raw values as entered. A discount here overrides the per-line total.
+    discount_input: Optional[float] = None
+    orc_input: Optional[float] = None
+
+    freight_charges: Optional[float] = 0.0
+    installation_lumpsum: Optional[float] = 0.0
+    gst_percent: Optional[float] = 18.0
+    advance_received: Optional[float] = 0.0
 
     aging_0_30: Optional[float] = 0.0
     aging_31_60: Optional[float] = 0.0
@@ -78,6 +92,16 @@ class UpdateSalesOrderRequest(BaseModel):
     discount_amount: Optional[float] = None
     gst_amount: Optional[float] = None
     grand_total: Optional[float] = None
+
+    discount_mode: Optional[str] = None
+    orc_mode: Optional[str] = None
+    discount_input: Optional[float] = None
+    orc_input: Optional[float] = None
+
+    freight_charges: Optional[float] = None
+    installation_lumpsum: Optional[float] = None
+    gst_percent: Optional[float] = None
+    advance_received: Optional[float] = None
 
     aging_0_30: Optional[float] = None
     aging_31_60: Optional[float] = None

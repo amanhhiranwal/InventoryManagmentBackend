@@ -17,6 +17,54 @@ from app.repositories.opportunity_repository import OpportunityRepository
 from app.services.lead_service import LeadService, get_visible_creator_user_ids
 
 
+def _as_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def compute_product_totals(items) -> dict:
+    """Derive the Products & Order Items figures from the lines.
+
+    Discount is a per-line percentage off that line, and tax is charged on
+    what is left after it:
+
+        line        = qty * unit price
+        discount    = line * discount%
+        taxable     = line - discount
+        tax         = taxable * tax%
+        total       = SUM(taxable + tax)
+    """
+
+    subtotal = 0.0
+    discount_amount = 0.0
+    tax_amount = 0.0
+
+    for raw in items or []:
+        item = raw if isinstance(raw, dict) else dict(raw)
+
+        quantity = _as_float(item.get("quantity"), 1.0)
+        unit_price = _as_float(item.get("unit_price") or item.get("unitPrice"))
+
+        line = quantity * unit_price
+        discount = line * _as_float(item.get("discount")) / 100.0
+        taxable = line - discount
+
+        subtotal += line
+        discount_amount += discount
+        tax_amount += taxable * _as_float(item.get("tax")) / 100.0
+
+    total = subtotal - discount_amount + tax_amount
+
+    return {
+        "products_subtotal": round(subtotal, 2),
+        "products_discount_amount": round(discount_amount, 2),
+        "products_tax_amount": round(tax_amount, 2),
+        "products_total": round(total, 2),
+    }
+
+
 def _to_uuid(value) -> UUID | None:
     if not value:
         return None
@@ -159,6 +207,11 @@ class OpportunityService:
             remarks=request.remarks,
             demo_status=request.demo_status or "none",
             product_items=request.product_items,
+            **compute_product_totals(request.product_items),
+            lead_source=request.lead_source,
+            purchase_timeline=request.purchase_timeline,
+            attachments=request.attachments,
+            compliance_documents=request.compliance_documents,
             customer_type_id=request.customer_type_id,
             state_id=request.state_id,
             creator_id=creator_id,
@@ -206,6 +259,10 @@ class OpportunityService:
             "remarks",
             "demo_status",
             "product_items",
+            "lead_source",
+            "purchase_timeline",
+            "attachments",
+            "compliance_documents",
             "customer_type_id",
             "state_id",
         ]
@@ -214,6 +271,12 @@ class OpportunityService:
             value = getattr(request, field, None)
             if value is not None:
                 setattr(opportunity, field, value)
+
+        if getattr(request, "product_items", None) is not None:
+            for key, value in compute_product_totals(
+                opportunity.product_items
+            ).items():
+                setattr(opportunity, key, value)
 
         if getattr(request, "assigned_to_id", None) is not None:
             opportunity.assigned_to_id = _to_uuid(request.assigned_to_id)
@@ -354,6 +417,16 @@ class OpportunityService:
             remarks=field("remarks", lead.remarks),
             demo_status=field("demo_status", lead.demo_status) or "none",
             product_items=field("product_items", lead.quotation_items),
+            **compute_product_totals(
+                field("product_items", lead.quotation_items)
+            ),
+            lead_source=field(
+                "lead_source",
+                lead.lead_source.name if lead.lead_source else None,
+            ),
+            purchase_timeline=field("purchase_timeline", None),
+            attachments=field("attachments", None),
+            compliance_documents=field("compliance_documents", None),
             customer_type_id=field("customer_type_id", lead.customer_type_id),
             state_id=field("state_id", lead.state_id),
             creator_id=lead.creator_id,
@@ -418,6 +491,14 @@ def serialize_opportunity(opportunity: Opportunity) -> dict:
         "remarks": opportunity.remarks,
         "demo_status": opportunity.demo_status,
         "product_items": opportunity.product_items,
+        "products_subtotal": opportunity.products_subtotal or 0.0,
+        "products_discount_amount": opportunity.products_discount_amount or 0.0,
+        "products_tax_amount": opportunity.products_tax_amount or 0.0,
+        "products_total": opportunity.products_total or 0.0,
+        "lead_source": opportunity.lead_source,
+        "purchase_timeline": opportunity.purchase_timeline,
+        "attachments": opportunity.attachments or [],
+        "compliance_documents": opportunity.compliance_documents or {},
         "customer_type_id": opportunity.customer_type_id,
         "customer_type_name": (
             opportunity.customer_type.name if opportunity.customer_type else None
