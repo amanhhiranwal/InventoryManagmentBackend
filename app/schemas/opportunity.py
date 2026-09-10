@@ -43,6 +43,14 @@ class CreateOpportunityRequest(BaseModel):
 
     product_items: Optional[List[Dict[str, Any]]] = None
 
+    #: Snapshot of where the opportunity came from.
+    lead_source: Optional[str] = None
+    #: Buying window, e.g. "Immediate (0-15 days)".
+    purchase_timeline: Optional[str] = None
+    #: Requirements & Files uploads and the GST/PAN/COI certificates.
+    attachments: Optional[List[Dict[str, Any]]] = None
+    compliance_documents: Optional[Dict[str, Any]] = None
+
     customer_type_id: Optional[int] = None
     state_id: Optional[int] = None
     assigned_to_id: Optional[str] = None
@@ -81,6 +89,14 @@ class UpdateOpportunityRequest(BaseModel):
     demo_status: Optional[str] = None
 
     product_items: Optional[List[Dict[str, Any]]] = None
+
+    #: Snapshot of where the opportunity came from.
+    lead_source: Optional[str] = None
+    #: Buying window, e.g. "Immediate (0-15 days)".
+    purchase_timeline: Optional[str] = None
+    #: Requirements & Files uploads and the GST/PAN/COI certificates.
+    attachments: Optional[List[Dict[str, Any]]] = None
+    compliance_documents: Optional[Dict[str, Any]] = None
 
     customer_type_id: Optional[int] = None
     state_id: Optional[int] = None
@@ -133,6 +149,14 @@ class ConvertLeadRequest(BaseModel):
     demo_status: Optional[str] = None
 
     product_items: Optional[List[Dict[str, Any]]] = None
+
+    #: Snapshot of where the opportunity came from.
+    lead_source: Optional[str] = None
+    #: Buying window, e.g. "Immediate (0-15 days)".
+    purchase_timeline: Optional[str] = None
+    #: Requirements & Files uploads and the GST/PAN/COI certificates.
+    attachments: Optional[List[Dict[str, Any]]] = None
+    compliance_documents: Optional[Dict[str, Any]] = None
 
     customer_type_id: Optional[int] = None
     state_id: Optional[int] = None

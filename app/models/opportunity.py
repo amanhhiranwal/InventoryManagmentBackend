@@ -76,6 +76,28 @@ class Opportunity(Base):
 
     product_items = Column(JSON, nullable=True)
 
+    # Derived from product_items on every write, so the figure shown as
+    # Total Amount can never disagree with the lines it came from.
+    products_subtotal = Column(Float, default=0.0, nullable=True)
+    products_discount_amount = Column(Float, default=0.0, nullable=True)
+    products_tax_amount = Column(Float, default=0.0, nullable=True)
+    products_total = Column(Float, default=0.0, nullable=True)
+
+    #: Where the opportunity came from, carried over from the lead. Held as
+    #: text rather than a foreign key because it is a snapshot: renaming a
+    #: lead source later must not rewrite opportunities already raised.
+    lead_source = Column(String(100), nullable=True)
+
+    #: Buying window from the form, e.g. "Immediate (0-15 days)". Collected
+    #: by the New Opportunity screen but previously discarded on save.
+    purchase_timeline = Column(String(50), nullable=True)
+
+    #: Requirements & Files uploads: [{name, size, type}].
+    attachments = Column(JSON, nullable=True)
+
+    #: GST / PAN / COI certificates attached beside their numbers.
+    compliance_documents = Column(JSON, nullable=True)
+
     customer_type_id = Column(
         Integer,
         ForeignKey("sales_customer_type.id"),
