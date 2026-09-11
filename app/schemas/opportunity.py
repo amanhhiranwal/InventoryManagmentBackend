@@ -108,6 +108,23 @@ class UpdateOpportunityStatusRequest(BaseModel):
     won_reason: Optional[str] = None
     lost_reason: Optional[str] = None
 
+    # Free text the user typed when moving the opportunity. Recorded on the
+    # activity entry the move writes, so the history explains why.
+    remarks: Optional[str] = None
+
+
+class LogOpportunityActivityRequest(BaseModel):
+    """A single entry from the Log Activity form in the Opportunity drawer.
+
+    Both fields are optional on their own: a status with no remarks is a plain
+    move, remarks with no status is a note against the opportunity. At least
+    one must be supplied, which the service enforces.
+    """
+
+    status: Optional[str] = None
+    action: Optional[str] = None
+    remarks: Optional[str] = None
+
 
 class ConvertLeadRequest(BaseModel):
     """Promote a Lead into an Opportunity.

@@ -1,12 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-import requests
-import os
 from uuid import UUID
 
 from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.controllers.opportunity_controller import OpportunityController
+from app.utils.user_names import get_user_names_helper
 from app.schemas.lead import (
     CreateLeadRequest,
     UpdateLeadRequest,
@@ -21,32 +20,6 @@ router = APIRouter(
     prefix="/leads",
     tags=["Leads"],
 )
-
-def get_user_names_helper(user_ids: list[str], db: Session = None) -> dict[str, str]:
-    if not user_ids:
-        return {}
-    if db is not None:
-        try:
-            from app.models.user import User
-            user_uuids = [UUID(uid) for uid in user_ids if uid]
-            users = db.query(User).filter(User.id.in_(user_uuids)).all()
-            if users:
-                return {str(u.id): f"{u.first_name} {u.last_name}".strip() for u in users}
-        except Exception:
-            pass
-    try:
-        auth_host = os.getenv("AUTH_SERVICE_HOST", "auth_service")
-        auth_port = os.getenv("AUTH_SERVICE_PORT", "8001")
-        response = requests.get(
-            f"http://{auth_host}:{auth_port}/api/v1/users/names",
-            params={"user_ids": user_ids},
-            timeout=1
-        )
-        if response.status_code == 200:
-            return response.json().get("names", {})
-    except Exception:
-        pass
-    return {}
 
 def serialize_activity(activity, names_map: dict[str, str] | None = None) -> dict:
     """Shape one Activity History entry for the Lead Details drawer."""
@@ -328,7 +301,12 @@ def assign_lead(
     role_ids = {role_id} if role_id else set()
     
     lead = LeadService.assign_lead(lead_id, request.assigned_to_id, user_id, is_super_admin, role_ids, db)
-    names_map = get_user_names_http([str(lead.creator_id), str(lead.assigned_to_id)])
+    # Was get_user_names_http, which is not defined anywhere - assigning a
+    # lead raised NameError instead of returning the assignee's name.
+    names_map = get_user_names_helper(
+        [str(lead.creator_id), str(lead.assigned_to_id)],
+        db,
+    )
     
     return {
         "success": True,
