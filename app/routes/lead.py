@@ -7,7 +7,13 @@ from uuid import UUID
 from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.controllers.opportunity_controller import OpportunityController
-from app.schemas.lead import CreateLeadRequest, UpdateLeadRequest, ProgressLeadRequest, AssignLeadRequest
+from app.schemas.lead import (
+    CreateLeadRequest,
+    UpdateLeadRequest,
+    ProgressLeadRequest,
+    AssignLeadRequest,
+    LogLeadActivityRequest,
+)
 from app.schemas.opportunity import ConvertLeadRequest
 from app.services.lead_service import LeadService
 
@@ -41,6 +47,24 @@ def get_user_names_helper(user_ids: list[str], db: Session = None) -> dict[str, 
     except Exception:
         pass
     return {}
+
+def serialize_activity(activity, names_map: dict[str, str] | None = None) -> dict:
+    """Shape one Activity History entry for the Lead Details drawer."""
+
+    names_map = names_map or {}
+    created_by = str(activity.created_by) if activity.created_by else None
+
+    return {
+        "id": str(activity.id),
+        "action": activity.action,
+        "description": activity.description,
+        "from_status": activity.from_status,
+        "to_status": activity.to_status,
+        "created_by": created_by,
+        "created_by_name": names_map.get(created_by) if created_by else None,
+        "created_at": activity.created_at.isoformat(),
+    }
+
 
 @router.post("/")
 def create_lead(
@@ -231,6 +255,62 @@ def get_lead(
                 else None
             ),
             "created_at": lead.created_at.isoformat(),
+        },
+    }
+
+
+@router.get("/{lead_id}/activities")
+def get_lead_activities(
+    lead_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Activity History for one lead, newest first.
+
+    Deliberately its own endpoint rather than a field on the list response:
+    the list renders a table that never shows history, so loading every
+    lead's timeline to draw it would be wasted work.
+    """
+
+    activities = LeadService.get_activities(lead_id, current_user, db)
+
+    names_map = get_user_names_helper(
+        list({str(a.created_by) for a in activities if a.created_by}),
+        db,
+    )
+
+    return {
+        "success": True,
+        "data": [serialize_activity(a, names_map) for a in activities],
+    }
+
+
+@router.post("/{lead_id}/activities")
+def log_lead_activity(
+    lead_id: str,
+    request: LogLeadActivityRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Log an activity against a lead, moving its status when one was chosen."""
+
+    lead, activity = LeadService.log_activity(lead_id, request, current_user, db)
+
+    names_map = get_user_names_helper(
+        [str(activity.created_by)] if activity.created_by else [],
+        db,
+    )
+
+    return {
+        "success": True,
+        "message": "Activity logged successfully.",
+        "data": {
+            "activity": serialize_activity(activity, names_map),
+            "lead": {
+                "id": lead.id,
+                "status": lead.status,
+                "stage": lead.stage,
+            },
         },
     }
 

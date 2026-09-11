@@ -447,6 +447,20 @@ class OpportunityService:
         lead.status = LeadStatus.CONVERTED
         lead.stage = "opportunity"
         db.add(lead)
+
+        # Conversion is the last thing that happens to a lead, so it has to
+        # close out its timeline rather than ending on "Marked as Qualified".
+        LeadService.record_activity(
+            db,
+            lead,
+            action="Converted to Opportunity",
+            description=f"Opportunity #{opportunity.id} - {opportunity.title}.",
+            from_status=current_status,
+            to_status=LeadStatus.CONVERTED,
+            user_id=current_user.get("user_id"),
+            commit=False,
+        )
+
         db.commit()
         db.refresh(lead)
 
