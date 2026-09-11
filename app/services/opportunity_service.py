@@ -13,8 +13,22 @@ from app.core.workflow_status import (
     normalize_lead_status,
 )
 from app.models.opportunity import Opportunity
+from app.models.opportunity_activity import OpportunityActivity
 from app.repositories.opportunity_repository import OpportunityRepository
 from app.services.lead_service import LeadService, get_visible_creator_user_ids
+
+#: Headline written onto the activity entry when an opportunity reaches a
+#: status. Phrased as what the user did, because that is how the timeline
+#: reads back.
+OPPORTUNITY_STATUS_ACTIONS: dict[str, str] = {
+    OpportunityStatus.QUALIFICATION: "Opportunity Created",
+    OpportunityStatus.REQUIREMENT: "Moved to Requirement",
+    OpportunityStatus.DEMO: "Moved to Demo",
+    OpportunityStatus.PROPOSAL: "Moved to Proposal Sent",
+    OpportunityStatus.NEGOTIATION: "Moved to Negotiation",
+    OpportunityStatus.WON: "Marked as Won",
+    OpportunityStatus.LOST: "Marked as Dead",
+}
 
 
 def _as_float(value, default: float = 0.0) -> float:
@@ -218,7 +232,23 @@ class OpportunityService:
             assigned_to_id=_to_uuid(request.assigned_to_id),
         )
 
-        return OpportunityRepository.create(db, opportunity)
+        opportunity = OpportunityRepository.create(db, opportunity)
+
+        # Opens the timeline with the event that started it, so a brand new
+        # opportunity shows real history rather than an empty panel.
+        OpportunityService.record_activity(
+            db,
+            opportunity,
+            action=OPPORTUNITY_STATUS_ACTIONS.get(
+                status,
+                "Opportunity Created",
+            ),
+            description=request.remarks or request.requirements,
+            to_status=status,
+            user_id=str(creator_id),
+        )
+
+        return opportunity
 
     @staticmethod
     def update(
@@ -283,6 +313,156 @@ class OpportunityService:
 
         return OpportunityRepository.save(db, opportunity)
 
+    # ------------------------------------------------------------------
+    # Activity History
+    # ------------------------------------------------------------------
+    @staticmethod
+    def record_activity(
+        db: Session,
+        opportunity: Opportunity,
+        action: str,
+        description: str | None = None,
+        from_status: str | None = None,
+        to_status: str | None = None,
+        user_id: str | None = None,
+        commit: bool = True,
+    ) -> OpportunityActivity:
+        """Append one entry to an opportunity's Activity History.
+
+        A single helper so every path that changes an opportunity - the status
+        endpoint behind the row and board menus, the Log Activity form,
+        creation, conversion - writes history the same way.
+        """
+
+        activity = OpportunityActivity(
+            opportunity_id=opportunity.id,
+            action=action,
+            description=(description or None),
+            from_status=from_status,
+            to_status=to_status,
+            created_by=_to_uuid(user_id) if user_id else None,
+        )
+
+        db.add(activity)
+
+        if commit:
+            db.commit()
+            db.refresh(activity)
+
+        return activity
+
+    @staticmethod
+    def get_activities(
+        opportunity_id: int,
+        current_user: dict,
+        db: Session,
+    ) -> list[OpportunityActivity]:
+        """Newest-first history for one opportunity, for the details drawer."""
+
+        opportunity = OpportunityService.get_by_id(opportunity_id, db)
+
+        # Same rule as every other drawer action: whoever may modify the
+        # opportunity may read its history.
+        OpportunityService.assert_can_edit(opportunity, current_user, db)
+
+        return (
+            db.query(OpportunityActivity)
+            .filter(OpportunityActivity.opportunity_id == opportunity.id)
+            .order_by(
+                OpportunityActivity.created_at.desc(),
+                OpportunityActivity.id.desc(),
+            )
+            .all()
+        )
+
+    @staticmethod
+    def log_activity(
+        opportunity_id: int,
+        request,
+        current_user: dict,
+        db: Session,
+    ) -> tuple[Opportunity, OpportunityActivity]:
+        """Record an activity, moving the stage when one was chosen.
+
+        This is what the Log Activity form posts to. The move and the note go
+        in together so a stage change always carries the reason it happened.
+        """
+
+        opportunity = OpportunityService.get_by_id(opportunity_id, db)
+
+        OpportunityService.assert_can_edit(opportunity, current_user, db)
+
+        remarks = (getattr(request, "remarks", None) or "").strip()
+        raw_status = getattr(request, "status", None)
+
+        if not raw_status and not remarks:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Choose a status or write remarks before logging the "
+                    "activity."
+                ),
+            )
+
+        current_status = opportunity.status
+        action = (getattr(request, "action", None) or "").strip()
+        target = None
+
+        if raw_status:
+            target = str(raw_status).upper()
+
+            if target not in OpportunityStatus.ALL:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Invalid opportunity status '{raw_status}'. "
+                        f"Expected one of: {', '.join(OpportunityStatus.ALL)}."
+                    ),
+                )
+
+            assert_transition(
+                "opportunity",
+                OPPORTUNITY_TRANSITIONS,
+                current_status,
+                target,
+            )
+
+            opportunity.status = target
+
+            # Won is recorded on the opportunity itself, the same way the
+            # status endpoint does it - the two must not disagree.
+            if target == OpportunityStatus.WON:
+                opportunity.won_at = datetime.utcnow()
+                opportunity.won_by = _to_uuid(current_user.get("user_id"))
+                if remarks:
+                    opportunity.won_reason = remarks
+
+            if target == OpportunityStatus.LOST and remarks:
+                opportunity.lost_reason = remarks
+
+            if not action:
+                action = OPPORTUNITY_STATUS_ACTIONS.get(target, "Status Updated")
+        elif not action:
+            action = "Note Logged"
+
+        activity = OpportunityService.record_activity(
+            db,
+            opportunity,
+            action=action,
+            description=remarks,
+            from_status=current_status,
+            to_status=target,
+            user_id=current_user.get("user_id"),
+            commit=False,
+        )
+
+        db.add(opportunity)
+        db.commit()
+        db.refresh(opportunity)
+        db.refresh(activity)
+
+        return opportunity, activity
+
     @staticmethod
     def update_status(
         opportunity_id: int,
@@ -305,14 +485,31 @@ class OpportunityService:
                 ),
             )
 
+        previous_status = opportunity.status
+
         assert_transition(
             "opportunity",
             OPPORTUNITY_TRANSITIONS,
-            opportunity.status,
+            previous_status,
             target,
         )
 
         opportunity.status = target
+
+        # The row, board and drawer menus all move opportunities through this
+        # endpoint, so it has to leave the same trail the Log Activity form
+        # does - otherwise most stage changes would be missing from history.
+        if target != previous_status:
+            OpportunityService.record_activity(
+                db,
+                opportunity,
+                action=OPPORTUNITY_STATUS_ACTIONS.get(target, "Status Updated"),
+                description=getattr(request, "remarks", None),
+                from_status=previous_status,
+                to_status=target,
+                user_id=current_user.get("user_id"),
+                commit=False,
+            )
 
         # "Deal Won" is recorded on the opportunity itself, not a separate entity.
         if target == OpportunityStatus.WON:
@@ -437,6 +634,18 @@ class OpportunityService:
         )
 
         opportunity = OpportunityRepository.create(db, opportunity)
+
+        # The opportunity's own timeline starts where the lead's ended, so it
+        # opens with the conversion rather than an empty panel.
+        OpportunityService.record_activity(
+            db,
+            opportunity,
+            action="Converted From Lead",
+            description=f"Raised from lead #{lead.id} - {lead.title}.",
+            to_status=OpportunityStatus.QUALIFICATION,
+            user_id=current_user.get("user_id"),
+            commit=False,
+        )
 
         # QUALIFIED -> CONVERTED is the only move left, but validate it
         # against the state machine rather than assigning blindly.
