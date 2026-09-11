@@ -7,11 +7,33 @@ from app.core.workflow_status import (
     normalize_lead_status,
 )
 from app.models.lead import Lead
+from app.models.lead_activity import LeadActivity
 from app.models.workflow import Workflow
 from uuid import UUID
 from fastapi import HTTPException
 import requests
 import os
+
+#: Headline written onto the activity entry when a lead reaches a status.
+#: Phrased as what the user did, because that is what the timeline reads as.
+LEAD_STATUS_ACTIONS: dict[str, str] = {
+    LeadStatus.NEW: "Lead Created",
+    LeadStatus.CONTACTED: "Marked as Contacted",
+    LeadStatus.QUALIFIED: "Marked as Qualified",
+    LeadStatus.CONVERTED: "Converted to Opportunity",
+    LeadStatus.LOST: "Marked as Dead",
+}
+
+#: Legacy Lead.stage that goes with each canonical status. The two columns are
+#: kept in step here so callers no longer have to send both and risk them
+#: disagreeing.
+LEAD_STATUS_STAGES: dict[str, str] = {
+    LeadStatus.NEW: "lead",
+    LeadStatus.CONTACTED: "lead",
+    LeadStatus.QUALIFIED: "lead",
+    LeadStatus.CONVERTED: "opportunity",
+    LeadStatus.LOST: "dead",
+}
 
 def get_users_by_roles_helper(role_ids: list[str], db: Session = None) -> list[str]:
     if not role_ids:
@@ -117,6 +139,140 @@ class LeadService:
         )
 
     @staticmethod
+    def record_activity(
+        db: Session,
+        lead: Lead,
+        action: str,
+        description: str | None = None,
+        from_status: str | None = None,
+        to_status: str | None = None,
+        user_id: str | None = None,
+        commit: bool = True,
+    ) -> LeadActivity:
+        """Append one entry to a lead's Activity History.
+
+        Kept as a single helper so every path that changes a lead - the
+        progress endpoint, the Log Activity form, conversion - writes the
+        history the same way instead of each inventing its own wording.
+        """
+
+        activity = LeadActivity(
+            lead_id=lead.id,
+            action=action,
+            description=(description or None),
+            from_status=from_status,
+            to_status=to_status,
+            created_by=UUID(user_id) if user_id else None,
+        )
+
+        db.add(activity)
+
+        if commit:
+            db.commit()
+            db.refresh(activity)
+
+        return activity
+
+    @staticmethod
+    def get_activities(lead_id: str, current_user: dict, db: Session) -> list[LeadActivity]:
+        """Newest-first history for one lead, for the details drawer."""
+
+        lead = db.query(Lead).filter(Lead.id == int(lead_id)).first()
+
+        if not lead:
+            raise HTTPException(status_code=404, detail="Lead not found")
+
+        LeadService.assert_can_modify_lead(lead, current_user, db)
+
+        return (
+            db.query(LeadActivity)
+            .filter(LeadActivity.lead_id == lead.id)
+            .order_by(LeadActivity.created_at.desc(), LeadActivity.id.desc())
+            .all()
+        )
+
+    @staticmethod
+    def log_activity(
+        lead_id: str,
+        request,
+        current_user: dict,
+        db: Session,
+    ) -> tuple[Lead, LeadActivity]:
+        """Record an activity, moving the lead's status when one was chosen.
+
+        This is what the Log Activity form posts to. Doing the move and the
+        note in one call is deliberate: a status change that leaves no trace of
+        why it happened is the gap this whole feature exists to close.
+        """
+
+        lead = db.query(Lead).filter(Lead.id == int(lead_id)).first()
+
+        if not lead:
+            raise HTTPException(status_code=404, detail="Lead not found")
+
+        LeadService.assert_can_modify_lead(lead, current_user, db)
+
+        remarks = (getattr(request, "remarks", None) or "").strip()
+        raw_status = getattr(request, "status", None)
+
+        if not raw_status and not remarks:
+            raise HTTPException(
+                status_code=400,
+                detail="Choose a status or write remarks before logging the activity.",
+            )
+
+        current_status = normalize_lead_status(lead.status)
+        action = (getattr(request, "action", None) or "").strip()
+        target_status = None
+
+        if raw_status:
+            target_status = normalize_lead_status(raw_status)
+
+            # CONVERTED is owned by the Lead -> Opportunity conversion
+            # endpoint, which also creates the opportunity. Allowing it here
+            # would leave a lead marked converted with nothing to show for it.
+            if target_status == LeadStatus.CONVERTED:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Use Convert To Opportunity to convert this lead; it "
+                        "cannot be set from the activity log."
+                    ),
+                )
+
+            assert_transition(
+                "lead",
+                LEAD_TRANSITIONS,
+                current_status,
+                target_status,
+            )
+
+            lead.status = target_status
+            lead.stage = LEAD_STATUS_STAGES.get(target_status, lead.stage)
+
+            if not action:
+                action = LEAD_STATUS_ACTIONS.get(target_status, "Status Updated")
+        elif not action:
+            action = "Note Logged"
+
+        activity = LeadService.record_activity(
+            db,
+            lead,
+            action=action,
+            description=remarks,
+            from_status=current_status,
+            to_status=target_status,
+            user_id=current_user.get("user_id"),
+            commit=False,
+        )
+
+        db.commit()
+        db.refresh(lead)
+        db.refresh(activity)
+
+        return lead, activity
+
+    @staticmethod
     def get_junior_roles_for_user(user_role_ids: set[str], db: Session) -> set[str]:
         workflows = db.query(Workflow).all()
         
@@ -213,6 +369,18 @@ class LeadService:
         db.add(lead)
         db.commit()
         db.refresh(lead)
+
+        # Opens the timeline with the event that started it, so a brand new
+        # lead shows real history rather than an empty panel.
+        LeadService.record_activity(
+            db,
+            lead,
+            action=LEAD_STATUS_ACTIONS[LeadStatus.NEW],
+            description=getattr(request, "remarks", None),
+            to_status=normalize_lead_status(lead.status),
+            user_id=str(creator_id),
+        )
+
         return lead
 
     @staticmethod
@@ -263,16 +431,22 @@ class LeadService:
         if not is_authorized:
             raise HTTPException(status_code=403, detail="Only the lead creator, assigned user, and their reporting superiors can progress this lead")
             
+        previous_status = normalize_lead_status(lead.status)
+        moved_to = None
+
         lead.stage = request.stage
         if request.status is not None:
             target_status = normalize_lead_status(request.status)
             assert_transition(
                 "lead",
                 LEAD_TRANSITIONS,
-                normalize_lead_status(lead.status),
+                previous_status,
                 target_status,
             )
             lead.status = target_status
+
+            if target_status != previous_status:
+                moved_to = target_status
         if request.demo_status is not None:
             lead.demo_status = request.demo_status
         if request.requirements is not None:
@@ -281,7 +455,22 @@ class LeadService:
             lead.quotation_type = request.quotation_type
         if request.quotation_items is not None:
             lead.quotation_items = request.quotation_items
-            
+
+        # The row-level and drawer menus still progress leads through this
+        # endpoint, so it has to leave the same trail as the Log Activity form
+        # - otherwise half the status changes would be missing from history.
+        if moved_to:
+            LeadService.record_activity(
+                db,
+                lead,
+                action=LEAD_STATUS_ACTIONS.get(moved_to, "Status Updated"),
+                description=getattr(request, "remarks", None),
+                from_status=previous_status,
+                to_status=moved_to,
+                user_id=user_id,
+                commit=False,
+            )
+
         db.commit()
         db.refresh(lead)
         return lead
