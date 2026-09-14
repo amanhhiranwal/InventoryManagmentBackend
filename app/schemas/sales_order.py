@@ -8,6 +8,15 @@ class SalesOrderItem(BaseModel):
     product_id: Optional[str] = None
     item: Optional[str] = None
     description: Optional[str] = None
+
+    #: The product family, the specific model and its SKU, named the same way
+    #: the quotation names them so a line carried from one to the other keeps
+    #: its shape. Previously only the model reached the order, as
+    #: ``description``, which left the Model / Variant column with nothing to
+    #: show.
+    product: Optional[str] = None
+    model: Optional[str] = None
+    sku: Optional[str] = None
     rate: Optional[float] = 0.0
     price: Optional[float] = 0.0
     qty: Optional[float] = 0.0
