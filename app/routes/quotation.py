@@ -9,6 +9,7 @@ from app.schemas.quotation import (
     SendQuotationRequest,
     UpdateQuotationRequest,
     UpdateQuotationStatusRequest,
+    LogQuotationActivityRequest,
 )
 
 router = APIRouter(
@@ -62,6 +63,38 @@ def create_quotation(
     current_user=Depends(get_current_user),
 ):
     return QuotationController.create(request, current_user, db)
+
+
+@router.get("/{quotation_id}/activities")
+def get_quotation_activities(
+    quotation_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Activity History for the quotation detail page, newest first.
+
+    Includes the originating opportunity's entries, so the panel reads as
+    one story rather than starting when the quotation was drafted.
+    """
+
+    return QuotationController.get_activities(quotation_id, current_user, db)
+
+
+@router.post("/{quotation_id}/activities")
+def log_quotation_activity(
+    quotation_id: int,
+    request: LogQuotationActivityRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Log an activity, moving the quotation's status when one was chosen."""
+
+    return QuotationController.log_activity(
+        quotation_id,
+        request,
+        current_user,
+        db,
+    )
 
 
 @router.put("/{quotation_id}")

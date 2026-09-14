@@ -132,3 +132,17 @@ class SendQuotationRequest(BaseModel):
     #: Send Test Email To Self - delivers to the caller without moving the
     #: quotation to SENT.
     test_only: Optional[bool] = False
+
+
+class LogQuotationActivityRequest(BaseModel):
+    """A single entry from the Log Activity control on the quotation detail
+    page.
+
+    Both fields are optional on their own: a status with no remarks is a
+    plain move, remarks with no status is a note against the quotation. At
+    least one must be supplied, which the service enforces.
+    """
+
+    status: Optional[str] = None
+    action: Optional[str] = None
+    remarks: Optional[str] = None
