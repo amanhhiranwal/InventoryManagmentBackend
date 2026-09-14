@@ -12,9 +12,9 @@ jobs:
         env:
           GOOGLE_SCRIPT_URL: ${{ secrets.GOOGLE_SCRIPT_URL }}
           GOOGLE_SCRIPT_SECRET: ${{ secrets.GOOGLE_SCRIPT_SECRET }}
+          GITHUB_EVENT_JSON: ${{ toJson(github.event) }}
         run: |
-          curl -L \
-            -X POST \
+          curl -i -L \
             "${GOOGLE_SCRIPT_URL}?secret=${GOOGLE_SCRIPT_SECRET}" \
             -H "Content-Type: application/json" \
-            -d '${{ toJson(github.event) }}'
+            --data-raw "$GITHUB_EVENT_JSON"
