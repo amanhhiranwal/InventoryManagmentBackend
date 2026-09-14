@@ -9,10 +9,23 @@ from app.core.workflow_status import (
     assert_transition,
     normalize_sales_order_status,
 )
+from app.models.opportunity_activity import OpportunityActivity
+from app.models.quotation import Quotation
 from app.models.sales_order import SalesOrder
+from app.models.sales_order_activity import SalesOrderActivity
 from app.repositories.opportunity_repository import OpportunityRepository
 from app.repositories.sales_order_repository import SalesOrderRepository
 from app.services.lead_service import get_visible_creator_user_ids
+
+#: Headline written onto the activity entry when an order reaches a status.
+SALES_ORDER_STATUS_ACTIONS: dict[str, str] = {
+    SalesOrderStatus.DRAFT: "Sales Order Created",
+    SalesOrderStatus.CONFIRMED: "Sent For Approval",
+    SalesOrderStatus.ON_HOLD: "Order Put On Hold",
+    SalesOrderStatus.RELEASED: "Order Released",
+    SalesOrderStatus.COMPLETED: "Order Completed",
+    SalesOrderStatus.CANCELLED: "Order Cancelled",
+}
 
 
 def _to_uuid(value) -> UUID | None:
@@ -40,6 +53,31 @@ def _as_float(value, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+
+def _opportunity_from_quotation(quotation_id: str | None, db: Session) -> int | None:
+    """Resolve the opportunity behind a quotation reference.
+
+    The New Sales Order screen links an order to the quotation it was raised
+    against, not to an opportunity - so without this the chain stops there and
+    the order's Activity History loses everything that happened before it was
+    raised. The quotation already knows its opportunity; this follows that
+    link rather than asking the user for an id they have no way of knowing.
+    """
+
+    reference = (quotation_id or "").strip()
+
+    if not reference:
+        return None
+
+    quotation = (
+        db.query(Quotation)
+        .filter(Quotation.quote_number == reference)
+        .first()
+    )
+
+    return quotation.opportunity_id if quotation else None
 
 
 def compute_order_totals(
@@ -224,6 +262,11 @@ class SalesOrderService:
     def create(request, current_user: dict, db: Session) -> SalesOrder:
         SalesOrderService._validate_opportunity(request.opportunity_id, db)
 
+        opportunity_id = request.opportunity_id or _opportunity_from_quotation(
+            request.quotation_id,
+            db,
+        )
+
         status = normalize_sales_order_status(request.status)
 
         first_name = current_user.get("first_name", "")
@@ -235,13 +278,16 @@ class SalesOrderService:
                 request.order_number
                 or SalesOrderRepository.next_order_number(db)
             ),
-            opportunity_id=request.opportunity_id,
+            opportunity_id=opportunity_id,
             status=status,
             customer_name=request.customer_name,
             company_name=request.company_name,
             customer_type=request.customer_type,
             state=request.state,
             order_date=request.order_date,
+            quotation_id=request.quotation_id,
+            po_number=request.po_number,
+            po_date=request.po_date,
             assigned_to=request.assigned_to,
             sales_executive=request.sales_executive,
             customer_information=request.customer_information,
@@ -255,6 +301,14 @@ class SalesOrderService:
             aging_121_180=request.aging_121_180 or 0.0,
             aging_above_180=request.aging_above_180 or 0.0,
             remarks=request.remarks,
+            advance_percent=(
+                request.advance_percent
+                if request.advance_percent is not None
+                else 30.0
+            ),
+            commercial_terms=request.commercial_terms,
+            technical_notes=request.technical_notes,
+            attachments=request.attachments,
             creator_id=_to_uuid(current_user.get("user_id")),
             creator_name=creator_name,
             **compute_order_totals(
@@ -278,7 +332,23 @@ class SalesOrderService:
             ),
         )
 
-        return SalesOrderRepository.create(db, order)
+        order = SalesOrderRepository.create(db, order)
+
+        # Opens the timeline with the event that started it, so the detail
+        # page shows real history rather than an empty panel.
+        SalesOrderService.record_activity(
+            db,
+            order,
+            action=SALES_ORDER_STATUS_ACTIONS.get(status, "Sales Order Created"),
+            description=(
+                f"Sales order {order.order_number} created"
+                + (" for the opportunity." if order.opportunity_id else ".")
+            ),
+            to_status=status,
+            user_id=current_user.get("user_id"),
+        )
+
+        return order
 
     @staticmethod
     def update(
@@ -301,6 +371,9 @@ class SalesOrderService:
             "customer_type",
             "state",
             "order_date",
+            "quotation_id",
+            "po_number",
+            "po_date",
             "assigned_to",
             "sales_executive",
             "customer_information",
@@ -313,12 +386,25 @@ class SalesOrderService:
             "aging_121_180",
             "aging_above_180",
             "remarks",
+            "advance_percent",
+            "commercial_terms",
+            "technical_notes",
+            "attachments",
         ]
 
         for field in simple_fields:
             value = getattr(request, field, None)
             if value is not None:
                 setattr(order, field, value)
+
+        if (
+            getattr(request, "quotation_id", None) is not None
+            and not order.opportunity_id
+        ):
+            order.opportunity_id = _opportunity_from_quotation(
+                request.quotation_id,
+                db,
+            )
 
         if getattr(request, "items", None) is not None:
             order.items = _items_to_json(request.items)
@@ -357,6 +443,168 @@ class SalesOrderService:
 
         return SalesOrderRepository.save(db, order)
 
+    # ------------------------------------------------------------------
+    # Activity History
+    # ------------------------------------------------------------------
+    @staticmethod
+    def record_activity(
+        db: Session,
+        order: SalesOrder,
+        action: str,
+        description: str | None = None,
+        from_status: str | None = None,
+        to_status: str | None = None,
+        user_id: str | None = None,
+        commit: bool = True,
+    ) -> SalesOrderActivity:
+        """Append one entry to a sales order's Activity History."""
+
+        activity = SalesOrderActivity(
+            sales_order_id=order.id,
+            action=action,
+            description=(description or None),
+            from_status=from_status,
+            to_status=to_status,
+            created_by=_to_uuid(user_id) if user_id else None,
+        )
+
+        db.add(activity)
+
+        if commit:
+            db.commit()
+            db.refresh(activity)
+
+        return activity
+
+    @staticmethod
+    def get_activities(
+        order_id: int,
+        current_user: dict,
+        db: Session,
+    ) -> list[dict]:
+        """The order's history, newest first, with the originating
+        opportunity's entries merged in.
+
+        The detail page reads as one story - the opportunity was raised, a
+        demo happened, a proposal went out, the order was created - so the
+        opportunity's half is merged on read rather than copied at creation,
+        which would go stale the moment the opportunity moved on.
+        """
+
+        order = SalesOrderService.get_by_id(order_id, db)
+
+        SalesOrderService.assert_can_edit(order, current_user, db)
+
+        rows: list[dict] = [
+            {
+                "id": f"so-{a.id}",
+                "source": "order",
+                "action": a.action,
+                "description": a.description,
+                "from_status": a.from_status,
+                "to_status": a.to_status,
+                "created_by": str(a.created_by) if a.created_by else None,
+                "created_at": a.created_at,
+            }
+            for a in db.query(SalesOrderActivity)
+            .filter(SalesOrderActivity.sales_order_id == order.id)
+            .all()
+        ]
+
+        if order.opportunity_id:
+            rows.extend(
+                {
+                    "id": f"opp-{a.id}",
+                    "source": "opportunity",
+                    "action": a.action,
+                    "description": a.description,
+                    "from_status": a.from_status,
+                    "to_status": a.to_status,
+                    "created_by": str(a.created_by) if a.created_by else None,
+                    "created_at": a.created_at,
+                }
+                for a in db.query(OpportunityActivity)
+                .filter(OpportunityActivity.opportunity_id == order.opportunity_id)
+                .all()
+            )
+
+        rows.sort(key=lambda row: row["created_at"], reverse=True)
+
+        return rows
+
+    @staticmethod
+    def log_activity(
+        order_id: int,
+        request,
+        current_user: dict,
+        db: Session,
+    ) -> tuple[SalesOrder, SalesOrderActivity]:
+        """Record an activity, moving the order's status when one was chosen."""
+
+        order = SalesOrderService.get_by_id(order_id, db)
+
+        SalesOrderService.assert_can_edit(order, current_user, db)
+
+        remarks = (getattr(request, "remarks", None) or "").strip()
+        raw_status = getattr(request, "status", None)
+
+        if not raw_status and not remarks:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Choose a status or write remarks before logging the "
+                    "activity."
+                ),
+            )
+
+        current_status = order.status
+        action = (getattr(request, "action", None) or "").strip()
+        target = None
+
+        if raw_status:
+            target = str(raw_status).upper()
+
+            if target not in SalesOrderStatus.ALL:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Invalid sales order status '{raw_status}'. "
+                        f"Expected one of: {', '.join(SalesOrderStatus.ALL)}."
+                    ),
+                )
+
+            assert_transition(
+                "sales order",
+                SALES_ORDER_TRANSITIONS,
+                current_status,
+                target,
+            )
+
+            order.status = target
+
+            if not action:
+                action = SALES_ORDER_STATUS_ACTIONS.get(target, "Status Updated")
+        elif not action:
+            action = "Note Logged"
+
+        activity = SalesOrderService.record_activity(
+            db,
+            order,
+            action=action,
+            description=remarks,
+            from_status=current_status,
+            to_status=target,
+            user_id=current_user.get("user_id"),
+            commit=False,
+        )
+
+        db.add(order)
+        db.commit()
+        db.refresh(order)
+        db.refresh(activity)
+
+        return order, activity
+
     @staticmethod
     def update_status(
         order_id: int,
@@ -379,14 +627,30 @@ class SalesOrderService:
                 ),
             )
 
+        previous_status = order.status
+
         assert_transition(
             "sales order",
             SALES_ORDER_TRANSITIONS,
-            order.status,
+            previous_status,
             target,
         )
 
         order.status = target
+
+        # The list's row menu still moves orders through this endpoint, so it
+        # has to leave the same trail the detail page's Log Activity does.
+        if target != previous_status:
+            SalesOrderService.record_activity(
+                db,
+                order,
+                action=SALES_ORDER_STATUS_ACTIONS.get(target, "Status Updated"),
+                description=getattr(request, "remarks", None),
+                from_status=previous_status,
+                to_status=target,
+                user_id=current_user.get("user_id"),
+                commit=False,
+            )
 
         return SalesOrderRepository.save(db, order)
 
@@ -418,6 +682,9 @@ def serialize_sales_order(order: SalesOrder) -> dict:
         "customer_type": order.customer_type,
         "state": order.state,
         "order_date": order.order_date.isoformat() if order.order_date else None,
+        "quotation_id": order.quotation_id,
+        "po_number": order.po_number,
+        "po_date": order.po_date.isoformat() if order.po_date else None,
         "assigned_to": order.assigned_to,
         "sales_executive": order.sales_executive,
         "customer_information": order.customer_information,
@@ -447,6 +714,39 @@ def serialize_sales_order(order: SalesOrder) -> dict:
         "aging_121_180": order.aging_121_180,
         "aging_above_180": order.aging_above_180,
         "remarks": order.remarks,
+        "advance_percent": (
+            order.advance_percent if order.advance_percent is not None else 30.0
+        ),
+        # Derived here rather than in the UI so the Advance / Balance split
+        # cannot drift from the total it is a share of.
+        "advance_expected": round(
+            (order.grand_total or 0.0)
+            * (
+                (
+                    order.advance_percent
+                    if order.advance_percent is not None
+                    else 30.0
+                )
+                / 100.0
+            ),
+            2,
+        ),
+        "balance_expected": round(
+            (order.grand_total or 0.0)
+            - (order.grand_total or 0.0)
+            * (
+                (
+                    order.advance_percent
+                    if order.advance_percent is not None
+                    else 30.0
+                )
+                / 100.0
+            ),
+            2,
+        ),
+        "commercial_terms": order.commercial_terms or [],
+        "technical_notes": order.technical_notes,
+        "attachments": order.attachments or [],
         "creator_id": str(order.creator_id) if order.creator_id else None,
         "creator_name": order.creator_name,
         "created_at": order.created_at.isoformat() if order.created_at else None,
