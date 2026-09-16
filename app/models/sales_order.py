@@ -55,6 +55,17 @@ class SalesOrder(Base):
 
     order_date = Column(DateTime, default=func.now(), nullable=True)
 
+    #: Quotation this order was raised against, shown beside the order id.
+    #: Held as text rather than a foreign key because it is a reference the
+    #: user types as often as it is carried over.
+    quotation_id = Column(String(50), nullable=True)
+
+    #: The customer's own purchase order - its number and the date they
+    #: raised it. Both appear on the order header and neither had anywhere
+    #: to live before.
+    po_number = Column(String(100), nullable=True)
+    po_date = Column(DateTime, nullable=True)
+
     assigned_to = Column(String(200), nullable=True)
     sales_executive = Column(String(200), nullable=True)
 
@@ -98,6 +109,20 @@ class SalesOrder(Base):
     aging_above_180 = Column(Float, default=0.0, nullable=True)
 
     remarks = Column(String(2000), nullable=True)
+
+    #: Share of the total expected up front, as a percentage. Drives the
+    #: Advance / Balance split on the Order Summary, which was previously a
+    #: fixed 30/70 printed into the markup.
+    advance_percent = Column(Float, default=30.0, nullable=True)
+
+    #: Commercial conditions carried onto the order, one string per bullet.
+    commercial_terms = Column(JSON, nullable=True)
+
+    #: Free text describing the agreed scope of work on site.
+    technical_notes = Column(String(2000), nullable=True)
+
+    #: Annexures attached to the order: [{name, size, type}].
+    attachments = Column(JSON, nullable=True)
 
     creator_id = Column(UUID(as_uuid=True), nullable=True)
     creator_name = Column(String(200), nullable=True)

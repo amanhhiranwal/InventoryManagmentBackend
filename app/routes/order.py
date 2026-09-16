@@ -6,6 +6,7 @@ from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.schemas.sales_order import (
     CreateSalesOrderRequest,
+    LogSalesOrderActivityRequest,
     UpdateSalesOrderRequest,
     UpdateSalesOrderStatusRequest,
 )
@@ -40,6 +41,33 @@ def get_order(
     current_user=Depends(get_current_user),
 ):
     return SalesOrderController.get_by_id(order_id, db)
+
+
+@router.get("/{order_id}/activities")
+def get_order_activities(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Activity History for the order detail page, newest first.
+
+    Includes the originating opportunity's entries, so the panel reads as
+    one story rather than starting at the moment the order was raised.
+    """
+
+    return SalesOrderController.get_activities(order_id, current_user, db)
+
+
+@router.post("/{order_id}/activities")
+def log_order_activity(
+    order_id: int,
+    request: LogSalesOrderActivityRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Log an activity, moving the order's status when one was chosen."""
+
+    return SalesOrderController.log_activity(order_id, request, current_user, db)
 
 
 @router.put("/{order_id}")

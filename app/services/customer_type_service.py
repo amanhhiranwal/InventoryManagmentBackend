@@ -31,11 +31,21 @@ class CustomerTypeService:
             {"id": 3, "name": "End Customer", "code": "END_CUSTOMER", "description": "Direct end user or consumer"},
             {"id": 4, "name": "Institution", "code": "INSTITUTION", "description": "Institutional organization or government client"},
             {"id": 5, "name": "Corporate", "code": "CORPORATE", "description": "Corporate enterprise client"},
+            {"id": 6, "name": "Other", "code": "OTHER", "description": "Any customer that does not fit the types above"},
         ]
         for d in defaults:
             exists = db.query(CustomerType).filter(CustomerType.code == d["code"]).first()
             if not exists:
-                db.add(CustomerType(id=d["id"], name=d["name"], code=d["code"], description=d["description"]))
+                # Keep the well-known id when it is free, but let the sequence
+                # pick one when a type someone added has already taken it -
+                # a clash would otherwise fail the whole seed on every read.
+                id_taken = db.query(CustomerType).filter(CustomerType.id == d["id"]).first()
+                db.add(CustomerType(
+                    **({} if id_taken else {"id": d["id"]}),
+                    name=d["name"],
+                    code=d["code"],
+                    description=d["description"],
+                ))
             else:
                 exists.name = d["name"]
         db.commit()

@@ -8,6 +8,15 @@ class SalesOrderItem(BaseModel):
     product_id: Optional[str] = None
     item: Optional[str] = None
     description: Optional[str] = None
+
+    #: The product family, the specific model and its SKU, named the same way
+    #: the quotation names them so a line carried from one to the other keeps
+    #: its shape. Previously only the model reached the order, as
+    #: ``description``, which left the Model / Variant column with nothing to
+    #: show.
+    product: Optional[str] = None
+    model: Optional[str] = None
+    sku: Optional[str] = None
     rate: Optional[float] = 0.0
     price: Optional[float] = 0.0
     qty: Optional[float] = 0.0
@@ -68,6 +77,23 @@ class CreateSalesOrderRequest(BaseModel):
 
     remarks: Optional[str] = None
 
+    #: Quotation this order was raised against, and the customer's own
+    #: purchase order reference and date.
+    quotation_id: Optional[str] = None
+    po_number: Optional[str] = None
+    po_date: Optional[datetime] = None
+
+    #: Share of the total expected up front. Drives the Advance / Balance
+    #: split on the Order Summary.
+    advance_percent: Optional[float] = 30.0
+
+    #: Commercial conditions, one string per bullet, and the agreed scope.
+    commercial_terms: Optional[List[str]] = None
+    technical_notes: Optional[str] = None
+
+    #: Annexures attached to the order: [{name, size, type}].
+    attachments: Optional[List[Dict[str, Any]]] = None
+
 
 class UpdateSalesOrderRequest(BaseModel):
     customer_name: Optional[str] = None
@@ -112,6 +138,40 @@ class UpdateSalesOrderRequest(BaseModel):
 
     remarks: Optional[str] = None
 
+    #: Quotation this order was raised against, and the customer's own
+    #: purchase order reference and date.
+    quotation_id: Optional[str] = None
+    po_number: Optional[str] = None
+    po_date: Optional[datetime] = None
+
+    #: Share of the total expected up front. Drives the Advance / Balance
+    #: split on the Order Summary.
+    advance_percent: Optional[float] = None
+
+    #: Commercial conditions, one string per bullet, and the agreed scope.
+    commercial_terms: Optional[List[str]] = None
+    technical_notes: Optional[str] = None
+
+    #: Annexures attached to the order: [{name, size, type}].
+    attachments: Optional[List[Dict[str, Any]]] = None
+
 
 class UpdateSalesOrderStatusRequest(BaseModel):
     status: str
+
+    # Free text the user typed when moving the order. Recorded on the
+    # activity entry the move writes, so the history explains why.
+    remarks: Optional[str] = None
+
+
+class LogSalesOrderActivityRequest(BaseModel):
+    """A single entry from the Log Activity control on the order detail page.
+
+    Both fields are optional on their own: a status with no remarks is a
+    plain move, remarks with no status is a note against the order. At least
+    one must be supplied, which the service enforces.
+    """
+
+    status: Optional[str] = None
+    action: Optional[str] = None
+    remarks: Optional[str] = None

@@ -30,12 +30,53 @@ def serialize_activity(activity, names_map: dict[str, str] | None = None) -> dic
 class OpportunityController:
 
     @staticmethod
+    def _with_names(opportunities: list, db: Session) -> list[dict]:
+        """Serialize and resolve owner names in one bulk lookup.
+
+        The payload carried assigned_to_id but never a name, so every board
+        card and list row fell back to the literal string "Sales Team"
+        regardless of who the opportunity actually belonged to.
+        """
+
+        names_map = get_user_names_helper(
+            list(
+                {
+                    str(uid)
+                    for o in opportunities
+                    for uid in (o.assigned_to_id, o.creator_id)
+                    if uid
+                }
+            ),
+            db,
+        )
+
+        rows = []
+
+        for opportunity in opportunities:
+            row = serialize_opportunity(opportunity)
+
+            row["assigned_to_name"] = (
+                names_map.get(str(opportunity.assigned_to_id))
+                if opportunity.assigned_to_id
+                else None
+            )
+            row["creator_name"] = (
+                names_map.get(str(opportunity.creator_id))
+                if opportunity.creator_id
+                else None
+            )
+
+            rows.append(row)
+
+        return rows
+
+    @staticmethod
     def get_all(current_user: dict, db: Session):
         opportunities = OpportunityService.get_visible(current_user, db)
 
         return {
             "success": True,
-            "data": [serialize_opportunity(o) for o in opportunities],
+            "data": OpportunityController._with_names(opportunities, db),
         }
 
     @staticmethod
@@ -44,7 +85,7 @@ class OpportunityController:
 
         return {
             "success": True,
-            "data": serialize_opportunity(opportunity),
+            "data": OpportunityController._with_names([opportunity], db)[0],
         }
 
     @staticmethod
@@ -59,7 +100,7 @@ class OpportunityController:
         return {
             "success": True,
             "message": "Opportunity created successfully.",
-            "data": serialize_opportunity(opportunity),
+            "data": OpportunityController._with_names([opportunity], db)[0],
         }
 
     @staticmethod
@@ -74,7 +115,7 @@ class OpportunityController:
         return {
             "success": True,
             "message": "Opportunity updated successfully.",
-            "data": serialize_opportunity(opportunity),
+            "data": OpportunityController._with_names([opportunity], db)[0],
         }
 
     @staticmethod
@@ -94,7 +135,7 @@ class OpportunityController:
         return {
             "success": True,
             "message": f"Opportunity moved to {opportunity.status}.",
-            "data": serialize_opportunity(opportunity),
+            "data": OpportunityController._with_names([opportunity], db)[0],
         }
 
     @staticmethod
@@ -139,7 +180,9 @@ class OpportunityController:
             "message": "Activity logged successfully.",
             "data": {
                 "activity": serialize_activity(activity, names_map),
-                "opportunity": serialize_opportunity(opportunity),
+                "opportunity": OpportunityController._with_names(
+                    [opportunity], db
+                )[0],
             },
         }
 
@@ -155,5 +198,5 @@ class OpportunityController:
         return {
             "success": True,
             "message": "Lead converted to opportunity successfully.",
-            "data": serialize_opportunity(opportunity),
+            "data": OpportunityController._with_names([opportunity], db)[0],
         }

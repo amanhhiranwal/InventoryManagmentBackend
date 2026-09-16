@@ -11,7 +11,9 @@ from app.core.workflow_status import (
     assert_transition,
     normalize_quotation_status,
 )
+from app.models.opportunity_activity import OpportunityActivity
 from app.models.quotation import Quotation
+from app.models.quotation_activity import QuotationActivity
 from app.repositories.opportunity_repository import OpportunityRepository
 from app.repositories.quotation_repository import QuotationRepository
 from app.services.email_service import EmailService
@@ -302,6 +304,27 @@ def serialize_quotation(quotation: Quotation) -> dict:
     }
 
 
+def _to_uuid(value) -> UUID | None:
+    if not value:
+        return None
+    if isinstance(value, UUID):
+        return value
+    try:
+        return UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+#: Headline written onto the activity entry when a quotation reaches a status.
+QUOTATION_STATUS_ACTIONS: dict[str, str] = {
+    QuotationStatus.DRAFT: "Quotation Drafted",
+    QuotationStatus.SENT: "Sent To Client",
+    QuotationStatus.ACCEPTED: "Accepted By Client",
+    QuotationStatus.REJECTED: "Rejected By Client",
+    QuotationStatus.EXPIRED: "Quotation Expired",
+}
+
+
 class QuotationService:
 
     # ------------------------------------------------------------------
@@ -325,6 +348,159 @@ class QuotationService:
             raise HTTPException(status_code=404, detail="Quotation not found")
 
         return quotation
+
+    @staticmethod
+    def record_activity(
+        db: Session,
+        quotation: Quotation,
+        action: str,
+        description: str | None = None,
+        from_status: str | None = None,
+        to_status: str | None = None,
+        user_id: str | None = None,
+        commit: bool = True,
+    ) -> QuotationActivity:
+        """Append one entry to a quotation's Activity History."""
+
+        activity = QuotationActivity(
+            quotation_id=quotation.id,
+            action=action,
+            description=(description or None),
+            from_status=from_status,
+            to_status=to_status,
+            created_by=_to_uuid(user_id) if user_id else None,
+        )
+
+        db.add(activity)
+
+        if commit:
+            db.commit()
+            db.refresh(activity)
+
+        return activity
+
+    @staticmethod
+    def get_activities(
+        quotation_id: int,
+        current_user: dict,
+        db: Session,
+    ) -> list[dict]:
+        """The quotation's history, newest first, with the originating
+        opportunity's entries merged in.
+
+        The detail page reads as one story - the opportunity was raised, a
+        demo happened, the quotation went out - so the opportunity's half is
+        merged on read rather than copied, which would go stale the moment
+        the opportunity moved on.
+        """
+
+        quotation = QuotationService.get_by_id(quotation_id, db)
+
+        QuotationService.assert_can_modify(quotation, current_user, db)
+
+        rows: list[dict] = [
+            {
+                "id": f"qt-{a.id}",
+                "source": "quotation",
+                "action": a.action,
+                "description": a.description,
+                "from_status": a.from_status,
+                "to_status": a.to_status,
+                "created_by": str(a.created_by) if a.created_by else None,
+                "created_at": a.created_at,
+            }
+            for a in db.query(QuotationActivity)
+            .filter(QuotationActivity.quotation_id == quotation.id)
+            .all()
+        ]
+
+        if quotation.opportunity_id:
+            rows.extend(
+                {
+                    "id": f"opp-{a.id}",
+                    "source": "opportunity",
+                    "action": a.action,
+                    "description": a.description,
+                    "from_status": a.from_status,
+                    "to_status": a.to_status,
+                    "created_by": str(a.created_by) if a.created_by else None,
+                    "created_at": a.created_at,
+                }
+                for a in db.query(OpportunityActivity)
+                .filter(OpportunityActivity.opportunity_id == quotation.opportunity_id)
+                .all()
+            )
+
+        rows.sort(key=lambda row: row["created_at"], reverse=True)
+
+        return rows
+
+    @staticmethod
+    def log_activity(
+        quotation_id: int,
+        request,
+        current_user: dict,
+        db: Session,
+    ) -> tuple[Quotation, QuotationActivity]:
+        """Record an activity, moving the quotation's status when chosen."""
+
+        quotation = QuotationService.get_by_id(quotation_id, db)
+
+        QuotationService.assert_can_modify(quotation, current_user, db)
+
+        remarks = (getattr(request, "remarks", None) or "").strip()
+        raw_status = getattr(request, "status", None)
+
+        if not raw_status and not remarks:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Choose a status or write remarks before logging the "
+                    "activity."
+                ),
+            )
+
+        current_status = quotation.status
+        action = (getattr(request, "action", None) or "").strip()
+        target = None
+
+        if raw_status:
+            target = normalize_quotation_status(raw_status)
+
+            assert_transition(
+                "quotation",
+                QUOTATION_TRANSITIONS,
+                current_status,
+                target,
+            )
+
+            quotation.status = target
+
+            if target == QuotationStatus.REJECTED and remarks:
+                quotation.rejected_reason = remarks
+
+            if not action:
+                action = QUOTATION_STATUS_ACTIONS.get(target, "Status Updated")
+        elif not action:
+            action = "Note Logged"
+
+        activity = QuotationService.record_activity(
+            db,
+            quotation,
+            action=action,
+            description=remarks,
+            from_status=current_status,
+            to_status=target,
+            user_id=current_user.get("user_id"),
+            commit=False,
+        )
+
+        db.add(quotation)
+        db.commit()
+        db.refresh(quotation)
+        db.refresh(activity)
+
+        return quotation, activity
 
     @staticmethod
     def assert_can_modify(quotation: Quotation, current_user: dict, db: Session):
@@ -459,6 +635,20 @@ class QuotationService:
         )
 
         quotation = QuotationRepository.create(db, quotation)
+
+        # Opens the timeline with the event that started it, so a new
+        # quotation shows real history rather than an empty panel.
+        QuotationService.record_activity(
+            db,
+            quotation,
+            action=QUOTATION_STATUS_ACTIONS.get(
+                quotation.status,
+                "Quotation Drafted",
+            ),
+            description=f"Quotation {quotation.quote_number} created.",
+            to_status=quotation.status,
+            user_id=str(creator_id),
+        )
 
         # The form states this outright: "Generating this quotation will
         # automatically move Opportunity #... to Proposal / Price Quote."
@@ -624,10 +814,26 @@ class QuotationService:
             target,
         )
 
+        previous_status = quotation.status
+
         quotation.status = target
 
         if target == QuotationStatus.REJECTED:
             quotation.rejected_reason = getattr(request, "rejected_reason", None)
+
+        # The list's row menu still moves quotations through this endpoint, so
+        # it has to leave the same trail the Log Activity control does.
+        if target != previous_status:
+            QuotationService.record_activity(
+                db,
+                quotation,
+                action=QUOTATION_STATUS_ACTIONS.get(target, "Status Updated"),
+                description=getattr(request, "rejected_reason", None),
+                from_status=previous_status,
+                to_status=target,
+                user_id=current_user.get("user_id"),
+                commit=False,
+            )
 
         return QuotationRepository.save(db, quotation)
 
@@ -732,8 +938,21 @@ class QuotationService:
             "notify_lead_owner": bool(request.notify_lead_owner),
         }
 
+        previous_status = quotation.status
+
         if quotation.status == QuotationStatus.DRAFT:
             quotation.status = QuotationStatus.SENT
+
+        QuotationService.record_activity(
+            db,
+            quotation,
+            action=QUOTATION_STATUS_ACTIONS[QuotationStatus.SENT],
+            description="Emailed to " + ", ".join(recipients) + ".",
+            from_status=previous_status,
+            to_status=quotation.status,
+            user_id=current_user.get("user_id"),
+            commit=False,
+        )
 
         quotation = QuotationRepository.save(db, quotation)
 
