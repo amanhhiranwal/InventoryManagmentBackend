@@ -1,8 +1,8 @@
-import urllib.request
-import urllib.parse
-import urllib.error
 import json
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 try:
     print("Logging in...")

@@ -1,29 +1,28 @@
 from logging.config import fileConfig
 
-from alembic import context
-from sqlalchemy import engine_from_config, pool, URL
+from sqlalchemy import URL, create_engine, engine_from_config, pool
 
+from alembic import context
 from app.core.config import settings
 from app.database.base import Base
+from app.models.category_group import CategoryGroup
+from app.models.company import Company
+from app.models.customer_type import CustomerType
+from app.models.lead import Lead
+from app.models.lead_source import LeadSource
+from app.models.location import Location
+from app.models.opportunity import Opportunity
+from app.models.password_reset_token import PasswordResetToken
+from app.models.permission import Permission
+from app.models.product_type import ProductType
+from app.models.role import Role
+from app.models.role_permission import RolePermission
+from app.models.sales_order import SalesOrder
+from app.models.state import State
 
 # Import all models here
 from app.models.user import User
-from app.models.role import Role
-from app.models.permission import Permission
-from app.models.role_permission import RolePermission
-from app.models.company import Company
-from app.models.location import Location
-from app.models.lead import Lead
 from app.models.workflow import Workflow
-from app.models.product_type import ProductType
-from app.models.category_group import CategoryGroup
-from app.models.customer_type import CustomerType
-from app.models.lead_source import LeadSource
-from app.models.state import State
-from app.models.password_reset_token import PasswordResetToken
-from app.models.opportunity import Opportunity
-from app.models.sales_order import SalesOrder
-from sqlalchemy import create_engine
 
 config = context.config
 

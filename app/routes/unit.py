@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
 from app.database.mongodb import sync_mongo_db
 
 router = APIRouter(prefix="/inventory/units", tags=["Units Master"])

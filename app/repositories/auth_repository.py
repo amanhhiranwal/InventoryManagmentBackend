@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 
-from app.models.user import User
 from app.models.role import Role
+from app.models.user import User
 
 
 class AuthRepository:
@@ -11,7 +11,7 @@ class AuthRepository:
 
         return (
             db.query(User)
-            .filter(User.is_super_admin == True)
+            .filter(User.is_super_admin.is_(True))
             .first()
         )
 

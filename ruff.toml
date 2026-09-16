@@ -1,0 +1,17 @@
+target-version = "py312"
+line-length = 100
+extend-exclude = ["alembic/versions", ".venv"]
+
+[lint]
+# Pyflakes (unused / undefined names), pycodestyle errors, and import order.
+# Pinned here so the result does not shift with whatever Ruff's defaults are.
+select = ["E4", "E7", "E9", "F", "I"]
+
+[lint.per-file-ignores]
+# These import every model only so SQLAlchemy registers its table on
+# Base.metadata; the names are never used, and removing them would leave
+# migrations and create_all() blind to those tables.
+"app/models/__init__.py" = ["F401"]
+"alembic/env.py" = ["F401"]
+"check_and_seed_db.py" = ["F401"]
+"sync_all_databases.py" = ["F401"]

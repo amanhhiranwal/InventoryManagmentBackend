@@ -1,5 +1,6 @@
 import sys
 
+
 def replace_in_file(filepath, target, replacement):
     with open(filepath, 'r', encoding='utf-8') as f:
         content = f.read()

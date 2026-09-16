@@ -46,3 +46,4 @@ node_modules/
 *.sqlite3
 
 data/
+.ruff_cache/

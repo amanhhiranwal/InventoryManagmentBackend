@@ -1,7 +1,8 @@
 from fastapi import Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.middleware.auth_middleware import get_current_user
+
 from app.database.dependencies import get_db
+from app.middleware.auth_middleware import get_current_user
 
 ALIAS_MAP = {
     "company.read": {"company.read", "company.view", "company.create", "company.update", "lead.read", "sales.menu"},

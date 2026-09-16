@@ -1,20 +1,33 @@
-import sys
 import os
+import sys
 from uuid import UUID
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from urllib.parse import quote_plus
+
 from sqlalchemy import create_engine, text
+
+from app.core.config import settings
 from app.database.base import Base
 from app.models import (
-    user, role, permission, role_permission, company, location,
-    lead, workflow, customer_type, product_type, category_group,
-    user_company, user_role, menu
+    category_group,
+    company,
+    customer_type,
+    lead,
+    location,
+    menu,
+    permission,
+    product_type,
+    role,
+    role_permission,
+    user,
+    user_company,
+    user_role,
+    workflow,
 )
-from app.services.password_service import PasswordService
 from app.services.menu_service import MenuService
-
-from urllib.parse import quote_plus
-from app.core.config import settings
+from app.services.password_service import PasswordService
 
 DB_NAMES = ["solutions", "auth_db", "crm_db", "inventory_db", "sales_db"]
 encoded_pw = quote_plus(settings.POSTGRES_PASSWORD)
@@ -61,9 +74,10 @@ def sync_databases():
             conn.commit()
 
         # 3. Seed superadmin user in db
-        from app.models.user import User
-        from app.models.role import Role
         from sqlalchemy.orm import sessionmaker
+
+        from app.models.role import Role
+        from app.models.user import User
 
         Session = sessionmaker(bind=engine)
         db = Session()

@@ -1,18 +1,18 @@
-from fastapi import FastAPI, APIRouter
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 import os
 
-from app.core.config import settings
-from app.utils.exception_handler import register_exception_handlers
+from fastapi import APIRouter, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
-from app.routes.role import router as role_router
+from app.core.config import settings
 from app.routes.auth import router as auth_router
-from app.routes.user import router as user_router
-from app.routes.rbac import router as rbac_router
-from app.routes.profile import router as profile_router
 from app.routes.company import router as company_router
 from app.routes.menu import router as menu_router
+from app.routes.profile import router as profile_router
+from app.routes.rbac import router as rbac_router
+from app.routes.role import router as role_router
+from app.routes.user import router as user_router
+from app.utils.exception_handler import register_exception_handlers
 
 app = FastAPI(
     title=f"{settings.APP_NAME} - Auth Service",

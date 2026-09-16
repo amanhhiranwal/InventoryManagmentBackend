@@ -1,13 +1,15 @@
 import os
 import shutil
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from typing import Optional
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
+
 from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.repositories.rbac_repository import RBACRepository
-from pydantic import BaseModel
-from typing import Optional
 
 router = APIRouter(
     prefix="/profile",

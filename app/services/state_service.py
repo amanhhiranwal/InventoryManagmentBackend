@@ -1,7 +1,9 @@
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
+
 from app.models.state import State
 from app.schemas.state import CreateStateRequest
-from fastapi import HTTPException
+
 
 class StateService:
     @staticmethod

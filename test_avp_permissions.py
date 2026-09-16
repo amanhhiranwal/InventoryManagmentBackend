@@ -1,6 +1,6 @@
-import urllib.request
 import json
 import time
+import urllib.request
 
 BASE_URL = "http://localhost:8000/api/v1"
 

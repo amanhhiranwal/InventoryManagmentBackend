@@ -1,8 +1,11 @@
+from uuid import UUID
+
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
+
 from app.models.category_group import CategoryGroup
 from app.schemas.category_group import CreateCategoryGroupRequest
-from fastapi import HTTPException
-from uuid import UUID
+
 
 class CategoryGroupService:
     @staticmethod

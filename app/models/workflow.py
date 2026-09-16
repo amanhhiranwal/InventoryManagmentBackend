@@ -1,6 +1,8 @@
-from sqlalchemy import String, JSON
+from sqlalchemy import JSON, String
 from sqlalchemy.orm import Mapped, mapped_column
+
 from app.models.base_model import BaseModel
+
 
 class Workflow(BaseModel):
     __tablename__ = "workflows"

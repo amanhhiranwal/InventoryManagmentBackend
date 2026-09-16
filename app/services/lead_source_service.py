@@ -1,5 +1,6 @@
-from sqlalchemy.orm import Session
 from sqlalchemy import asc
+from sqlalchemy.orm import Session
+
 from app.models.lead_source import LeadSource
 from app.schemas.lead_source import CreateLeadSourceRequest
 
@@ -30,7 +31,7 @@ class LeadSourceService:
     @staticmethod
     def get_lead_sources(db: Session) -> list[LeadSource]:
         LeadSourceService.seed_default_lead_sources(db)
-        return db.query(LeadSource).filter(LeadSource.is_active == True).order_by(asc(LeadSource.name)).all()
+        return db.query(LeadSource).filter(LeadSource.is_active.is_(True)).order_by(asc(LeadSource.name)).all()
 
     @staticmethod
     def create_lead_source(request: CreateLeadSourceRequest, db: Session) -> LeadSource:

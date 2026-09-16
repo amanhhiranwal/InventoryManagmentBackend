@@ -1,27 +1,28 @@
-import sys
 import os
+import sys
 
 # Add app to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from app.database.postgres import engine, SessionLocal
+from uuid import uuid4
+
 from app.database.base import Base
-from app.models.user import User
-from app.models.role import Role
-from app.models.permission import Permission
-from app.models.role_permission import RolePermission
-from app.models.company import Company
-from app.models.location import Location
-from app.models.lead import Lead
-from app.models.workflow import Workflow
-from app.models.customer_type import CustomerType
-from app.models.product_type import ProductType
+from app.database.postgres import SessionLocal, engine
 from app.models.category_group import CategoryGroup
+from app.models.company import Company
+from app.models.customer_type import CustomerType
+from app.models.lead import Lead
+from app.models.location import Location
+from app.models.password_reset_token import PasswordResetToken
+from app.models.permission import Permission
+from app.models.product_type import ProductType
+from app.models.role import Role
+from app.models.role_permission import RolePermission
+from app.models.user import User
 from app.models.user_company import UserCompany
 from app.models.user_role import UserRole
-from app.models.password_reset_token import PasswordResetToken
+from app.models.workflow import Workflow
 from app.services.password_service import PasswordService
-from uuid import uuid4
 
 
 def sync_db_and_seed():

@@ -1,7 +1,8 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-import os
 
 from app.core.config import settings
 from app.routes.api import api_router

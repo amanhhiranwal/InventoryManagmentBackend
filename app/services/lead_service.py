@@ -1,5 +1,11 @@
-from sqlalchemy.orm import Session
+import os
+from uuid import UUID
+
+import requests
+from fastapi import HTTPException
 from sqlalchemy import or_
+from sqlalchemy.orm import Session
+
 from app.core.workflow_status import (
     LEAD_TRANSITIONS,
     LeadStatus,
@@ -9,10 +15,6 @@ from app.core.workflow_status import (
 from app.models.lead import Lead
 from app.models.lead_activity import LeadActivity
 from app.models.workflow import Workflow
-from uuid import UUID
-from fastapi import HTTPException
-import requests
-import os
 
 #: Headline written onto the activity entry when a lead reaches a status.
 #: Phrased as what the user did, because that is what the timeline reads as.
@@ -397,7 +399,7 @@ class LeadService:
         else:
             junior_role_ids = LeadService.get_junior_roles_for_user(user_role_ids, db)
             if junior_role_ids:
-                creator_role_ids = set(get_user_roles_http(str(lead.creator_id)))
+                creator_role_ids = set(get_user_roles_helper(str(lead.creator_id), db))
                 if creator_role_ids.intersection(junior_role_ids):
                     is_authorized = True
 
@@ -424,7 +426,7 @@ class LeadService:
         else:
             junior_role_ids = LeadService.get_junior_roles_for_user(user_role_ids, db)
             if junior_role_ids:
-                creator_role_ids = set(get_user_roles_http(str(lead.creator_id)))
+                creator_role_ids = set(get_user_roles_helper(str(lead.creator_id), db))
                 if creator_role_ids.intersection(junior_role_ids):
                     is_authorized = True
                         
@@ -489,7 +491,7 @@ class LeadService:
         else:
             junior_role_ids = LeadService.get_junior_roles_for_user(user_role_ids, db)
             if junior_role_ids:
-                creator_role_ids = set(get_user_roles_http(str(lead.creator_id)))
+                creator_role_ids = set(get_user_roles_helper(str(lead.creator_id), db))
                 if creator_role_ids.intersection(junior_role_ids):
                     is_authorized = True
 

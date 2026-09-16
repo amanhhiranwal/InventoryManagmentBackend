@@ -1,6 +1,8 @@
-from sqlalchemy.orm import Session
-from sqlalchemy import asc
 from uuid import UUID
+
+from sqlalchemy import asc
+from sqlalchemy.orm import Session
+
 from app.models.menu import MenuItem
 from app.schemas.menu import CreateMenuItemRequest, UpdateMenuItemRequest
 

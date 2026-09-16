@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+
 from app.database.dependencies import get_db
-from app.services.state_service import StateService
 from app.schemas.state import CreateStateRequest
+from app.services.state_service import StateService
 
 router = APIRouter(
     prefix="/states",

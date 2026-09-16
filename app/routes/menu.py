@@ -3,9 +3,9 @@ from sqlalchemy.orm import Session
 
 from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
+from app.repositories.rbac_repository import RBACRepository
 from app.schemas.menu import CreateMenuItemRequest, UpdateMenuItemRequest
 from app.services.menu_service import MenuService
-from app.repositories.rbac_repository import RBACRepository
 
 router = APIRouter(
     prefix="/menus",

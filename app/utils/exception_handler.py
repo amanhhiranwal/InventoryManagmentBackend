@@ -1,8 +1,6 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 
 def register_exception_handlers(app: FastAPI):

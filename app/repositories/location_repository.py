@@ -71,7 +71,7 @@ class LocationRepository:
             db.query(Location)
             .filter(
                 Location.company_id == company_id,
-                Location.is_default == True,
+                Location.is_default.is_(True),
             )
             .first()
         )

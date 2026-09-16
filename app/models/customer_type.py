@@ -1,5 +1,7 @@
-from sqlalchemy import Column, Integer, String, DateTime, func
+from sqlalchemy import Column, DateTime, Integer, String, func
+
 from app.database.base import Base
+
 
 class CustomerType(Base):
     __tablename__ = "sales_customer_type"

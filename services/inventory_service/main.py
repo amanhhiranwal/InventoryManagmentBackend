@@ -1,13 +1,12 @@
-from fastapi import FastAPI, APIRouter
+from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.utils.exception_handler import register_exception_handlers
-
+from app.routes.category_group import router as category_group_router
 from app.routes.inventory import router as inventory_router
 from app.routes.product_type import router as product_type_router
-from app.routes.category_group import router as category_group_router
 from app.routes.unit import router as unit_router
+from app.utils.exception_handler import register_exception_handlers
 
 app = FastAPI(
     title=f"{settings.APP_NAME} - Inventory Service",

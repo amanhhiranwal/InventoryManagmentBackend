@@ -4,9 +4,8 @@ from sqlalchemy.orm import Session
 from app.models.user import User
 from app.repositories.auth_repository import AuthRepository
 from app.schemas.auth import RegisterSuperAdminRequest
-from app.services.password_service import PasswordService
-
 from app.services.jwt_service import JWTService
+from app.services.password_service import PasswordService
 
 
 class AuthService:

@@ -1,11 +1,12 @@
-from fastapi import APIRouter, Depends, Query
 from typing import List
+
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.controllers.user_controller import UserController
 from app.database.dependencies import get_db
-from app.middleware.permission_middleware import require_permission, require_super_admin
-from app.schemas.user import CreateUserRequest, UpdateUserRoleRequest, UpdateUserRequest
+from app.middleware.permission_middleware import require_permission
+from app.schemas.user import CreateUserRequest, UpdateUserRequest, UpdateUserRoleRequest
 
 router = APIRouter(
     prefix="/users",
@@ -67,8 +68,9 @@ def get_users_by_roles(
     role_ids: List[str] = Query(...),
     db: Session = Depends(get_db)
 ):
-    from app.models.user_role import UserRole
     from uuid import UUID
+
+    from app.models.user_role import UserRole
     role_uuids = [UUID(rid) for rid in role_ids]
     user_roles = db.query(UserRole.user_id).filter(UserRole.role_id.in_(role_uuids)).all()
     user_ids = [str(ur.user_id) for ur in user_roles]
@@ -93,8 +95,9 @@ def get_user_names(
     user_ids: List[str] = Query(...),
     db: Session = Depends(get_db)
 ):
-    from app.models.user import User
     from uuid import UUID
+
+    from app.models.user import User
     user_uuids = [UUID(uid) for uid in user_ids]
     users = db.query(User).filter(User.id.in_(user_uuids)).all()
     names = {str(u.id): f"{u.first_name} {u.last_name}" for u in users}

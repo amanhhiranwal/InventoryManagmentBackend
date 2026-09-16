@@ -2,13 +2,12 @@ import os
 import shutil
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, UploadFile, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.controllers.company_controller import CompanyController
 from app.database.dependencies import get_db
-from app.middleware.permission_middleware import require_permission, require_super_admin
-
+from app.middleware.permission_middleware import require_permission
 from app.schemas.company import (
     CreateCompanyRequest,
     UpdateCompanyRequest,

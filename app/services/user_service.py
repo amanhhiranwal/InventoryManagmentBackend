@@ -1,13 +1,15 @@
-from fastapi import HTTPException
-from sqlalchemy.orm import Session
 from uuid import UUID
 
-from app.models.user import User
+from fastapi import HTTPException
+from sqlalchemy.orm import Session
+
 from app.models.company import Company
-from app.repositories.user_repository import UserRepository
+from app.models.user import User
 from app.repositories.rbac_repository import RBACRepository
+from app.repositories.user_repository import UserRepository
 from app.services.password_service import PasswordService
 from app.utils.validators import validate_uuid
+
 
 class UserService:
 
@@ -73,8 +75,10 @@ class UserService:
         
         # Mirror user record across all microservice databases
         try:
-            from sqlalchemy import create_engine, text
             from urllib.parse import quote_plus
+
+            from sqlalchemy import create_engine, text
+
             from app.core.config import settings
             db_names = ["solutions", "crm_db", "inventory_db", "sales_db"]
             encoded_pw = quote_plus(settings.POSTGRES_PASSWORD)

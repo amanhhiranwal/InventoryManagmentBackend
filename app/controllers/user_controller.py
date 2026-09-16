@@ -1,5 +1,6 @@
 from app.services.user_service import UserService
 
+
 class UserController:
 
     @staticmethod
@@ -7,8 +8,9 @@ class UserController:
         role_ids = [str(r.id) for r in user.roles]
         company_ids = [str(c.id) for c in user.companies]
         
-        from app.repositories.rbac_repository import RBACRepository
         from sqlalchemy.orm import object_session
+
+        from app.repositories.rbac_repository import RBACRepository
         session = object_session(user)
         permissions = []
         if session:

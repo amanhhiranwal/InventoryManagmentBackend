@@ -2,10 +2,10 @@ from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.models.user import User
-from app.models.role import Role
 from app.models.permission import Permission
+from app.models.role import Role
 from app.models.role_permission import RolePermission
+from app.models.user import User
 
 
 class RBACRepository:
@@ -219,38 +219,6 @@ class RBACRepository:
         )
 
         return permissions
-
-    @staticmethod
-    def remove_permission_from_role(
-        db: Session,
-        role_id: str,
-        permission_id: str,
-    ):
-        role_permission = (
-            db.query(RolePermission)
-            .filter(
-                RolePermission.role_id == role_id,
-                RolePermission.permission_id == permission_id,
-            )
-            .first()
-        )
-
-        if role_permission is None:
-            raise HTTPException(
-                status_code=404, detail="Permission assignment not found."
-            )
-
-        try:
-            db.delete(role_permission)
-            db.commit()
-
-        except SQLAlchemyError:
-            db.rollback()
-            raise HTTPException(
-                status_code=500, detail="Failed to remove permission from role."
-            )
-
-        return role_permission
 
     @staticmethod
     def get_role_permission(

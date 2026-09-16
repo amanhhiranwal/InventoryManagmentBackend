@@ -1,7 +1,7 @@
-import urllib.request
-import urllib.parse
 import json
 import time
+import urllib.parse
+import urllib.request
 
 BASE_URL = "http://localhost:8000/api/v1"
 
@@ -22,7 +22,7 @@ def make_request(url, method="GET", data=None, token=None):
         err_body = e.read().decode("utf-8")
         try:
             parsed_err = json.loads(err_body)
-        except:
+        except ValueError:
             parsed_err = {"raw": err_body}
         return e.code, parsed_err
 
@@ -243,7 +243,6 @@ def test_crud_suite():
     }
     status, res = make_request(f"{BASE_URL}/workflows/", method="POST", data=wf_data, token=token)
     print(f"-> Create Workflow Status: {status}")
-    wf_id = res.get("data", {}).get("id")
 
     status, res = make_request(f"{BASE_URL}/workflows/", token=token)
     print(f"-> List Workflows Status: {status}")

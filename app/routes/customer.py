@@ -1,11 +1,12 @@
+from typing import Optional
+
+from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import Optional, Any
 from sqlalchemy.orm import Session
-from bson import ObjectId
 
-from app.database.mongodb import sync_mongo_db
 from app.database.dependencies import get_db
+from app.database.mongodb import sync_mongo_db
 from app.middleware.auth_middleware import get_current_user
 from app.services.lead_service import get_visible_creator_user_ids
 
