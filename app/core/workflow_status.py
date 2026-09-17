@@ -213,6 +213,25 @@ class ProformaInvoiceStatus:
     ALL = [DRAFT, GENERATED, SENT, CANCELLED]
 
 
+PROFORMA_INVOICE_TRANSITIONS: dict[str, set[str]] = {
+    # A draft is the only state that can still be edited; generating it
+    # freezes the lines and dates.
+    ProformaInvoiceStatus.DRAFT: {
+        ProformaInvoiceStatus.GENERATED,
+        ProformaInvoiceStatus.CANCELLED,
+    },
+    ProformaInvoiceStatus.GENERATED: {
+        ProformaInvoiceStatus.SENT,
+        ProformaInvoiceStatus.CANCELLED,
+    },
+    # Once with the customer it can still be withdrawn, but not un-sent.
+    ProformaInvoiceStatus.SENT: {
+        ProformaInvoiceStatus.CANCELLED,
+    },
+    ProformaInvoiceStatus.CANCELLED: _terminal(),
+}
+
+
 class AgreementStatus:
     DRAFT = "DRAFT"
     SENT = "SENT"
