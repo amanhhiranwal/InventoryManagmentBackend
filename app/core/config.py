@@ -42,6 +42,27 @@ class Settings(BaseSettings):
     SMTP_TLS: bool = True
     SMTP_SSL: bool = False
 
+    # -----------------------------
+    # Seller identity printed on proforma invoices
+    # -----------------------------
+    #: Deliberately blank by default. These are what a customer pays into, so
+    #: a placeholder account number that survived into a real invoice would
+    #: send money to the wrong place; an unset value shows as "Not configured"
+    #: instead.
+    COMPANY_LEGAL_NAME: str = ""
+    #: Multi-line address; separate lines with "|" in .env.
+    COMPANY_ADDRESS: str = ""
+    COMPANY_GSTIN: str = ""
+    BANK_BENEFICIARY_NAME: str = ""
+    BANK_NAME: str = ""
+    BANK_BRANCH: str = ""
+    BANK_ACCOUNT_NUMBER: str = ""
+    BANK_IFSC: str = ""
+    BANK_UPI_VPA: str = ""
+    #: Who signs the invoice. Falls back to the invoice's creator when unset.
+    SIGNATORY_NAME: str = ""
+    SIGNATORY_TITLE: str = ""
+
     BACKEND_CORS_ORIGINS: list[str] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",

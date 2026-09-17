@@ -6,6 +6,8 @@ from app.models.location import Location
 from app.models.opportunity import Opportunity
 from app.models.password_reset_token import PasswordResetToken
 from app.models.permission import Permission
+from app.models.proforma_invoice import ProformaInvoice
+from app.models.proforma_invoice_activity import ProformaInvoiceActivity
 from app.models.quotation import Quotation
 from app.models.role import Role
 from app.models.role_permission import RolePermission
