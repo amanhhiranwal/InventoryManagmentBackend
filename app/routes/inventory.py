@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from typing import Optional, Any
+
+from app.middleware.permission_middleware import require_permission
 from app.services.inventory_service import InventoryService
-from app.middleware.permission_middleware import require_permission, require_super_admin
 
 router = APIRouter(
     prefix="/inventory",

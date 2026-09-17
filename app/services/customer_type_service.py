@@ -1,7 +1,9 @@
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
+
 from app.models.customer_type import CustomerType
 from app.schemas.customer_type import CreateCustomerTypeRequest
-from fastapi import HTTPException
+
 
 class CustomerTypeService:
     @staticmethod

@@ -54,9 +54,10 @@ class CompanyService:
         )
 
         if getattr(request, "user_id", None):
+            from uuid import UUID
+
             from app.repositories.user_repository import UserRepository
             from app.utils.validators import validate_uuid
-            from uuid import UUID
             validate_uuid(request.user_id, "user_id")
             user = UserRepository.get_by_id(db, UUID(request.user_id))
             if user:

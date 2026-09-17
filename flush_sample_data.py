@@ -1,9 +1,10 @@
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from sqlalchemy import create_engine, text
 from pymongo import MongoClient
+from sqlalchemy import create_engine, text
 
 DB_NAMES = ["solutions", "auth_db", "crm_db", "inventory_db", "sales_db"]
 BASE_PG_URL = "postgresql+psycopg2://amanhiranwal:aman%4015@localhost:5433/"

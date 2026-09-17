@@ -1,20 +1,21 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
 from uuid import UUID
 
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from app.controllers.opportunity_controller import OpportunityController
 from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
-from app.controllers.opportunity_controller import OpportunityController
-from app.utils.user_names import get_user_names_helper
 from app.schemas.lead import (
-    CreateLeadRequest,
-    UpdateLeadRequest,
-    ProgressLeadRequest,
     AssignLeadRequest,
+    CreateLeadRequest,
     LogLeadActivityRequest,
+    ProgressLeadRequest,
+    UpdateLeadRequest,
 )
 from app.schemas.opportunity import ConvertLeadRequest
 from app.services.lead_service import LeadService
+from app.utils.user_names import get_user_names_helper
 
 router = APIRouter(
     prefix="/leads",
@@ -100,13 +101,13 @@ def get_leads(
     
     # Resolve names of creators & assigned users in bulk via HTTP
     all_user_ids = set()
-    for l in leads:
-        if l.creator_id:
-            all_user_ids.add(str(l.creator_id))
-        if l.assigned_to_id:
-            all_user_ids.add(str(l.assigned_to_id))
-        if l.assigned_by_id:
-            all_user_ids.add(str(l.assigned_by_id))
+    for lead_row in leads:
+        if lead_row.creator_id:
+            all_user_ids.add(str(lead_row.creator_id))
+        if lead_row.assigned_to_id:
+            all_user_ids.add(str(lead_row.assigned_to_id))
+        if lead_row.assigned_by_id:
+            all_user_ids.add(str(lead_row.assigned_by_id))
             
     names_map = get_user_names_helper(list(all_user_ids), db)
     
@@ -114,44 +115,44 @@ def get_leads(
         "success": True,
         "data": [
             {
-                "id": l.id,
-                "title": l.title,
-                "description": l.description,
-                "status": l.status,
-                "stage": l.stage,
-                "demo_status": l.demo_status,
-                "requirements": l.requirements,
-                "quotation_type": l.quotation_type,
-                "quotation_items": l.quotation_items,
-                "contact_name": l.contact_name,
-                "organization_name": l.organization_name,
-                "email": l.email,
-                "mobile_number": l.mobile_number,
-                "website": l.website,
-                "office_address": l.office_address,
-                "city": l.city,
-                "zip_code": l.zip_code,
-                "country": l.country,
-                "gst_number": l.gst_number,
-                "pan_number": l.pan_number,
-                "coi_number": l.coi_number,
-                "designation": l.designation,
-                "remarks": l.remarks,
-                "customer_type_id": l.customer_type_id,
-                "customer_type_name": l.customer_type.name if l.customer_type else None,
-                "state_id": l.state_id,
-                "state_name": l.state.name if l.state else None,
-                "lead_source_id": l.lead_source_id,
-                "lead_source_name": l.lead_source.name if l.lead_source else None,
-                "creator_id": str(l.creator_id),
-                "creator_name": names_map.get(str(l.creator_id), "Unknown"),
-                "assigned_to_id": str(l.assigned_to_id) if l.assigned_to_id else None,
-                "assigned_to_name": names_map.get(str(l.assigned_to_id), None) if l.assigned_to_id else None,
-                "assigned_by_id": str(l.assigned_by_id) if l.assigned_by_id else None,
-                "assigned_by_name": names_map.get(str(l.assigned_by_id), None) if l.assigned_by_id else None,
-                "created_at": l.created_at.isoformat(),
+                "id": lead_row.id,
+                "title": lead_row.title,
+                "description": lead_row.description,
+                "status": lead_row.status,
+                "stage": lead_row.stage,
+                "demo_status": lead_row.demo_status,
+                "requirements": lead_row.requirements,
+                "quotation_type": lead_row.quotation_type,
+                "quotation_items": lead_row.quotation_items,
+                "contact_name": lead_row.contact_name,
+                "organization_name": lead_row.organization_name,
+                "email": lead_row.email,
+                "mobile_number": lead_row.mobile_number,
+                "website": lead_row.website,
+                "office_address": lead_row.office_address,
+                "city": lead_row.city,
+                "zip_code": lead_row.zip_code,
+                "country": lead_row.country,
+                "gst_number": lead_row.gst_number,
+                "pan_number": lead_row.pan_number,
+                "coi_number": lead_row.coi_number,
+                "designation": lead_row.designation,
+                "remarks": lead_row.remarks,
+                "customer_type_id": lead_row.customer_type_id,
+                "customer_type_name": lead_row.customer_type.name if lead_row.customer_type else None,
+                "state_id": lead_row.state_id,
+                "state_name": lead_row.state.name if lead_row.state else None,
+                "lead_source_id": lead_row.lead_source_id,
+                "lead_source_name": lead_row.lead_source.name if lead_row.lead_source else None,
+                "creator_id": str(lead_row.creator_id),
+                "creator_name": names_map.get(str(lead_row.creator_id), "Unknown"),
+                "assigned_to_id": str(lead_row.assigned_to_id) if lead_row.assigned_to_id else None,
+                "assigned_to_name": names_map.get(str(lead_row.assigned_to_id), None) if lead_row.assigned_to_id else None,
+                "assigned_by_id": str(lead_row.assigned_by_id) if lead_row.assigned_by_id else None,
+                "assigned_by_name": names_map.get(str(lead_row.assigned_by_id), None) if lead_row.assigned_by_id else None,
+                "created_at": lead_row.created_at.isoformat(),
             }
-            for l in leads
+            for lead_row in leads
         ]
     }
 

@@ -1,8 +1,8 @@
-from fastapi import HTTPException
-from sqlalchemy.orm import Session
+import os
 
 import requests
-import os
+from fastapi import HTTPException
+from sqlalchemy.orm import Session
 
 from app.models.location import Location
 from app.repositories.location_repository import LocationRepository

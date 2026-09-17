@@ -24,7 +24,6 @@ from app.database.postgres import SessionLocal, engine  # noqa: E402
 from app.models.opportunity import Opportunity  # noqa: E402
 from app.models.sales_order import SalesOrder  # noqa: E402
 
-
 BACKFILL_OPPORTUNITIES = """
 INSERT INTO sales_opportunity (
     lead_id, title, description, status,

@@ -2,11 +2,11 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.utils.user_names import get_user_names_helper
 from app.services.opportunity_service import (
     OpportunityService,
     serialize_opportunity,
 )
+from app.utils.user_names import get_user_names_helper
 
 
 def serialize_activity(activity, names_map: dict[str, str] | None = None) -> dict:

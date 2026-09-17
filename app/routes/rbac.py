@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.controllers.rbac_controller import RBACController
 from app.database.dependencies import get_db
-from app.middleware.permission_middleware import require_super_admin, require_permission
+from app.middleware.permission_middleware import require_permission, require_super_admin
 from app.schemas.rbac import (
     CreatePermissionRequest,
     CreateRoleRequest,

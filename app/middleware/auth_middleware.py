@@ -1,6 +1,5 @@
 from fastapi import Depends, HTTPException
-from fastapi.security import HTTPAuthorizationCredentials
-from fastapi.security import HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.services.jwt_service import JWTService
 

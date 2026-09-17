@@ -2,11 +2,11 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.utils.user_names import get_user_names_helper
 from app.services.quotation_service import (
     QuotationService,
     serialize_quotation,
 )
+from app.utils.user_names import get_user_names_helper
 
 
 def _serialize_merged_activity(row: dict, names_map: dict[str, str]) -> dict:

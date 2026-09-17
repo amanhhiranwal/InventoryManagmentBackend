@@ -1,27 +1,26 @@
 from fastapi import APIRouter
 
 from app.routes.auth import router as auth_router
-from app.routes.user import router as user_router
-from app.routes.role import router as role_router
-from app.routes.rbac import router as rbac_router
-from app.routes.company import router as company_router
-from app.routes.location import router as location_router
-from app.routes.workflow import router as workflow_router
-from app.routes.lead import router as lead_router
-from app.routes.inventory import router as inventory_router
-from app.routes.product_type import router as product_type_router
 from app.routes.category_group import router as category_group_router
-from app.routes.customer_type import router as customer_type_router
-from app.routes.profile import router as profile_router
-from app.routes.opportunity import router as opportunity_router
-from app.routes.quotation import router as quotation_router
-from app.routes.order import router as order_router
-from app.routes.unit import router as unit_router
+from app.routes.company import router as company_router
 from app.routes.customer import router as customer_router
-from app.routes.menu import router as menu_router
+from app.routes.customer_type import router as customer_type_router
+from app.routes.inventory import router as inventory_router
+from app.routes.lead import router as lead_router
 from app.routes.lead_source import router as lead_source_router
+from app.routes.location import router as location_router
+from app.routes.menu import router as menu_router
+from app.routes.opportunity import router as opportunity_router
+from app.routes.order import router as order_router
+from app.routes.product_type import router as product_type_router
+from app.routes.profile import router as profile_router
+from app.routes.quotation import router as quotation_router
+from app.routes.rbac import router as rbac_router
+from app.routes.role import router as role_router
 from app.routes.state import router as state_router
-
+from app.routes.unit import router as unit_router
+from app.routes.user import router as user_router
+from app.routes.workflow import router as workflow_router
 
 api_router = APIRouter(
     prefix="/api/v1",

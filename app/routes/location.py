@@ -6,9 +6,9 @@ from fastapi import (
 )
 from sqlalchemy.orm import Session
 
-from app.database.dependencies import get_db
 from app.controllers.location_controller import LocationController
-from app.middleware.permission_middleware import require_permission, require_super_admin
+from app.database.dependencies import get_db
+from app.middleware.permission_middleware import require_permission
 from app.schemas.location import (
     LocationCreate,
     LocationUpdate,

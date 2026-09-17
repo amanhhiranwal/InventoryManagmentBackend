@@ -1,5 +1,7 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, func
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, func
+
 from app.database.base import Base
+
 
 class LeadSource(Base):
     __tablename__ = "sales_lead_source"

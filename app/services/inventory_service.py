@@ -1,6 +1,8 @@
 from bson import ObjectId
 from fastapi import HTTPException
+
 from app.database.mongodb import sync_mongo_db
+
 
 class InventoryService:
     templates_col = sync_mongo_db["inventory_templates"]

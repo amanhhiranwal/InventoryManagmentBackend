@@ -1,11 +1,11 @@
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     DateTime,
     Float,
     ForeignKey,
     Integer,
-    JSON,
     String,
     func,
 )

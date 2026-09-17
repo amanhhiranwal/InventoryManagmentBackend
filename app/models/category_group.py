@@ -1,7 +1,10 @@
 import uuid
-from sqlalchemy import Column, String, DateTime, func
+
+from sqlalchemy import Column, DateTime, String, func
 from sqlalchemy.dialects.postgresql import UUID
+
 from app.database.base import Base
+
 
 class CategoryGroup(Base):
     __tablename__ = "category_groups"

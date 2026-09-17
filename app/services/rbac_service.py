@@ -3,9 +3,8 @@ from sqlalchemy.orm import Session
 
 from app.models.permission import Permission
 from app.models.role import Role
-
-from app.repositories.rbac_repository import RBACRepository
 from app.models.role_permission import RolePermission
+from app.repositories.rbac_repository import RBACRepository
 from app.utils.validators import validate_uuid
 
 

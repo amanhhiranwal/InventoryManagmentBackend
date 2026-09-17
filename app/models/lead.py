@@ -1,7 +1,9 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, JSON, DateTime, func
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+
 from app.database.base import Base
+
 
 class Lead(Base):
     __tablename__ = "sales_lead"

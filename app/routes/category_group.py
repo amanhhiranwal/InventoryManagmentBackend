@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+
 from app.database.dependencies import get_db
-from app.services.category_group_service import CategoryGroupService
+from app.middleware.permission_middleware import require_permission
 from app.schemas.category_group import CreateCategoryGroupRequest
-from app.middleware.permission_middleware import require_permission, require_super_admin
+from app.services.category_group_service import CategoryGroupService
 
 router = APIRouter(
     prefix="/category-groups",

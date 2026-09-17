@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+
 from app.database.dependencies import get_db
-from app.services.product_type_service import ProductTypeService
+from app.middleware.permission_middleware import require_permission
 from app.schemas.product_type import CreateProductTypeRequest
-from app.middleware.permission_middleware import require_permission, require_super_admin
+from app.services.product_type_service import ProductTypeService
 
 router = APIRouter(
     prefix="/product-types",

@@ -1,8 +1,11 @@
+from uuid import UUID
+
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
+
 from app.models.product_type import ProductType
 from app.schemas.product_type import CreateProductTypeRequest
-from fastapi import HTTPException
-from uuid import UUID
+
 
 class ProductTypeService:
     @staticmethod

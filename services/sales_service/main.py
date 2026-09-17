@@ -1,14 +1,13 @@
-from fastapi import FastAPI, APIRouter
+from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.utils.exception_handler import register_exception_handlers
-
-from app.routes.order import router as order_router
 from app.routes.customer import router as customer_router
 from app.routes.customer_type import router as customer_type_router
 from app.routes.location import router as location_router
+from app.routes.order import router as order_router
 from app.routes.state import router as state_router
+from app.utils.exception_handler import register_exception_handlers
 
 app = FastAPI(
     title=f"{settings.APP_NAME} - Sales Service",
