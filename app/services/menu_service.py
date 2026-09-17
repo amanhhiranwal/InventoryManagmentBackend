@@ -34,6 +34,9 @@ DEFAULT_MENUS_DATA = [
       {"title": "Oppurtunity", "icon": "LuStar", "path": "/sales/opportunities", "permission_key": "opportunity.read", "order_index": 2},
       {"title": "Quotation", "icon": "LuQuoteOpen", "path": "/sales/quotations", "permission_key": "quotation.read", "order_index": 3},
       {"title": "Sales Orders", "icon": "LuFileText", "path": "/sales/orders", "permission_key": "order.read", "order_index": 4},
+      # Raised against a confirmed sales order, so whoever can see orders can
+      # see their invoices - no separate permission to grant.
+      {"title": "Proforma Invoice", "icon": "LuReceiptText", "path": "/sales/proforma-invoices", "permission_key": "order.read", "order_index": 5},
     ]
   },
   {
