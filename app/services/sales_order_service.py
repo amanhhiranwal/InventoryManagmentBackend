@@ -16,6 +16,7 @@ from app.models.sales_order_activity import SalesOrderActivity
 from app.repositories.opportunity_repository import OpportunityRepository
 from app.repositories.sales_order_repository import SalesOrderRepository
 from app.services.lead_service import get_visible_creator_user_ids
+from app.services.notification_service import NotificationService
 
 #: Headline written onto the activity entry when an order reaches a status.
 SALES_ORDER_STATUS_ACTIONS: dict[str, str] = {
@@ -469,6 +470,11 @@ class SalesOrderService:
         )
 
         db.add(activity)
+
+        # Everyone who owns or oversees the record hears about it.
+        NotificationService.notify_activity(
+            db, "sales_order", order, action, description, user_id
+        )
 
         if commit:
             db.commit()

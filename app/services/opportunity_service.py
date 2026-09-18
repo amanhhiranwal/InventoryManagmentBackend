@@ -16,6 +16,7 @@ from app.models.opportunity import Opportunity
 from app.models.opportunity_activity import OpportunityActivity
 from app.repositories.opportunity_repository import OpportunityRepository
 from app.services.lead_service import LeadService, get_visible_creator_user_ids
+from app.services.notification_service import NotificationService
 
 #: Headline written onto the activity entry when an opportunity reaches a
 #: status. Phrased as what the user did, because that is how the timeline
@@ -344,6 +345,11 @@ class OpportunityService:
         )
 
         db.add(activity)
+
+        # Everyone who owns or oversees the record hears about it.
+        NotificationService.notify_activity(
+            db, "opportunity", opportunity, action, description, user_id
+        )
 
         if commit:
             db.commit()

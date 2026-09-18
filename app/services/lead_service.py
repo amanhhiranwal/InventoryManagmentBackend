@@ -15,6 +15,7 @@ from app.core.workflow_status import (
 from app.models.lead import Lead
 from app.models.lead_activity import LeadActivity
 from app.models.workflow import Workflow
+from app.services.notification_service import NotificationService
 
 #: Headline written onto the activity entry when a lead reaches a status.
 #: Phrased as what the user did, because that is what the timeline reads as.
@@ -168,6 +169,11 @@ class LeadService:
         )
 
         db.add(activity)
+
+        # Everyone who owns or oversees the record hears about it.
+        NotificationService.notify_activity(
+            db, "lead", lead, action, description, user_id
+        )
 
         if commit:
             db.commit()

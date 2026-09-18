@@ -18,6 +18,7 @@ from app.repositories.opportunity_repository import OpportunityRepository
 from app.repositories.quotation_repository import QuotationRepository
 from app.services.email_service import EmailService
 from app.services.lead_service import get_visible_creator_user_ids
+from app.services.notification_service import NotificationService
 
 #: Offer validity shown on the form as "Validation Date (30 days)".
 DEFAULT_VALIDITY_DAYS = 30
@@ -372,6 +373,11 @@ class QuotationService:
         )
 
         db.add(activity)
+
+        # Everyone who owns or oversees the record hears about it.
+        NotificationService.notify_activity(
+            db, "quotation", quotation, action, description, user_id
+        )
 
         if commit:
             db.commit()

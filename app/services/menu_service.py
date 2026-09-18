@@ -13,6 +13,9 @@ RENAMED_DEFAULT_TITLES = {
   "Sales Orders": "Sales Order",
 }
 
+#: Set once the default menus have been checked in this process.
+_DEFAULTS_ENSURED = False
+
 DEFAULT_MENUS_DATA = [
   {
     "title": "Dashboard",
@@ -102,38 +105,33 @@ class MenuService:
     def seed_default_menus(db: Session):
         """Ensure every default menu item exists.
 
-        Previously this returned early whenever the table held any rows, so a
-        newly added default (Quotation, for instance) could only ever appear
-        in a database seeded from empty. It now backfills anything missing,
-        matched on title within its parent, and leaves existing rows -
-        including any the user has renamed or reordered - untouched.
+        Backfills anything missing, matched on title within its parent, and
+        leaves existing rows - including any the user has renamed or
+        reordered - untouched. Reads every menu row in one query and commits
+        only when something was actually added or renamed, so it costs a
+        single query when the menus are already in place.
         """
 
+        rows = db.query(MenuItem).all()
+        changed = False
+
+        # Old default titles corrected to match the design.
         for old_title, new_title in RENAMED_DEFAULT_TITLES.items():
-            for row in db.query(MenuItem).filter(MenuItem.title == old_title).all():
-                taken = (
-                    db.query(MenuItem)
-                    .filter(
-                        MenuItem.title == new_title,
-                        MenuItem.parent_id == row.parent_id,
-                    )
-                    .first()
+            for row in [r for r in rows if r.title == old_title]:
+                taken = any(
+                    other.title == new_title and other.parent_id == row.parent_id
+                    for other in rows
                 )
 
-                if taken is None:
+                if not taken:
                     row.title = new_title
+                    changed = True
 
-        db.commit()
+        parents_by_title = {r.title: r for r in rows if r.parent_id is None}
+        children_keys = {(r.parent_id, r.title) for r in rows if r.parent_id is not None}
 
         for g_item in DEFAULT_MENUS_DATA:
-            parent_menu = (
-                db.query(MenuItem)
-                .filter(
-                    MenuItem.title == g_item["title"],
-                    MenuItem.parent_id.is_(None),
-                )
-                .first()
-            )
+            parent_menu = parents_by_title.get(g_item["title"])
 
             if parent_menu is None:
                 parent_menu = MenuItem(
@@ -145,20 +143,12 @@ class MenuService:
                     is_active=True,
                 )
                 db.add(parent_menu)
-                db.commit()
-                db.refresh(parent_menu)
+                db.flush()
+                parents_by_title[parent_menu.title] = parent_menu
+                changed = True
 
             for c_item in g_item.get("children", []):
-                exists = (
-                    db.query(MenuItem)
-                    .filter(
-                        MenuItem.title == c_item["title"],
-                        MenuItem.parent_id == parent_menu.id,
-                    )
-                    .first()
-                )
-
-                if exists is not None:
+                if (parent_menu.id, c_item["title"]) in children_keys:
                     continue
 
                 db.add(
@@ -172,28 +162,44 @@ class MenuService:
                         is_active=True,
                     )
                 )
+                children_keys.add((parent_menu.id, c_item["title"]))
+                changed = True
 
+        if changed:
             db.commit()
 
     @staticmethod
-    def get_menu_tree(db: Session):
+    def ensure_default_menus(db: Session):
+        """Run the default-menu check once per server process.
+
+        The sidebar is fetched on every page load; the defaults only need
+        checking once after start-up, not on each request.
+        """
+
+        global _DEFAULTS_ENSURED
+
+        if _DEFAULTS_ENSURED:
+            return
+
         MenuService.seed_default_menus(db)
-        parents = (
-            db.query(MenuItem)
-            .filter(MenuItem.parent_id.is_(None))
-            .order_by(asc(MenuItem.order_index))
-            .all()
-        )
-        
+        _DEFAULTS_ENSURED = True
+
+    @staticmethod
+    def get_menu_tree(db: Session):
+        MenuService.ensure_default_menus(db)
+
+        # Every menu in one query, grouped into parents and children here.
+        rows = db.query(MenuItem).order_by(asc(MenuItem.order_index)).all()
+
+        children_by_parent: dict = {}
+        for row in rows:
+            if row.parent_id is not None:
+                children_by_parent.setdefault(row.parent_id, []).append(row)
+
         result = []
-        for p in parents:
-            children = (
-                db.query(MenuItem)
-                .filter(MenuItem.parent_id == p.id)
-                .order_by(asc(MenuItem.order_index))
-                .all()
-            )
-            
+        for p in (r for r in rows if r.parent_id is None):
+            children = children_by_parent.get(p.id, [])
+
             result.append({
                 "id": str(p.id),
                 "title": p.title,
