@@ -3,6 +3,7 @@ from app.models.customer_type import CustomerType
 from app.models.lead import Lead
 from app.models.lead_source import LeadSource
 from app.models.location import Location
+from app.models.notification import Notification
 from app.models.opportunity import Opportunity
 from app.models.password_reset_token import PasswordResetToken
 from app.models.permission import Permission

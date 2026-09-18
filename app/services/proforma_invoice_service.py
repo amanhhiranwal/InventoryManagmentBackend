@@ -23,6 +23,7 @@ from app.services.sales_order_service import (
     _items_to_json,
     compute_order_totals,
 )
+from app.services.notification_service import NotificationService
 
 #: Headline written onto the activity entry when an invoice reaches a status.
 PROFORMA_INVOICE_STATUS_ACTIONS: dict[str, str] = {
@@ -751,6 +752,11 @@ class ProformaInvoiceService:
         )
 
         db.add(activity)
+
+        # Everyone who owns or oversees the record hears about it.
+        NotificationService.notify_activity(
+            db, "proforma_invoice", invoice, action, description, user_id
+        )
 
         if commit:
             db.commit()
