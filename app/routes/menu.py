@@ -31,7 +31,8 @@ def get_user_sidebar(
     user_id = current_user["user_id"]
     is_super_admin = current_user.get("is_super_admin", False)
     
-    user = RBACRepository.get_user(db, user_id)
+    # A super admin sees every menu, so their permissions need no lookup.
+    user = None if is_super_admin else RBACRepository.get_user(db, user_id)
     user_perms = set()
     if user:
         for role in user.roles:
