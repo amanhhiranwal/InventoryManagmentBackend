@@ -228,8 +228,11 @@ class MenuService:
     @staticmethod
     def get_user_sidebar(user_permissions: set[str], is_super_admin: bool, db: Session):
         tree = MenuService.get_menu_tree(db)
+
+        # Hidden menus stay hidden for everyone, super admins included; a
+        # super admin only skips the permission check.
         if is_super_admin:
-            return tree
+            return [item for item in tree if item["is_active"]]
 
         filtered = []
         for item in tree:
@@ -294,9 +297,47 @@ class MenuService:
 
     @staticmethod
     def delete_menu_item(menu_id: str, db: Session):
+        """Remove a menu item.
+
+        A default item is hidden (is_active = False), with its sub-menus,
+        rather than deleted: the seed recreates any default that is missing,
+        so a real delete would bring it back. Hidden, it stays gone and can be
+        switched back on with is_active = True. Custom items are deleted.
+        """
+
         item = db.query(MenuItem).filter(MenuItem.id == UUID(menu_id)).first()
-        if item:
+
+        if not item:
+            return False
+
+        if MenuService.is_default_menu(item, db):
+            item.is_active = False
+
+            for child in db.query(MenuItem).filter(MenuItem.parent_id == item.id).all():
+                child.is_active = False
+        else:
             db.delete(item)
-            db.commit()
-            return True
+
+        db.commit()
+        return True
+
+    @staticmethod
+    def is_default_menu(item: MenuItem, db: Session) -> bool:
+        """Whether the item is one the seed would recreate."""
+
+        titles = set(RENAMED_DEFAULT_TITLES) | set(RENAMED_DEFAULT_TITLES.values())
+
+        if item.parent_id is None:
+            return item.title in titles or any(
+                g["title"] == item.title for g in DEFAULT_MENUS_DATA
+            )
+
+        parent = db.query(MenuItem).filter(MenuItem.id == item.parent_id).first()
+
+        for g_item in DEFAULT_MENUS_DATA:
+            if parent is not None and g_item["title"] == parent.title:
+                return item.title in titles or any(
+                    c["title"] == item.title for c in g_item.get("children", [])
+                )
+
         return False
