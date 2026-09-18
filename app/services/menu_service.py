@@ -6,6 +6,13 @@ from sqlalchemy.orm import Session
 from app.models.menu import MenuItem
 from app.schemas.menu import CreateMenuItemRequest, UpdateMenuItemRequest
 
+# Default titles that were corrected to match the design. A row still carrying
+# the old default is renamed on seed; a title the user chose is left alone.
+RENAMED_DEFAULT_TITLES = {
+  "Oppurtunity": "Opportunity",
+  "Sales Orders": "Sales Order",
+}
+
 DEFAULT_MENUS_DATA = [
   {
     "title": "Dashboard",
@@ -31,9 +38,9 @@ DEFAULT_MENUS_DATA = [
     "order_index": 3,
     "children": [
       {"title": "Leads", "icon": "LuUser", "path": "/leads", "permission_key": "lead.read", "order_index": 1},
-      {"title": "Oppurtunity", "icon": "LuStar", "path": "/sales/opportunities", "permission_key": "opportunity.read", "order_index": 2},
+      {"title": "Opportunity", "icon": "LuStar", "path": "/sales/opportunities", "permission_key": "opportunity.read", "order_index": 2},
       {"title": "Quotation", "icon": "LuQuoteOpen", "path": "/sales/quotations", "permission_key": "quotation.read", "order_index": 3},
-      {"title": "Sales Orders", "icon": "LuFileText", "path": "/sales/orders", "permission_key": "order.read", "order_index": 4},
+      {"title": "Sales Order", "icon": "LuFileText", "path": "/sales/orders", "permission_key": "order.read", "order_index": 4},
       # Raised against a confirmed sales order, so whoever can see orders can
       # see their invoices - no separate permission to grant.
       {"title": "Proforma Invoice", "icon": "LuReceiptText", "path": "/sales/proforma-invoices", "permission_key": "order.read", "order_index": 5},
@@ -101,6 +108,22 @@ class MenuService:
         matched on title within its parent, and leaves existing rows -
         including any the user has renamed or reordered - untouched.
         """
+
+        for old_title, new_title in RENAMED_DEFAULT_TITLES.items():
+            for row in db.query(MenuItem).filter(MenuItem.title == old_title).all():
+                taken = (
+                    db.query(MenuItem)
+                    .filter(
+                        MenuItem.title == new_title,
+                        MenuItem.parent_id == row.parent_id,
+                    )
+                    .first()
+                )
+
+                if taken is None:
+                    row.title = new_title
+
+        db.commit()
 
         for g_item in DEFAULT_MENUS_DATA:
             parent_menu = (
