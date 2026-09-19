@@ -10,6 +10,7 @@ class CreateUserRequest(BaseModel):
     employee_id: str
     role_ids: list[str] = []
     company_ids: list[str] = []
+    reports_to_id: str | None = None
 
 
 class UpdateUserRoleRequest(BaseModel):
@@ -24,3 +25,4 @@ class UpdateUserRequest(BaseModel):
     employee_id: str
     role_ids: list[str] = []
     company_ids: list[str] = []
+    reports_to_id: str | None = None

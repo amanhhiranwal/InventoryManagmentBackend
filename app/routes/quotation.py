@@ -53,7 +53,7 @@ def get_quotation(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    return QuotationController.get_by_id(quotation_id, db)
+    return QuotationController.get_by_id(quotation_id, db, current_user)
 
 
 @router.post("/")

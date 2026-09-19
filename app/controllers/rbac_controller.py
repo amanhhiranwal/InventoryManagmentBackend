@@ -22,8 +22,12 @@ class RBACController:
         return RBACService.create_role(request, db)
 
     @staticmethod
-    def get_roles(db: Session):
-        return RBACService.get_roles(db)
+    def get_roles(db: Session, current_user: dict | None = None):
+        return RBACService.get_roles(db, current_user)
+
+    @staticmethod
+    def update_role(role_id: str, request, db: Session):
+        return RBACService.update_role(role_id, request, db)
 
     @staticmethod
     def delete_role(role_id: str, db: Session):

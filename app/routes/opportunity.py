@@ -31,7 +31,7 @@ def get_opportunity(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    return OpportunityController.get_by_id(opportunity_id, db)
+    return OpportunityController.get_by_id(opportunity_id, db, current_user)
 
 
 @router.post("/")

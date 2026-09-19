@@ -2,10 +2,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database.dependencies import get_db
-from app.middleware.permission_middleware import require_permission
+from app.middleware.permission_middleware import require_permission, require_super_admin
 from app.schemas.category_group import CreateCategoryGroupRequest
 from app.services.category_group_service import CategoryGroupService
 
+# Masters are maintained by the super admin; reads stay open to the
+# permissions below because the sales forms use them for their dropdowns.
 router = APIRouter(
     prefix="/category-groups",
     tags=["Category Groups"],
@@ -15,7 +17,7 @@ router = APIRouter(
 def create_category_group(
     request: CreateCategoryGroupRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(require_permission("category_group.create"))
+    current_user=Depends(require_super_admin)
 ):
     cg = CategoryGroupService.create(request, db)
     return {
@@ -50,7 +52,7 @@ def get_category_groups(
 def delete_category_group(
     cg_id: str,
     db: Session = Depends(get_db),
-    current_user=Depends(require_permission("category_group.delete"))
+    current_user=Depends(require_super_admin)
 ):
     CategoryGroupService.delete(cg_id, db)
     return {

@@ -22,6 +22,14 @@ class UserController:
                         seen_perms.add(p.permission_name)
                         permissions.append(p.permission_name)
 
+        reports_to_name = None
+        if session and user.reports_to_id:
+            from app.models.user import User
+
+            manager = session.get(User, user.reports_to_id)
+            if manager:
+                reports_to_name = f"{manager.first_name} {manager.last_name}".strip()
+
         return {
             "id": str(user.id),
             "first_name": user.first_name,
@@ -35,11 +43,13 @@ class UserController:
             "permissions": permissions,
             "is_super_admin": user.is_super_admin,
             "is_active": user.is_active,
+            "reports_to_id": str(user.reports_to_id) if user.reports_to_id else None,
+            "reports_to_name": reports_to_name,
         }
 
     @staticmethod
-    def create(request, db):
-        user = UserService.create(request, db)
+    def create(request, db, current_user=None):
+        user = UserService.create(request, db, current_user)
         return {
             "success": True,
             "message": "User created successfully.",
@@ -47,8 +57,8 @@ class UserController:
         }
 
     @staticmethod
-    def get_all(db, skip: int = 0, limit: int = 100):
-        result = UserService.get_all(db, skip, limit)
+    def get_all(db, skip: int = 0, limit: int = 100, current_user=None):
+        result = UserService.get_all(db, skip, limit, current_user)
         return {
             "success": True,
             "data": [UserController._to_response_dict(u) for u in result["data"]],
@@ -56,8 +66,8 @@ class UserController:
         }
 
     @staticmethod
-    def update_role(user_id: str, role_ids: list[str], company_ids: list[str], db):
-        user = UserService.update_role(user_id, role_ids, company_ids, db)
+    def update_role(user_id: str, role_ids: list[str], company_ids: list[str], db, current_user=None):
+        user = UserService.update_role(user_id, role_ids, company_ids, db, current_user)
         return {
             "success": True,
             "message": "User roles and companies updated successfully.",
@@ -65,16 +75,16 @@ class UserController:
         }
 
     @staticmethod
-    def delete(user_id: str, db):
-        UserService.delete(user_id, db)
+    def delete(user_id: str, db, current_user=None):
+        UserService.delete(user_id, db, current_user)
         return {
             "success": True,
             "message": "User deleted successfully.",
         }
 
     @staticmethod
-    def update(user_id: str, request, db):
-        user = UserService.update(user_id, request, db)
+    def update(user_id: str, request, db, current_user=None):
+        user = UserService.update(user_id, request, db, current_user)
         return {
             "success": True,
             "message": "User updated successfully.",

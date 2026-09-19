@@ -40,7 +40,7 @@ def get_order(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    return SalesOrderController.get_by_id(order_id, db)
+    return SalesOrderController.get_by_id(order_id, db, current_user)
 
 
 @router.get("/{order_id}/activities")

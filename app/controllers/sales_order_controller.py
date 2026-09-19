@@ -42,8 +42,12 @@ class SalesOrderController:
         }
 
     @staticmethod
-    def get_by_id(order_id: int, db: Session):
+    def get_by_id(order_id: int, db: Session, current_user: dict | None = None):
         order = SalesOrderService.get_by_id(order_id, db)
+
+        # Opening a record by id follows the same hierarchy as the list.
+        if current_user is not None:
+            SalesOrderService.assert_can_edit(order, current_user, db)
 
         return {
             "success": True,

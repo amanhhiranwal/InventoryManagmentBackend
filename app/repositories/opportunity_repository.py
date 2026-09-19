@@ -57,7 +57,12 @@ class OpportunityRepository:
 
         if visible_creator_ids:
             creator_uuids = [UUID(uid) for uid in visible_creator_ids]
-            conditions = [Opportunity.creator_id.in_(creator_uuids)]
+            # Assigned to anyone the caller can see, not only to the caller,
+            # so a manager also sees work handed to their team.
+            conditions = [
+                Opportunity.creator_id.in_(creator_uuids),
+                Opportunity.assigned_to_id.in_(creator_uuids),
+            ]
 
             if user_id:
                 conditions.append(Opportunity.assigned_to_id == UUID(user_id))

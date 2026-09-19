@@ -143,7 +143,10 @@ class OpportunityService:
 
         visible_ids = get_visible_creator_user_ids(current_user, db)
 
-        if visible_ids and str(opportunity.creator_id) in visible_ids:
+        if visible_ids and (
+            str(opportunity.creator_id) in visible_ids
+            or str(opportunity.assigned_to_id) in visible_ids
+        ):
             return
 
         raise HTTPException(

@@ -80,8 +80,12 @@ class OpportunityController:
         }
 
     @staticmethod
-    def get_by_id(opportunity_id: int, db: Session):
+    def get_by_id(opportunity_id: int, db: Session, current_user: dict | None = None):
         opportunity = OpportunityService.get_by_id(opportunity_id, db)
+
+        # Opening a record by id follows the same hierarchy as the list.
+        if current_user is not None:
+            OpportunityService.assert_can_edit(opportunity, current_user, db)
 
         return {
             "success": True,
