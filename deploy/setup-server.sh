@@ -9,7 +9,7 @@ echo "======================================================"
 if ! command -v docker &> /dev/null; then
   echo "==> Installing Docker and Docker Compose plugin..."
   apt-get update -y
-  apt-get install -y docker.io docker-compose-plugin
+  apt-get install -y docker.io docker-compose-v2
   systemctl enable docker
   systemctl start docker
   echo "==> Docker installed successfully!"

@@ -43,12 +43,16 @@ jobs:
             git fetch origin prod
             git reset --hard origin/prod
 
+            # Sync docker-compose.prod.yml if changed
+            cp -f "$BACKEND_DIR/deploy/docker-compose.prod.yml" "$APP_DIR/docker-compose.prod.yml" 2>/dev/null || true
+
             echo "==> Building and starting backend container..."
             docker compose -f "$APP_DIR/docker-compose.prod.yml" build saas_backend
             docker compose -f "$APP_DIR/docker-compose.prod.yml" up -d saas_backend
 
-            echo "==> Running database migrations..."
-            docker compose -f "$APP_DIR/docker-compose.prod.yml" exec -T saas_backend alembic upgrade head
+            echo "==> Syncing database schemas & seeding..."
+            docker compose -f "$APP_DIR/docker-compose.prod.yml" exec -T saas_backend python check_and_seed_db.py
+            docker compose -f "$APP_DIR/docker-compose.prod.yml" exec -T saas_backend python apply_crm_workflow_schema.py
 
             echo "==> Waiting for backend healthcheck..."
             sleep 4

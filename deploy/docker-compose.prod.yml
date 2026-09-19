@@ -45,7 +45,7 @@ services:
       - saas_backend
 
   saas_mongodb:
-    image: mongo:6.0
+    image: mongo:4.4
     container_name: saas_mongodb
     restart: unless-stopped
     volumes:
