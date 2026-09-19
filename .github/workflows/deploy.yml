@@ -1,0 +1,66 @@
+name: Deploy Backend to Production
+
+on:
+  push:
+    branches:
+      - prod
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-backend-prod
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy FastAPI Backend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Server via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            set -e
+            echo "=========================================="
+            echo "==> Deploying Backend to 45.195.159.94..."
+            echo "=========================================="
+
+            APP_DIR="/var/www/saas"
+            BACKEND_DIR="$APP_DIR/backend"
+
+            if [ ! -d "$BACKEND_DIR" ]; then
+              echo "Error: Backend directory $BACKEND_DIR does not exist."
+              exit 1
+            fi
+
+            cd "$BACKEND_DIR"
+            git config --global --add safe.directory "$BACKEND_DIR"
+
+            echo "==> Fetching latest changes from branch prod..."
+            git fetch origin prod
+            git reset --hard origin/prod
+
+            echo "==> Building and starting backend container..."
+            docker compose -f "$APP_DIR/docker-compose.prod.yml" build saas_backend
+            docker compose -f "$APP_DIR/docker-compose.prod.yml" up -d saas_backend
+
+            echo "==> Running database migrations..."
+            docker compose -f "$APP_DIR/docker-compose.prod.yml" exec -T saas_backend alembic upgrade head
+
+            echo "==> Waiting for backend healthcheck..."
+            sleep 4
+            for i in {1..10}; do
+              if curl -s -f http://127.0.0.1:8050/api/v1/health > /dev/null; then
+                echo "==> Backend is healthy and responding!"
+                exit 0
+              fi
+              echo "Waiting for health check ($i/10)..."
+              sleep 2
+            done
+
+            echo "Health check timed out! Recent container logs:"
+            docker compose -f "$APP_DIR/docker-compose.prod.yml" logs --tail=50 saas_backend
+            exit 1

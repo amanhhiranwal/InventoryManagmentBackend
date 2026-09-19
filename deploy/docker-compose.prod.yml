@@ -1,0 +1,71 @@
+services:
+  saas_backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: saas_backend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8050:8000"
+    volumes:
+      - saas_uploads:/app/uploads
+    env_file:
+      - ./backend/.env
+    environment:
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5432
+      - MONGO_URI=mongodb://saas_mongodb:27017
+      - MONGO_DB=${MONGO_DB:-solutions}
+      - REDIS_HOST=saas_redis
+      - REDIS_PORT=6379
+      - FRONTEND_URL=http://crm.synergy-global.io
+      - PYTHONPATH=/app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - saas_mongodb
+      - saas_redis
+
+  saas_frontend:
+    build:
+      context: ./e-frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=http://crm.synergy-global.io
+    container_name: saas_frontend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3050:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      - NEXT_PUBLIC_API_URL=http://crm.synergy-global.io
+    depends_on:
+      - saas_backend
+
+  saas_mongodb:
+    image: mongo:6.0
+    container_name: saas_mongodb
+    restart: unless-stopped
+    volumes:
+      - saas_mongo_data:/data/db
+    ports:
+      - "127.0.0.1:27017:27017"
+
+  saas_redis:
+    image: redis:7-alpine
+    container_name: saas_redis
+    restart: unless-stopped
+    volumes:
+      - saas_redis_data:/data
+    ports:
+      - "127.0.0.1:6380:6379"
+
+volumes:
+  saas_uploads:
+    name: saas_uploads_data
+  saas_mongo_data:
+    name: saas_mongo_data
+  saas_redis_data:
+    name: saas_redis_data
