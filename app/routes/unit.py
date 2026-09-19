@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.database.mongodb import sync_mongo_db
+from app.middleware.permission_middleware import require_super_admin
 
 router = APIRouter(prefix="/inventory/units", tags=["Units Master"])
 
@@ -20,7 +21,8 @@ def get_units():
         units = list(units_col.find())
     return {"success": True, "data": [u["name"] for u in units]}
 
-@router.post("")
+# Adding and removing units is a Masters change, so super admin only.
+@router.post("", dependencies=[Depends(require_super_admin)])
 def add_unit(request: UnitCreate):
     units_col = sync_mongo_db["inventory_units"]
     name = request.name.strip()
@@ -31,7 +33,7 @@ def add_unit(request: UnitCreate):
     units_col.insert_one({"name": name})
     return {"success": True, "message": "Unit created successfully."}
 
-@router.delete("/{name}")
+@router.delete("/{name}", dependencies=[Depends(require_super_admin)])
 def delete_unit(name: str):
     units_col = sync_mongo_db["inventory_units"]
     if not units_col.find_one({"name": name}):

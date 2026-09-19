@@ -1,4 +1,5 @@
-from sqlalchemy import Boolean, String
+from sqlalchemy import Boolean, ForeignKey, String
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base_model import BaseModel
@@ -42,6 +43,15 @@ class User(BaseModel):
         "Company",
         secondary="user_companies",
         backref="users",
+    )
+
+    # The manager this user reports to. Together with the role hierarchy it
+    # decides whose records a user can see: see app/services/hierarchy_service.
+    reports_to_id = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
 
     is_super_admin: Mapped[bool] = mapped_column(

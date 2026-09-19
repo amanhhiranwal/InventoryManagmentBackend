@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database.dependencies import get_db
+from app.middleware.permission_middleware import require_super_admin
 from app.schemas.state import CreateStateRequest
 from app.services.state_service import StateService
 
@@ -10,7 +11,7 @@ router = APIRouter(
     tags=["States Master"],
 )
 
-@router.post("/")
+@router.post("/", dependencies=[Depends(require_super_admin)])
 def create_state(
     request: CreateStateRequest,
     db: Session = Depends(get_db),
@@ -45,7 +46,7 @@ def get_states(
         ]
     }
 
-@router.delete("/{st_id}")
+@router.delete("/{st_id}", dependencies=[Depends(require_super_admin)])
 def delete_state(
     st_id: str,
     db: Session = Depends(get_db),

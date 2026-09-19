@@ -20,9 +20,20 @@ class UserRepository:
         return db.query(User).filter(User.employee_id == employee_id).first()
 
     @staticmethod
-    def get_all(db: Session, skip: int = 0, limit: int = 100) -> dict:
-        total = db.query(User).count()
-        data = db.query(User).order_by(User.email.asc()).offset(skip).limit(limit).all()
+    def get_all(
+        db: Session,
+        skip: int = 0,
+        limit: int = 100,
+        visible_ids: set[str] | None = None,
+    ) -> dict:
+        """None for visible_ids means every user (super admin)."""
+
+        query = db.query(User)
+        if visible_ids is not None:
+            query = query.filter(User.id.in_([UUID(uid) for uid in visible_ids]))
+
+        total = query.count()
+        data = query.order_by(User.email.asc()).offset(skip).limit(limit).all()
         return {"data": data, "total": total}
 
     @staticmethod

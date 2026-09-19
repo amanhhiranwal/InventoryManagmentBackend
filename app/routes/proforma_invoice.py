@@ -53,7 +53,7 @@ def get_proforma_invoice(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    return ProformaInvoiceController.get_by_id(invoice_id, db)
+    return ProformaInvoiceController.get_by_id(invoice_id, db, current_user)
 
 
 @router.put("/{invoice_id}")

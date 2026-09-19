@@ -7,12 +7,14 @@ from sqlalchemy.orm import Session
 
 from app.controllers.company_controller import CompanyController
 from app.database.dependencies import get_db
-from app.middleware.permission_middleware import require_permission
+from app.middleware.permission_middleware import require_permission, require_super_admin
 from app.schemas.company import (
     CreateCompanyRequest,
     UpdateCompanyRequest,
 )
 
+# Masters are maintained by the super admin; reads stay open to the
+# permissions below because the sales forms use them for their dropdowns.
 router = APIRouter(
     prefix="/companies",
     tags=["Companies"],
@@ -23,7 +25,7 @@ router = APIRouter(
 def create_company(
     request: CreateCompanyRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(require_permission("company.create")),
+    current_user=Depends(require_super_admin),
 ):
 
     return CompanyController.create(
@@ -62,7 +64,7 @@ def update_company(
     company_id: UUID,
     request: UpdateCompanyRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(require_permission("company.update")),
+    current_user=Depends(require_super_admin),
 ):
 
     return CompanyController.update(
@@ -76,7 +78,7 @@ def update_company(
 def delete_company(
     company_id: UUID,
     db: Session = Depends(get_db),
-    current_user=Depends(require_permission("company.delete")),
+    current_user=Depends(require_super_admin),
 ):
 
     return CompanyController.delete(
@@ -106,7 +108,7 @@ def upload_company_logo(
     company_id: UUID,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user=Depends(require_permission("company.update")),
+    current_user=Depends(require_super_admin),
 ):
     company = CompanyController.get_by_id(company_id, db)
     if not company:

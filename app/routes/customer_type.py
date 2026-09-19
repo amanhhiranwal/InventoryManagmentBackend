@@ -2,10 +2,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database.dependencies import get_db
-from app.middleware.permission_middleware import require_permission
+from app.middleware.permission_middleware import require_permission, require_super_admin
 from app.schemas.customer_type import CreateCustomerTypeRequest
 from app.services.customer_type_service import CustomerTypeService
 
+# Masters are maintained by the super admin; reads stay open to the
+# permissions below because the sales forms use them for their dropdowns.
 router = APIRouter(
     prefix="/customer-types",
     tags=["Customer Types"],
@@ -15,7 +17,7 @@ router = APIRouter(
 def create_customer_type(
     request: CreateCustomerTypeRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(require_permission("customer_type.create"))
+    current_user=Depends(require_super_admin)
 ):
     ct = CustomerTypeService.create(request, db)
     return {
@@ -52,7 +54,7 @@ def get_customer_types(
 def delete_customer_type(
     ct_id: str,
     db: Session = Depends(get_db),
-    current_user=Depends(require_permission("customer_type.delete"))
+    current_user=Depends(require_super_admin)
 ):
     CustomerTypeService.delete(ct_id, db)
     return {

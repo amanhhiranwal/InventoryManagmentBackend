@@ -96,6 +96,41 @@ def require_permission(permission_name: str):
     return permission_checker
 
 
+def require_granted(permission_name: str):
+    """The exact page permission, with none of ALIAS_MAP's stand-ins.
+
+    ALIAS_MAP lets sales permissions through as role.read or workflow.read
+    so dropdowns keep working; screens that reveal how access is set up
+    must have been ticked for the role in Roles & Access.
+    """
+
+    def checker(
+        current_user=Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ):
+        if current_user.get("is_super_admin"):
+            return current_user
+
+        from app.repositories.rbac_repository import RBACRepository
+
+        user = RBACRepository.get_user(db, current_user.get("user_id"))
+        granted = {
+            p.permission_name
+            for role in (user.roles if user else [])
+            for p in RBACRepository.get_role_permissions(db, role.id)
+        }
+
+        if permission_name not in granted:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Permission denied. Required: {permission_name}",
+            )
+
+        return current_user
+
+    return checker
+
+
 def require_super_admin(
     current_user=Depends(get_current_user),
 ):

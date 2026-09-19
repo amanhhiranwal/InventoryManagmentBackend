@@ -7,6 +7,7 @@ from app.models.company import Company
 from app.models.user import User
 from app.repositories.rbac_repository import RBACRepository
 from app.repositories.user_repository import UserRepository
+from app.services.hierarchy_service import HierarchyService
 from app.services.password_service import PasswordService
 from app.utils.validators import validate_uuid
 
@@ -14,7 +15,39 @@ from app.utils.validators import validate_uuid
 class UserService:
 
     @staticmethod
-    def create(request, db: Session) -> User:
+    def _assert_can_assign_roles(current_user: dict | None, role_ids: list[str], db: Session) -> None:
+        """A non-admin may only hand out roles below their own."""
+
+        if current_user is None or current_user.get("is_super_admin"):
+            return
+
+        below = HierarchyService.junior_role_ids(
+            HierarchyService.user_role_ids(current_user.get("user_id"), db), db
+        )
+        outside = [r for r in role_ids if str(r) not in below]
+
+        if outside:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only assign roles that are below your own in the hierarchy.",
+            )
+
+    @staticmethod
+    def _assert_can_manage_user(current_user: dict | None, user: User, db: Session) -> None:
+        if current_user is None or current_user.get("is_super_admin"):
+            return
+
+        if str(user.id) == str(current_user.get("user_id")):
+            raise HTTPException(status_code=403, detail="You cannot change your own access.")
+
+        if user.is_super_admin or not HierarchyService.can_see_user(current_user, user.id, db):
+            raise HTTPException(
+                status_code=403,
+                detail="You can only manage users who are below you in the hierarchy.",
+            )
+
+    @staticmethod
+    def create(request, db: Session, current_user: dict | None = None) -> User:
         # Check if email is already taken
         email_exists = UserRepository.get_by_email(db, request.email)
         if email_exists:
@@ -55,6 +88,21 @@ class UserService:
                 )
             companies_list.append(company)
 
+        UserService._assert_can_assign_roles(current_user, request.role_ids, db)
+
+        reports_to = HierarchyService.validate_reports_to(
+            None, getattr(request, "reports_to_id", None), request.role_ids, db
+        )
+
+        # A manager creating a user puts them in their own team unless they
+        # chose someone else in it.
+        if (
+            reports_to is None
+            and current_user is not None
+            and not current_user.get("is_super_admin")
+        ):
+            reports_to = UUID(current_user["user_id"])
+
         hashed_password = PasswordService.hash_password(request.password)
 
         user = User(
@@ -66,6 +114,7 @@ class UserService:
             employee_id=request.employee_id,
             is_super_admin=False,
             is_active=True,
+            reports_to_id=reports_to,
         )
 
         user.roles = roles_list
@@ -112,11 +161,16 @@ class UserService:
         return created_user
 
     @staticmethod
-    def get_all(db: Session, skip: int = 0, limit: int = 100) -> dict:
-        return UserRepository.get_all(db, skip, limit)
+    def get_all(db: Session, skip: int = 0, limit: int = 100, current_user: dict | None = None) -> dict:
+        visible = (
+            HierarchyService.visible_user_ids(current_user, db)
+            if current_user is not None
+            else None
+        )
+        return UserRepository.get_all(db, skip, limit, visible)
 
     @staticmethod
-    def update_role(user_id: str, role_ids: list[str], company_ids: list[str], db: Session) -> User:
+    def update_role(user_id: str, role_ids: list[str], company_ids: list[str], db: Session, current_user: dict | None = None) -> User:
         validate_uuid(user_id, "user_id")
 
         user = UserRepository.get_by_id(db, UUID(user_id))
@@ -125,6 +179,9 @@ class UserService:
                 status_code=404,
                 detail="User not found.",
             )
+
+        UserService._assert_can_manage_user(current_user, user, db)
+        UserService._assert_can_assign_roles(current_user, role_ids, db)
 
         # Validate roles
         roles_list = []
@@ -155,7 +212,7 @@ class UserService:
         return UserRepository.update(db, user)
 
     @staticmethod
-    def delete(user_id: str, db: Session) -> None:
+    def delete(user_id: str, db: Session, current_user: dict | None = None) -> None:
         validate_uuid(user_id, "user_id")
         user = UserRepository.get_by_id(db, UUID(user_id))
         if user is None:
@@ -168,10 +225,17 @@ class UserService:
                 status_code=400,
                 detail="Cannot delete Super Admin.",
             )
+        UserService._assert_can_manage_user(current_user, user, db)
+
+        # Their team moves up to their own manager rather than being left
+        # without one.
+        for report in db.query(User).filter(User.reports_to_id == user.id).all():
+            report.reports_to_id = user.reports_to_id
+
         UserRepository.delete(db, user)
 
     @staticmethod
-    def update(user_id: str, request, db: Session) -> User:
+    def update(user_id: str, request, db: Session, current_user: dict | None = None) -> User:
         validate_uuid(user_id, "user_id")
         user = UserRepository.get_by_id(db, UUID(user_id))
         if user is None:
@@ -179,6 +243,9 @@ class UserService:
                 status_code=404,
                 detail="User not found.",
             )
+        UserService._assert_can_manage_user(current_user, user, db)
+        UserService._assert_can_assign_roles(current_user, request.role_ids, db)
+
         if request.employee_id != user.employee_id:
             emp_exists = UserRepository.get_by_employee_id(db, request.employee_id)
             if emp_exists:
@@ -210,6 +277,13 @@ class UserService:
         user.last_name = request.last_name
         user.phone_number = request.phone_number
         user.employee_id = request.employee_id
+        # Only touched when the form sends it, so an edit from a screen that
+        # does not show Reports To leaves the manager as it was.
+        if "reports_to_id" in request.model_fields_set:
+            user.reports_to_id = HierarchyService.validate_reports_to(
+                str(user.id), request.reports_to_id, request.role_ids, db
+            )
+
         user.roles = roles_list
         user.companies = companies_list
         return UserRepository.update(db, user)
