@@ -3,16 +3,26 @@ from sqlalchemy.orm import Session
 
 from app.controllers.rbac_controller import RBACController
 from app.database.dependencies import get_db
-from app.middleware.permission_middleware import require_permission, require_super_admin
+from app.middleware.permission_middleware import (
+    require_granted,
+    require_permission,
+    require_super_admin,
+)
 from app.schemas.rbac import (
     CreatePermissionRequest,
     CreateRoleRequest,
 )
+from app.services.hierarchy_service import HierarchyService
 
 router = APIRouter(
     prefix="/rbac",
     tags=["RBAC"],
 )
+
+# Only a super admin creates roles or decides which pages each role gets.
+# A role given Roles & Access may look, read-only, at the roles below its
+# own - never its own level or above. The role list is also read by the
+# Accounts page to pick roles, and is cut down the same way.
 
 # ---------------- Permissions ---------------- #
 
@@ -29,7 +39,7 @@ def create_permission(
 
 @router.get(
     "/permissions",
-    dependencies=[Depends(require_permission("role.read"))],
+    dependencies=[Depends(require_granted("role.read"))],
 )
 def get_permissions(
     db: Session = Depends(get_db),
@@ -61,14 +71,24 @@ def create_role(
     return RBACController.create_role(request, db)
 
 
-@router.get(
-    "/roles",
-    dependencies=[Depends(require_permission("role.read"))],
-)
+@router.get("/roles")
 def get_roles(
     db: Session = Depends(get_db),
+    current_user=Depends(require_permission("role.read")),
 ):
-    return RBACController.get_roles(db)
+    return RBACController.get_roles(db, current_user)
+
+
+@router.put(
+    "/roles/{role_id}",
+    dependencies=[Depends(require_super_admin)],
+)
+def update_role(
+    role_id: str,
+    request: CreateRoleRequest,
+    db: Session = Depends(get_db),
+):
+    return RBACController.update_role(role_id, request, db)
 
 
 @router.delete(
@@ -98,14 +118,14 @@ def assign_permission(
     )
 
 
-@router.get(
-    "/roles/{role_id}/permissions",
-    dependencies=[Depends(require_permission("role.read"))],
-)
+@router.get("/roles/{role_id}/permissions")
 def get_role_permissions(
     role_id: str,
     db: Session = Depends(get_db),
+    current_user=Depends(require_granted("role.read")),
 ):
+    HierarchyService.assert_role_below(current_user, role_id, db)
+
     return RBACController.get_permissions_by_role(
         role_id,
         db,

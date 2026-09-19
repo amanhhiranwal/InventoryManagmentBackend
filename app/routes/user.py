@@ -20,7 +20,7 @@ def create_user(
     db: Session = Depends(get_db),
     current_user=Depends(require_permission("user.create")),
 ):
-    return UserController.create(request, db)
+    return UserController.create(request, db, current_user)
 
 
 @router.get("/")
@@ -31,7 +31,7 @@ def get_users(
     current_user=Depends(require_permission("user.read")),
 ):
     skip = (page - 1) * size
-    return UserController.get_all(db, skip=skip, limit=size)
+    return UserController.get_all(db, skip=skip, limit=size, current_user=current_user)
 
 
 @router.put("/{user_id}/role")
@@ -41,7 +41,7 @@ def update_user_role(
     db: Session = Depends(get_db),
     current_user=Depends(require_permission("user.update")),
 ):
-    return UserController.update_role(user_id, request.role_ids, request.company_ids, db)
+    return UserController.update_role(user_id, request.role_ids, request.company_ids, db, current_user)
 
 
 @router.delete("/{user_id}")
@@ -50,7 +50,7 @@ def delete_user(
     db: Session = Depends(get_db),
     current_user=Depends(require_permission("user.delete")),
 ):
-    return UserController.delete(user_id, db)
+    return UserController.delete(user_id, db, current_user)
 
 
 @router.put("/{user_id}")
@@ -60,7 +60,7 @@ def update_user(
     db: Session = Depends(get_db),
     current_user=Depends(require_permission("user.update")),
 ):
-    return UserController.update(user_id, request, db)
+    return UserController.update(user_id, request, db, current_user)
 
 
 @router.get("/by-roles", tags=["Microservice Internal"])

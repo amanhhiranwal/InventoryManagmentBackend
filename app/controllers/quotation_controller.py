@@ -92,8 +92,12 @@ class QuotationController:
         }
 
     @staticmethod
-    def get_by_id(quotation_id: int, db: Session):
+    def get_by_id(quotation_id: int, db: Session, current_user: dict | None = None):
         quotation = QuotationService.get_by_id(quotation_id, db)
+
+        # Opening a record by id follows the same hierarchy as the list.
+        if current_user is not None:
+            QuotationService.assert_can_modify(quotation, current_user, db)
 
         return {
             "success": True,

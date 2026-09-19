@@ -8,12 +8,14 @@ from sqlalchemy.orm import Session
 
 from app.controllers.location_controller import LocationController
 from app.database.dependencies import get_db
-from app.middleware.permission_middleware import require_permission
+from app.middleware.permission_middleware import require_permission, require_super_admin
 from app.schemas.location import (
     LocationCreate,
     LocationUpdate,
 )
 
+# Masters are maintained by the super admin; reads stay open to the
+# permissions below because the sales forms use them for their dropdowns.
 router = APIRouter(
     prefix="/locations",
     tags=["Locations"],
@@ -23,7 +25,7 @@ router = APIRouter(
 @router.post(
     "/",
     dependencies=[
-        Depends(require_permission("location.create"))
+        Depends(require_super_admin)
     ],
 )
 def create_location(
@@ -93,7 +95,7 @@ def get_company_locations(
 @router.put(
     "/{location_id}",
     dependencies=[
-        Depends(require_permission("location.update"))
+        Depends(require_super_admin)
     ],
 )
 def update_location(
@@ -112,7 +114,7 @@ def update_location(
 @router.delete(
     "/{location_id}",
     dependencies=[
-        Depends(require_permission("location.delete"))
+        Depends(require_super_admin)
     ],
 )
 def delete_location(

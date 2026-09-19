@@ -1,7 +1,5 @@
-import os
 from uuid import UUID
 
-import requests
 from fastapi import HTTPException
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -14,7 +12,7 @@ from app.core.workflow_status import (
 )
 from app.models.lead import Lead
 from app.models.lead_activity import LeadActivity
-from app.models.workflow import Workflow
+from app.services.hierarchy_service import HierarchyService
 from app.services.notification_service import NotificationService
 
 #: Headline written onto the activity entry when a lead reaches a status.
@@ -38,73 +36,18 @@ LEAD_STATUS_STAGES: dict[str, str] = {
     LeadStatus.LOST: "dead",
 }
 
-def get_users_by_roles_helper(role_ids: list[str], db: Session = None) -> list[str]:
-    if not role_ids:
-        return []
-    if db is not None:
-        try:
-            from app.models.user_role import UserRole
-            role_uuids = [UUID(rid) for rid in role_ids if rid]
-            user_roles = db.query(UserRole.user_id).filter(UserRole.role_id.in_(role_uuids)).all()
-            if user_roles:
-                return [str(ur.user_id) for ur in user_roles]
-        except Exception:
-            pass
-    try:
-        auth_host = os.getenv("AUTH_SERVICE_HOST", "auth_service")
-        auth_port = os.getenv("AUTH_SERVICE_PORT", "8001")
-        response = requests.get(
-            f"http://{auth_host}:{auth_port}/api/v1/users/by-roles",
-            params={"role_ids": role_ids},
-            timeout=1
-        )
-        if response.status_code == 200:
-            return response.json().get("user_ids", [])
-    except Exception:
-        pass
-    return []
-
-def get_user_roles_helper(user_id: str, db: Session = None) -> list[str]:
-    if not user_id:
-        return []
-    if db is not None:
-        try:
-            from app.models.user_role import UserRole
-            user_roles = db.query(UserRole.role_id).filter(UserRole.user_id == UUID(user_id)).all()
-            if user_roles:
-                return [str(ur.role_id) for ur in user_roles]
-        except Exception:
-            pass
-    try:
-        auth_host = os.getenv("AUTH_SERVICE_HOST", "auth_service")
-        auth_port = os.getenv("AUTH_SERVICE_PORT", "8001")
-        response = requests.get(
-            f"http://{auth_host}:{auth_port}/api/v1/users/{user_id}/role-ids",
-            timeout=1
-        )
-        if response.status_code == 200:
-            return response.json().get("role_ids", [])
-    except Exception:
-        pass
-    return []
-
 def get_visible_creator_user_ids(current_user: dict, db: Session) -> list[str]:
-    user_id = current_user.get("user_id")
-    if not user_id:
+    """Users whose records the current user may see.
+
+    An empty list means unrestricted (super admin). The rules live in
+    HierarchyService so every module scopes the same way.
+    """
+
+    if not current_user.get("user_id"):
         return []
-    is_super_admin = current_user.get("is_super_admin", False)
-    if is_super_admin:
-        return []  # Empty list signifies unrestricted Super Admin access
 
-    role_id = current_user.get("role_id")
-    user_role_ids = {role_id} if role_id else set()
-
-    junior_role_ids = LeadService.get_junior_roles_for_user(user_role_ids, db)
-    junior_user_ids = []
-    if junior_role_ids:
-        junior_user_ids = get_users_by_roles_helper(list(junior_role_ids), db)
-
-    return list(set([user_id] + junior_user_ids))
+    visible = HierarchyService.visible_user_ids(current_user, db)
+    return [] if visible is None else sorted(visible)
 
 
 class LeadService:
@@ -130,7 +73,10 @@ class LeadService:
 
         visible_ids = get_visible_creator_user_ids(current_user, db)
 
-        if visible_ids and str(lead.creator_id) in visible_ids:
+        if visible_ids and (
+            str(lead.creator_id) in visible_ids
+            or str(lead.assigned_to_id) in visible_ids
+        ):
             return
 
         raise HTTPException(
@@ -282,60 +228,24 @@ class LeadService:
 
     @staticmethod
     def get_junior_roles_for_user(user_role_ids: set[str], db: Session) -> set[str]:
-        workflows = db.query(Workflow).all()
-        
-        junior_role_ids = set()
-        for wf in workflows:
-            nodes_list = wf.nodes if isinstance(wf.nodes, list) else []
-            edges_list = wf.edges if isinstance(wf.edges, list) else []
-            
-            adj = {}
-            for edge in edges_list:
-                src = edge.get("source")
-                tgt = edge.get("target")
-                if src and tgt:
-                    adj.setdefault(src, []).append(tgt)
-            
-            start_nodes = []
-            for n in nodes_list:
-                role_id = n.get("data", {}).get("role_id")
-                if role_id in user_role_ids:
-                    start_nodes.append(n.get("id"))
-            
-            visited = set()
-            queue = list(start_nodes)
-            while queue:
-                curr = queue.pop(0)
-                if curr not in visited:
-                    visited.add(curr)
-                    for neighbor in adj.get(curr, []):
-                        if neighbor not in visited:
-                            queue.append(neighbor)
-            
-            for n in nodes_list:
-                if n.get("id") in visited:
-                    role_id = n.get("data", {}).get("role_id")
-                    if role_id and role_id not in user_role_ids:
-                        junior_role_ids.add(role_id)
-                        
-        return junior_role_ids
+        return HierarchyService.junior_role_ids(set(user_role_ids), db)
 
     @staticmethod
     def get_visible_leads(user_id: str, is_super_admin: bool, user_role_ids: set[str], db: Session) -> list[Lead]:
         if is_super_admin:
             return db.query(Lead).order_by(Lead.created_at.desc()).all()
-            
-        junior_role_ids = LeadService.get_junior_roles_for_user(user_role_ids, db)
-        
-        junior_user_ids = []
-        if junior_role_ids:
-            junior_user_ids = get_users_by_roles_helper(list(junior_role_ids), db)
-            
+
+        visible = HierarchyService.visible_user_ids(
+            {"user_id": user_id, "is_super_admin": False}, db
+        ) or {user_id}
+        visible_uuids = [UUID(uid) for uid in visible]
+
+        # A lead belongs to whoever created it and whoever it is assigned
+        # to, so a manager sees both kinds for everyone in their team.
         query = db.query(Lead).filter(
             or_(
-                Lead.creator_id == UUID(user_id),
-                Lead.assigned_to_id == UUID(user_id),
-                Lead.creator_id.in_([UUID(uid) for uid in junior_user_ids])
+                Lead.creator_id.in_(visible_uuids),
+                Lead.assigned_to_id.in_(visible_uuids),
             )
         )
         return query.order_by(Lead.created_at.desc()).all()
@@ -403,11 +313,12 @@ class LeadService:
         elif str(lead.creator_id) == assigner_id or (lead.assigned_to_id and str(lead.assigned_to_id) == assigner_id):
             is_authorized = True
         else:
-            junior_role_ids = LeadService.get_junior_roles_for_user(user_role_ids, db)
-            if junior_role_ids:
-                creator_role_ids = set(get_user_roles_helper(str(lead.creator_id), db))
-                if creator_role_ids.intersection(junior_role_ids):
-                    is_authorized = True
+            if HierarchyService.can_see_user(
+                {"user_id": assigner_id, "is_super_admin": False},
+                lead.creator_id,
+                db,
+            ):
+                is_authorized = True
 
         if not is_authorized:
             raise HTTPException(status_code=403, detail="Only superiors within authority scope or lead owners can reassign this lead")
@@ -430,11 +341,12 @@ class LeadService:
         elif str(lead.creator_id) == user_id or (lead.assigned_to_id and str(lead.assigned_to_id) == user_id):
             is_authorized = True
         else:
-            junior_role_ids = LeadService.get_junior_roles_for_user(user_role_ids, db)
-            if junior_role_ids:
-                creator_role_ids = set(get_user_roles_helper(str(lead.creator_id), db))
-                if creator_role_ids.intersection(junior_role_ids):
-                    is_authorized = True
+            if HierarchyService.can_see_user(
+                {"user_id": user_id, "is_super_admin": False},
+                lead.creator_id,
+                db,
+            ):
+                is_authorized = True
                         
         if not is_authorized:
             raise HTTPException(status_code=403, detail="Only the lead creator, assigned user, and their reporting superiors can progress this lead")
@@ -495,11 +407,12 @@ class LeadService:
         elif str(lead.creator_id) == user_id or (lead.assigned_to_id and str(lead.assigned_to_id) == user_id):
             is_authorized = True
         else:
-            junior_role_ids = LeadService.get_junior_roles_for_user(user_role_ids, db)
-            if junior_role_ids:
-                creator_role_ids = set(get_user_roles_helper(str(lead.creator_id), db))
-                if creator_role_ids.intersection(junior_role_ids):
-                    is_authorized = True
+            if HierarchyService.can_see_user(
+                {"user_id": user_id, "is_super_admin": False},
+                lead.creator_id,
+                db,
+            ):
+                is_authorized = True
 
         if not is_authorized:
             raise HTTPException(status_code=403, detail="Not authorized to edit this lead")

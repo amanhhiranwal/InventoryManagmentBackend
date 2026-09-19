@@ -38,12 +38,16 @@ class ProformaInvoiceController:
         }
 
     @staticmethod
-    def get_by_id(invoice_id: int, db: Session):
+    def get_by_id(invoice_id: int, db: Session, current_user: dict | None = None):
+        invoice = ProformaInvoiceService.get_by_id(invoice_id, db)
+
+        # Opening a record by id follows the same hierarchy as the list.
+        if current_user is not None:
+            ProformaInvoiceService.assert_can_edit(invoice, current_user, db)
+
         return {
             "success": True,
-            "data": serialize_proforma_invoice(
-                ProformaInvoiceService.get_by_id(invoice_id, db)
-            ),
+            "data": serialize_proforma_invoice(invoice),
         }
 
     @staticmethod

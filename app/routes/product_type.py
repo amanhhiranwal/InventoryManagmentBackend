@@ -2,10 +2,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database.dependencies import get_db
-from app.middleware.permission_middleware import require_permission
+from app.middleware.permission_middleware import require_permission, require_super_admin
 from app.schemas.product_type import CreateProductTypeRequest
 from app.services.product_type_service import ProductTypeService
 
+# Masters are maintained by the super admin; reads stay open to the
+# permissions below because the sales forms use them for their dropdowns.
 router = APIRouter(
     prefix="/product-types",
     tags=["Product Types"],
@@ -15,7 +17,7 @@ router = APIRouter(
 def create_product_type(
     request: CreateProductTypeRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(require_permission("product_type.create"))
+    current_user=Depends(require_super_admin)
 ):
     pt = ProductTypeService.create(request, db)
     return {
@@ -55,7 +57,7 @@ def update_product_type(
     pt_id: str,
     request: CreateProductTypeRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(require_permission("product_type.update"))
+    current_user=Depends(require_super_admin)
 ):
     pt = ProductTypeService.update(pt_id, request, db)
     return {
@@ -74,7 +76,7 @@ def update_product_type(
 def delete_product_type(
     pt_id: str,
     db: Session = Depends(get_db),
-    current_user=Depends(require_permission("product_type.delete"))
+    current_user=Depends(require_super_admin)
 ):
     ProductTypeService.delete(pt_id, db)
     return {

@@ -523,7 +523,10 @@ class QuotationService:
 
         visible_ids = get_visible_creator_user_ids(current_user, db)
 
-        if visible_ids and str(quotation.creator_id) in visible_ids:
+        if visible_ids and (
+            str(quotation.creator_id) in visible_ids
+            or str(quotation.assigned_to_id) in visible_ids
+        ):
             return
 
         raise HTTPException(
