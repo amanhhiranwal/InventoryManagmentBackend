@@ -227,10 +227,15 @@ class CustomerFields(BaseModel):
     customer_type: Optional[str] = None
     category: Optional[str] = None
     remarks: Optional[str] = None
+    lead_source: Optional[str] = None
     assigned_to_id: Optional[str] = None
     isRegistered: Optional[bool] = None
     kycDocs: Optional[list] = None
     attachments: Optional[list] = None
+    #: "Create Lead" on the form: save the customer and open its lead.
+    create_lead: bool = False
+    #: "Save as Draft": keep it without a lead.
+    draft: bool = False
 
 
 class StageRequest(BaseModel):
@@ -303,6 +308,7 @@ def _validated_fields(request: CustomerFields, current_user: dict, db: Session, 
     for key in [
         "contact_name", "designation", "phone", "website", "address", "city",
         "state", "pin_code", "customer_type", "category", "remarks",
+        "lead_source",
     ]:
         take(key, _clean(getattr(request, key)))
 
@@ -333,6 +339,92 @@ def _validated_fields(request: CustomerFields, current_user: dict, db: Session, 
             fields["assigned_to_name"] = None
 
     return fields
+
+
+def _create_lead_for(
+    doc: dict,
+    current_user: dict,
+    db: Session,
+    title: str = "",
+    remarks: str = "",
+    assigned_to_id: str | None = None,
+):
+    """Open a lead carrying the customer's details, record it on the
+    customer and in its Activity History, and return the lead."""
+
+    from app.models.customer_type import CustomerType
+    from app.models.lead_source import LeadSource
+    from app.models.state import State
+    from app.schemas.lead import CreateLeadRequest
+    from app.services.lead_service import LeadService
+
+    if doc.get("converted_lead_id"):
+        raise HTTPException(status_code=400, detail=f"This customer is already Lead #{doc['converted_lead_id']}.")
+
+    def lookup(model, value):
+        value = _clean(value)
+        if not value:
+            return None
+        row = db.query(model).filter(model.name.ilike(value)).first()
+        return row.id if row else None
+
+    assigned = _clean(assigned_to_id) or doc.get("assigned_to_id") or None
+    if assigned and assigned not in _assignable_users(current_user, db):
+        raise HTTPException(status_code=403, detail="You can only assign the lead to yourself or your team.")
+
+    lead = LeadService.create_lead(
+        CreateLeadRequest(
+            title=_clean(title) or doc.get("name"),
+            description=_clean(remarks),
+            contact_name=doc.get("contact_name") or doc.get("name"),
+            organization_name=doc.get("name"),
+            email=doc.get("email") or None,
+            mobile_number=doc.get("phone") or None,
+            website=doc.get("website") or None,
+            office_address=doc.get("address") or None,
+            city=doc.get("city") or None,
+            zip_code=doc.get("pin_code") or None,
+            country=doc.get("country") or "India",
+            gst_number=doc.get("gst") or None,
+            pan_number=doc.get("pan") or None,
+            coi_number=doc.get("coi") or None,
+            designation=doc.get("designation") or None,
+            remarks=_clean(remarks) or doc.get("remarks") or None,
+            customer_type_id=lookup(CustomerType, doc.get("customer_type")),
+            state_id=lookup(State, doc.get("state")),
+            lead_source_id=lookup(LeadSource, doc.get("lead_source")),
+            assigned_to_id=assigned,
+        ),
+        UUID(current_user["user_id"]),
+        db,
+    )
+
+    _customers().update_one(
+        {"_id": doc["_id"]},
+        {"$set": {"converted_lead_id": lead.id, "is_draft": False, "updated_at": _now()}},
+    )
+    _record_activity(
+        str(doc["_id"]),
+        "Converted to Lead",
+        current_user,
+        f"Lead #{lead.id} created"
+        + (f" from {doc['lead_source']}" if doc.get("lead_source") else "")
+        + "."
+        + (f" {_clean(remarks)}" if _clean(remarks) else ""),
+        activity_type="Conversion",
+    )
+
+    return lead
+
+
+def _assert_lead_source(value: str | None, db: Session) -> None:
+    from app.models.lead_source import LeadSource
+
+    if not _clean(value):
+        raise HTTPException(status_code=400, detail="Choose a Lead Source to create the lead.")
+
+    if not db.query(LeadSource).filter(LeadSource.name.ilike(_clean(value))).first():
+        raise HTTPException(status_code=400, detail=f"'{value}' is not a lead source.")
 
 
 # ---------------------------------------------------------------------------
@@ -382,6 +474,9 @@ def create_customer(
 ):
     fields = _validated_fields(request, current_user, db, partial=False)
 
+    if request.create_lead:
+        _assert_lead_source(fields.get("lead_source"), db)
+
     if _customers().find_one({"name": {"$regex": f"^{re.escape(fields['name'])}$", "$options": "i"}}):
         raise HTTPException(status_code=400, detail=f"Customer with name '{fields['name']}' already exists.")
 
@@ -395,6 +490,7 @@ def create_customer(
         "creator_id": current_user.get("user_id"),
         "creator_name": _user_name(current_user),
         "source": "manual",
+        "is_draft": bool(request.draft) and not request.create_lead,
         "created_at": now,
         "updated_at": now,
         "last_activity_at": now,
@@ -408,7 +504,18 @@ def create_customer(
     customer_id = str(doc["_id"])
     _record_activity(customer_id, "Customer Created", current_user, fields.get("remarks", ""), to_stage="NEW")
 
-    return {"success": True, "message": "Customer created successfully.", "data": _serialize(doc)}
+    lead_id = None
+    if request.create_lead:
+        lead_id = _create_lead_for(doc, current_user, db, remarks=fields.get("remarks", "")).id
+
+    saved = _serialize(_customers().find_one({"_id": doc["_id"]}))
+    saved["lead_id"] = lead_id
+
+    return {
+        "success": True,
+        "message": f"Customer created and Lead #{lead_id} opened." if lead_id else "Customer created successfully.",
+        "data": saved,
+    }
 
 
 @router.put("/{customer_id}")
@@ -429,12 +536,29 @@ def update_customer(
         if clash:
             raise HTTPException(status_code=400, detail=f"Customer with name '{fields['name']}' already exists.")
 
+    if request.create_lead:
+        _assert_lead_source(fields.get("lead_source", doc.get("lead_source")), db)
+
     if fields:
         fields["updated_at"] = _now()
+        if not request.draft:
+            fields["is_draft"] = False
         _customers().update_one({"_id": doc["_id"]}, {"$set": fields})
         _record_activity(customer_id, "Details Updated", current_user)
 
-    return {"success": True, "message": "Customer updated.", "data": _serialize(_customers().find_one({"_id": doc["_id"]}))}
+    lead_id = None
+    if request.create_lead:
+        current = _customers().find_one({"_id": doc["_id"]})
+        lead_id = _create_lead_for(current, current_user, db, remarks=fields.get("remarks", "")).id
+
+    saved = _serialize(_customers().find_one({"_id": doc["_id"]}))
+    saved["lead_id"] = lead_id
+
+    return {
+        "success": True,
+        "message": f"Customer saved and Lead #{lead_id} opened." if lead_id else "Customer updated.",
+        "data": saved,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -560,61 +684,14 @@ def convert_to_lead(
 ):
     """Open a lead for this customer, carrying its details across."""
 
-    from app.models.customer_type import CustomerType
-    from app.models.state import State
-    from app.schemas.lead import CreateLeadRequest
-    from app.services.lead_service import LeadService
-
     doc = _get_visible_customer(customer_id, current_user, db)
-
-    if doc.get("converted_lead_id"):
-        raise HTTPException(status_code=400, detail=f"This customer is already Lead #{doc['converted_lead_id']}.")
-
-    def lookup(model, value):
-        value = _clean(value)
-        if not value:
-            return None
-        row = db.query(model).filter(model.name.ilike(value)).first()
-        return row.id if row else None
-
-    assigned = _clean(request.assigned_to_id) or doc.get("assigned_to_id") or None
-    if assigned and assigned not in _assignable_users(current_user, db):
-        raise HTTPException(status_code=403, detail="You can only assign the lead to yourself or your team.")
-
-    lead_request = CreateLeadRequest(
-        title=_clean(request.title) or doc.get("name"),
-        description=_clean(request.remarks),
-        contact_name=doc.get("contact_name") or doc.get("name"),
-        organization_name=doc.get("name"),
-        email=doc.get("email") or None,
-        mobile_number=doc.get("phone") or None,
-        website=doc.get("website") or None,
-        office_address=doc.get("address") or None,
-        city=doc.get("city") or None,
-        zip_code=doc.get("pin_code") or None,
-        country=doc.get("country") or "India",
-        gst_number=doc.get("gst") or None,
-        pan_number=doc.get("pan") or None,
-        coi_number=doc.get("coi") or None,
-        designation=doc.get("designation") or None,
-        remarks=_clean(request.remarks) or doc.get("remarks") or None,
-        customer_type_id=lookup(CustomerType, doc.get("customer_type")),
-        state_id=lookup(State, doc.get("state")),
-        assigned_to_id=assigned,
-    )
-
-    lead = LeadService.create_lead(lead_request, UUID(current_user["user_id"]), db)
-
-    _customers().update_one(
-        {"_id": doc["_id"]},
-        {"$set": {"converted_lead_id": lead.id, "updated_at": _now()}},
-    )
-    _record_activity(
-        customer_id,
-        "Converted to Lead",
+    lead = _create_lead_for(
+        doc,
         current_user,
-        f"Lead #{lead.id} created." + (f" {_clean(request.remarks)}" if _clean(request.remarks) else ""),
-        activity_type="Conversion",
+        db,
+        title=request.title or "",
+        remarks=request.remarks or "",
+        assigned_to_id=request.assigned_to_id,
     )
 
     return {
