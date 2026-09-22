@@ -13,6 +13,13 @@ RENAMED_DEFAULT_TITLES = {
   "Sales Orders": "Sales Order",
 }
 
+#: Top-level menus the design moved: title -> (old default, new default).
+#: A row still at its old default is moved; one the user reordered is not.
+MOVED_DEFAULT_ORDER = {
+  "Customers": (2, 6),
+  "Reports": (6, 7),
+}
+
 #: Set once the default menus have been checked in this process.
 _DEFAULTS_ENSURED = False
 
@@ -30,7 +37,8 @@ DEFAULT_MENUS_DATA = [
     "icon": "LuContact",
     "path": "/sales/customers",
     "permission_key": "customer.read",
-    "order_index": 2,
+    # After Inventory, as in the design.
+    "order_index": 6,
     "children": []
   },
   {
@@ -70,7 +78,7 @@ DEFAULT_MENUS_DATA = [
     "icon": "LuTrendingUp",
     "path": "/reports",
     "permission_key": "reports.read",
-    "order_index": 6,
+    "order_index": 7,
     "children": []
   },
   {
@@ -126,6 +134,20 @@ class MenuService:
                 if not taken:
                     row.title = new_title
                     changed = True
+
+        # Default positions the design changed (Customers now sits after
+        # Inventory). Checked against the old defaults first, so moving one
+        # row cannot be mistaken for another row's old position.
+        moves = [
+            (row, new)
+            for row in rows
+            if row.parent_id is None
+            for title, (old, new) in MOVED_DEFAULT_ORDER.items()
+            if row.title == title and row.order_index == old
+        ]
+        for row, new in moves:
+            row.order_index = new
+            changed = True
 
         parents_by_title = {r.title: r for r in rows if r.parent_id is None}
         children_keys = {(r.parent_id, r.title) for r in rows if r.parent_id is not None}
