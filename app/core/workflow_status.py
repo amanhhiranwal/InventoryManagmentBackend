@@ -63,27 +63,21 @@ class OpportunityStatus:
     PIPELINE = [QUALIFICATION, REQUIREMENT, DEMO, PROPOSAL, NEGOTIATION]
 
 
+def _forward_from(stage: str) -> set[str]:
+    """Every stage ahead of this one, plus the two ways a deal can end.
+
+    A deal does not always walk the pipeline a step at a time - a customer
+    who has already seen the product goes straight to Proposal - so any
+    later stage may be picked. Going back is not allowed: the history would
+    stop meaning anything.
+    """
+
+    ahead = OpportunityStatus.PIPELINE[OpportunityStatus.PIPELINE.index(stage) + 1:]
+    return {*ahead, OpportunityStatus.WON, OpportunityStatus.LOST}
+
+
 OPPORTUNITY_TRANSITIONS: dict[str, set[str]] = {
-    OpportunityStatus.QUALIFICATION: {
-        OpportunityStatus.REQUIREMENT,
-        OpportunityStatus.LOST,
-    },
-    OpportunityStatus.REQUIREMENT: {
-        OpportunityStatus.DEMO,
-        OpportunityStatus.LOST,
-    },
-    OpportunityStatus.DEMO: {
-        OpportunityStatus.PROPOSAL,
-        OpportunityStatus.LOST,
-    },
-    OpportunityStatus.PROPOSAL: {
-        OpportunityStatus.NEGOTIATION,
-        OpportunityStatus.LOST,
-    },
-    OpportunityStatus.NEGOTIATION: {
-        OpportunityStatus.WON,
-        OpportunityStatus.LOST,
-    },
+    **{stage: _forward_from(stage) for stage in OpportunityStatus.PIPELINE},
     OpportunityStatus.WON: _terminal(),
     OpportunityStatus.LOST: _terminal(),
 }
@@ -96,31 +90,78 @@ class SalesOrderStatus:
     DRAFT = "DRAFT"
     CONFIRMED = "CONFIRMED"
     ON_HOLD = "ON_HOLD"
+    #: Kept from before the fulfilment chain existed: orders raised then
+    #: still carry it, and it sits where DISPATCHED now does.
     RELEASED = "RELEASED"
     COMPLETED = "COMPLETED"
     CANCELLED = "CANCELLED"
 
-    ALL = [DRAFT, CONFIRMED, ON_HOLD, RELEASED, COMPLETED, CANCELLED]
+    #: Waiting on the discount approval chain (AVP, then the CEO, then the
+    #: founder) before anything is committed to it.
+    PENDING_APPROVAL = "PENDING_APPROVAL"
+    #: Accounts have seen the money against the proforma invoice.
+    PAYMENT_VERIFIED = "PAYMENT_VERIFIED"
+    #: With inventory: either picked from stock or on order.
+    PROCUREMENT = "PROCUREMENT"
+    #: Stock is in hand and the order can go out.
+    READY = "READY"
+    DISPATCHED = "DISPATCHED"
+    DELIVERED = "DELIVERED"
+    INSTALLED = "INSTALLED"
+
+    ALL = [
+        DRAFT, PENDING_APPROVAL, CONFIRMED, PAYMENT_VERIFIED, PROCUREMENT,
+        READY, DISPATCHED, RELEASED, DELIVERED, INSTALLED, COMPLETED,
+        ON_HOLD, CANCELLED,
+    ]
+
+    #: The fulfilment chain in order, for a progress strip. CONFIRMED is
+    #: what "approved" means here - the approvals are held separately, on
+    #: sales_approval.
+    PIPELINE = [
+        DRAFT, PENDING_APPROVAL, CONFIRMED, PAYMENT_VERIFIED, PROCUREMENT,
+        READY, DISPATCHED, DELIVERED, INSTALLED, COMPLETED,
+    ]
+
+
+def _onward(stage: str) -> set[str]:
+    """The next stage along, plus the two ways an order can stop."""
+
+    index = SalesOrderStatus.PIPELINE.index(stage)
+    following = SalesOrderStatus.PIPELINE[index + 1:index + 2]
+
+    return {*following, SalesOrderStatus.ON_HOLD, SalesOrderStatus.CANCELLED}
 
 
 SALES_ORDER_TRANSITIONS: dict[str, set[str]] = {
+    **{
+        stage: _onward(stage)
+        for stage in SalesOrderStatus.PIPELINE
+        if stage != SalesOrderStatus.COMPLETED
+    },
+    # A draft can also be confirmed outright, for an order that needs no
+    # approval at all.
     SalesOrderStatus.DRAFT: {
+        SalesOrderStatus.PENDING_APPROVAL,
         SalesOrderStatus.CONFIRMED,
         SalesOrderStatus.CANCELLED,
     },
-    SalesOrderStatus.CONFIRMED: {
-        SalesOrderStatus.RELEASED,
-        SalesOrderStatus.ON_HOLD,
+    # Approval either clears the order or sends it back to be reworked.
+    SalesOrderStatus.PENDING_APPROVAL: {
+        SalesOrderStatus.CONFIRMED,
+        SalesOrderStatus.DRAFT,
         SalesOrderStatus.CANCELLED,
     },
+    # Released is the old name for dispatched, so it carries on the same way.
     SalesOrderStatus.RELEASED: {
+        SalesOrderStatus.DELIVERED,
         SalesOrderStatus.COMPLETED,
         SalesOrderStatus.ON_HOLD,
         SalesOrderStatus.CANCELLED,
     },
-    # A held order resumes into whichever state it was working towards.
+    # A held order resumes into any stage it had already reached.
     SalesOrderStatus.ON_HOLD: {
-        SalesOrderStatus.CONFIRMED,
+        *SalesOrderStatus.PIPELINE,
         SalesOrderStatus.RELEASED,
         SalesOrderStatus.CANCELLED,
     },
@@ -134,18 +175,28 @@ SALES_ORDER_TRANSITIONS: dict[str, set[str]] = {
 # ---------------------------------------------------------------------------
 class QuotationStatus:
     DRAFT = "DRAFT"
+    #: Carrying a discount and waiting on the approval chain.
+    PENDING_APPROVAL = "PENDING_APPROVAL"
     SENT = "SENT"
     ACCEPTED = "ACCEPTED"
     REJECTED = "REJECTED"
     EXPIRED = "EXPIRED"
 
-    ALL = [DRAFT, SENT, ACCEPTED, REJECTED, EXPIRED]
+    ALL = [DRAFT, PENDING_APPROVAL, SENT, ACCEPTED, REJECTED, EXPIRED]
 
 
 QUOTATION_TRANSITIONS: dict[str, set[str]] = {
-    # A draft is only ever sent, or allowed to lapse past its validity date.
+    # A draft is sent, held for approval when it carries a discount, or
+    # allowed to lapse past its validity date.
     QuotationStatus.DRAFT: {
+        QuotationStatus.PENDING_APPROVAL,
         QuotationStatus.SENT,
+        QuotationStatus.EXPIRED,
+    },
+    # Approval either releases the quotation to be sent or hands it back.
+    QuotationStatus.PENDING_APPROVAL: {
+        QuotationStatus.SENT,
+        QuotationStatus.DRAFT,
         QuotationStatus.EXPIRED,
     },
     # Once with the client it is theirs to accept or reject; it can also

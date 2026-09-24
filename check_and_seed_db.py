@@ -73,7 +73,18 @@ def sync_db_and_seed():
             print("Super admin password updated to 'password123'.")
 
         print("\n--- 3. Seeding Default Master Roles & Permissions ---")
-        default_roles = ["CEO", "AVP", "Zonal Head", "Area Head", "Sales Person"]
+        # The sales hierarchy, top to bottom. Super Admin sits outside it and
+        # is seeded above.
+        default_roles = ["CEO", "AVP", "Zonal Head", "Area Manager"]
+
+        # "Area Head" was the old name for Area Manager - rename it in place
+        # so the role keeps its permissions and the users holding it.
+        old_area = db.query(Role).filter(Role.role_name == "Area Head").first()
+        if old_area and not db.query(Role).filter(Role.role_name == "Area Manager").first():
+            old_area.role_name = "Area Manager"
+            old_area.description = "Area Manager role"
+            db.commit()
+
         for r_name in default_roles:
             r_obj = db.query(Role).filter(Role.role_name == r_name).first()
             if not r_obj:
@@ -140,11 +151,70 @@ def sync_db_and_seed():
         from app.services.state_service import StateService
         StateService.seed_default_states(db)
         print("Default sales_state seeded successfully.")
+
+        print("\n--- 4. Seeding The Sales Hierarchy Chart ---")
+        seed_sales_hierarchy(db)
     except Exception as e:
         print("Error during seeding:", e)
         db.rollback()
     finally:
         db.close()
+
+
+def seed_sales_hierarchy(db):
+    """Draw the Sales chart CEO -> AVP -> Zonal Head -> Area Manager.
+
+    It is the chart a super admin would draw on the Workflows page, and it
+    is what decides whose records each role can see (see
+    app/services/hierarchy_service). Seeded only when no chart exists at
+    all, so an edited hierarchy is never overwritten.
+    """
+
+    if db.query(Workflow).first():
+        print("A hierarchy chart already exists - left as it is.")
+        return
+
+    chain = ["CEO", "AVP", "Zonal Head", "Area Manager"]
+    roles = {
+        r.role_name: r
+        for r in db.query(Role).filter(Role.role_name.in_(chain)).all()
+    }
+
+    missing = [name for name in chain if name not in roles]
+    if missing:
+        print("Cannot seed the hierarchy, missing roles:", ", ".join(missing))
+        return
+
+    # Same shape the Workflows canvas saves: a flat x/y per node.
+    nodes = [
+        {
+            "id": f"node-{index + 1}",
+            "x": 240,
+            "y": 80 + index * 130,
+            "data": {"label": name, "role_id": str(roles[name].id)},
+        }
+        for index, name in enumerate(chain)
+    ]
+
+    edges = [
+        {
+            "id": f"edge-{index + 1}",
+            "source": f"node-{index + 1}",
+            "target": f"node-{index + 2}",
+        }
+        for index in range(len(chain) - 1)
+    ]
+
+    db.add(
+        Workflow(
+            name="Sales",
+            description="CEO -> AVP -> Zonal Head -> Area Manager",
+            nodes=nodes,
+            edges=edges,
+        )
+    )
+    db.commit()
+    print("Sales hierarchy seeded: " + " -> ".join(chain))
 
 
 if __name__ == "__main__":

@@ -1,3 +1,5 @@
+from app.models.app_setting import AppSetting
+from app.models.approval import SalesApproval
 from app.models.company import Company
 from app.models.customer_type import CustomerType
 from app.models.lead import Lead

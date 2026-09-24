@@ -1,12 +1,64 @@
 from bson import ObjectId
 from fastapi import HTTPException
+from sqlalchemy.orm import Session
 
 from app.database.mongodb import sync_mongo_db
+from app.services.company_scope_service import CompanyScopeService
 
 
 class InventoryService:
+    """Products, filed under the company that stocks them.
+
+    Two companies can carry the same product: each gets its own item, and
+    each only sees its own, so a serial number is unique within a company
+    rather than across the whole database. An item with no company is shared
+    with every company - items created before companies were tracked are
+    like that.
+    """
+
     templates_col = sync_mongo_db["inventory_templates"]
     items_col = sync_mongo_db["inventory_items"]
+
+    @classmethod
+    def _decorate(cls, doc: dict, names: dict[str, str]) -> dict:
+        doc["_id"] = str(doc["_id"])
+        company_id = doc.get("company_id")
+        doc["company_id"] = company_id
+        doc["company_name"] = names.get(str(company_id)) if company_id else None
+        return doc
+
+    @classmethod
+    def _serial_clash(cls, serial: str, company_id: str | None, exclude=None) -> bool:
+        """Whether that serial is already used inside the same company."""
+
+        query: dict = {"serial_number": serial, "company_id": company_id}
+        if exclude is not None:
+            query["_id"] = {"$ne": exclude}
+        return cls.items_col.find_one(query) is not None
+
+    @classmethod
+    def _get_in_scope(cls, item_id: str, current_user: dict, db: Session):
+        """An item by id, refused when it belongs to another company."""
+
+        try:
+            obj_id = ObjectId(item_id)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid MongoDB item ID format.")
+
+        item = cls.items_col.find_one({"_id": obj_id})
+        if item is None:
+            raise HTTPException(status_code=404, detail="Inventory item not found.")
+
+        allowed = CompanyScopeService.visible_company_ids(current_user, db)
+        company_id = item.get("company_id")
+
+        if allowed is not None and company_id and str(company_id) not in allowed:
+            raise HTTPException(
+                status_code=403,
+                detail="This product belongs to a company you are not assigned to.",
+            )
+
+        return obj_id, item
 
     @classmethod
     def save_template(cls, product_type_code: str, fields: list) -> dict:
@@ -40,7 +92,7 @@ class InventoryService:
         return template
 
     @classmethod
-    def create_item(cls, name: str, serial_number: str, product_type_code: str, category: str, attributes: dict, image_base64: str = None) -> dict:
+    def create_item(cls, name: str, serial_number: str, product_type_code: str, category: str, attributes: dict, image_base64: str = None, company_id: str = None, current_user: dict = None, db: Session = None) -> dict:
         """
         Creates a dynamic inventory item, validating inputs against its template fields.
         """
@@ -92,30 +144,36 @@ class InventoryService:
                 validated_attrs[key] = val
 
         # 3. Insert to collection
+        owner_id = CompanyScopeService.resolve_owner(
+            current_user or {}, company_id, db
+        )
+
         doc = {
             "name": name.strip(),
             "serial_number": serial_number.strip().upper(),
             "product_type_code": product_type_code,
             "category": category.strip(),
             "attributes": validated_attrs,
-            "image_base64": image_base64
+            "image_base64": image_base64,
+            "company_id": owner_id,
         }
-        
-        # Check duplicate serial number
-        exists = cls.items_col.find_one({"serial_number": doc["serial_number"]})
-        if exists:
-            raise HTTPException(status_code=400, detail=f"Inventory item with serial number '{serial_number}' already exists.")
+
+        # The same serial may exist under another company - this is the same
+        # product stocked twice, not a duplicate.
+        if cls._serial_clash(doc["serial_number"], owner_id):
+            raise HTTPException(status_code=400, detail=f"Inventory item with serial number '{serial_number}' already exists for this company.")
 
         cls.items_col.insert_one(doc)
-        doc["_id"] = str(doc["_id"])
-        return doc
+        return cls._decorate(doc, CompanyScopeService.company_names(db))
 
     @classmethod
-    def get_items(cls, product_type_code: str = None, search: str = None) -> list:
+    def get_items(cls, product_type_code: str = None, search: str = None, company_id: str = None, current_user: dict = None, db: Session = None) -> list:
         """
         Retrieves all items from database. Matches query params.
         """
-        query = {}
+        query = dict(
+            CompanyScopeService.mongo_filter(current_user or {}, db, company_id)
+        )
         if product_type_code:
             query["product_type_code"] = product_type_code.upper().strip()
         
@@ -126,22 +184,16 @@ class InventoryService:
                 {"category": {"$regex": search, "$options": "i"}}
             ]
 
+        names = CompanyScopeService.company_names(db)
         cursor = cls.items_col.find(query).sort("_id", -1)
-        items = []
-        for doc in cursor:
-            doc["_id"] = str(doc["_id"])
-            items.append(doc)
-        return items
+        return [cls._decorate(doc, names) for doc in cursor]
 
     @classmethod
-    def update_item(cls, item_id: str, name: str, serial_number: str, product_type_code: str, category: str, attributes: dict, image_base64: str = None) -> dict:
+    def update_item(cls, item_id: str, name: str, serial_number: str, product_type_code: str, category: str, attributes: dict, image_base64: str = None, company_id: str = None, company_set: bool = False, current_user: dict = None, db: Session = None) -> dict:
         """
         Updates a dynamic inventory item, validating inputs against its template fields.
         """
-        try:
-            obj_id = ObjectId(item_id)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid MongoDB item ID format.")
+        obj_id, existing = cls._get_in_scope(item_id, current_user or {}, db)
 
         product_type_code = product_type_code.upper().strip()
         
@@ -190,49 +242,40 @@ class InventoryService:
                     val = str(val).strip()
                 validated_attrs[key] = val
 
-        # Check duplicate serial number (excluding current item)
+        # Moving a product to another company is allowed, but only to one the
+        # caller is in; leaving the field out keeps it where it is.
+        owner_id = (
+            CompanyScopeService.assert_company_allowed(current_user or {}, company_id, db)
+            if company_set
+            else existing.get("company_id")
+        )
+
+        # Check duplicate serial number within the same company
         serial_upper = serial_number.strip().upper()
-        exists = cls.items_col.find_one({"serial_number": serial_upper, "_id": {"$ne": obj_id}})
-        if exists:
-            raise HTTPException(status_code=400, detail=f"Inventory item with serial number '{serial_number}' already exists.")
+        if cls._serial_clash(serial_upper, owner_id, exclude=obj_id):
+            raise HTTPException(status_code=400, detail=f"Inventory item with serial number '{serial_number}' already exists for this company.")
 
         # Update document
-        res = cls.items_col.update_one(
-            {"_id": obj_id},
-            {
-                "$set": {
-                    "name": name.strip(),
-                    "serial_number": serial_upper,
-                    "product_type_code": product_type_code,
-                    "category": category.strip(),
-                    "attributes": validated_attrs,
-                    "image_base64": image_base64
-                }
-            }
-        )
-        if res.matched_count == 0:
-            raise HTTPException(status_code=404, detail="Inventory item not found.")
-            
-        return {
-            "_id": item_id,
+        doc = {
             "name": name.strip(),
             "serial_number": serial_upper,
             "product_type_code": product_type_code,
             "category": category.strip(),
             "attributes": validated_attrs,
-            "image_base64": image_base64
+            "image_base64": image_base64,
+            "company_id": owner_id,
         }
 
+        cls.items_col.update_one({"_id": obj_id}, {"$set": doc})
+
+        return cls._decorate(
+            {**doc, "_id": obj_id}, CompanyScopeService.company_names(db)
+        )
+
     @classmethod
-    def delete_item(cls, item_id: str) -> None:
+    def delete_item(cls, item_id: str, current_user: dict = None, db: Session = None) -> None:
         """
         Removes an inventory document item by ID.
         """
-        try:
-            obj_id = ObjectId(item_id)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid MongoDB item ID format.")
-
-        res = cls.items_col.delete_one({"_id": obj_id})
-        if res.deleted_count == 0:
-            raise HTTPException(status_code=404, detail="Inventory item not found.")
+        obj_id, _ = cls._get_in_scope(item_id, current_user or {}, db)
+        cls.items_col.delete_one({"_id": obj_id})
