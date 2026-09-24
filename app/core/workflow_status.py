@@ -63,27 +63,21 @@ class OpportunityStatus:
     PIPELINE = [QUALIFICATION, REQUIREMENT, DEMO, PROPOSAL, NEGOTIATION]
 
 
+def _forward_from(stage: str) -> set[str]:
+    """Every stage ahead of this one, plus the two ways a deal can end.
+
+    A deal does not always walk the pipeline a step at a time - a customer
+    who has already seen the product goes straight to Proposal - so any
+    later stage may be picked. Going back is not allowed: the history would
+    stop meaning anything.
+    """
+
+    ahead = OpportunityStatus.PIPELINE[OpportunityStatus.PIPELINE.index(stage) + 1:]
+    return {*ahead, OpportunityStatus.WON, OpportunityStatus.LOST}
+
+
 OPPORTUNITY_TRANSITIONS: dict[str, set[str]] = {
-    OpportunityStatus.QUALIFICATION: {
-        OpportunityStatus.REQUIREMENT,
-        OpportunityStatus.LOST,
-    },
-    OpportunityStatus.REQUIREMENT: {
-        OpportunityStatus.DEMO,
-        OpportunityStatus.LOST,
-    },
-    OpportunityStatus.DEMO: {
-        OpportunityStatus.PROPOSAL,
-        OpportunityStatus.LOST,
-    },
-    OpportunityStatus.PROPOSAL: {
-        OpportunityStatus.NEGOTIATION,
-        OpportunityStatus.LOST,
-    },
-    OpportunityStatus.NEGOTIATION: {
-        OpportunityStatus.WON,
-        OpportunityStatus.LOST,
-    },
+    **{stage: _forward_from(stage) for stage in OpportunityStatus.PIPELINE},
     OpportunityStatus.WON: _terminal(),
     OpportunityStatus.LOST: _terminal(),
 }
