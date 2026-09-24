@@ -18,6 +18,7 @@ from app.repositories.opportunity_repository import OpportunityRepository
 from app.repositories.quotation_repository import QuotationRepository
 from app.services.email_service import EmailService
 from app.services.lead_service import get_visible_creator_user_ids
+from app.services.quotation_pdf_service import QuotationPDFService
 from app.services.notification_service import NotificationService
 
 #: Offer validity shown on the form as "Validation Date (30 days)".
@@ -186,13 +187,12 @@ def compute_totals(
     freight_charges = _as_float(freight_charges)
     installation_lumpsum = _as_float(installation_lumpsum)
 
-    taxable_amount = (
-        subtotal
-        - discount_amount
-        + orc_amount
-        + freight_charges
-        + installation_lumpsum
-    )
+    # The client pays the discounted price, plus delivery and installation.
+    # The discount is applied but never itemised on a quotation - the line
+    # prices already carry it - and the ORC is left out altogether: it is a
+    # commission the company pays out, not something the client is charged.
+    # Both are itemised on the sales order instead.
+    taxable_amount = subtotal - discount_amount + freight_charges + installation_lumpsum
 
     gst_percent = _as_float(gst_percent, 18.0)
     gst_amount = taxable_amount * gst_percent / 100.0
@@ -319,6 +319,7 @@ def _to_uuid(value) -> UUID | None:
 #: Headline written onto the activity entry when a quotation reaches a status.
 QUOTATION_STATUS_ACTIONS: dict[str, str] = {
     QuotationStatus.DRAFT: "Quotation Drafted",
+    QuotationStatus.PENDING_APPROVAL: "Sent For Approval",
     QuotationStatus.SENT: "Sent To Client",
     QuotationStatus.ACCEPTED: "Accepted By Client",
     QuotationStatus.REJECTED: "Rejected By Client",
@@ -850,6 +851,36 @@ class QuotationService:
     # Send
     # ------------------------------------------------------------------
     @staticmethod
+    @staticmethod
+    def pdf(quotation, db=None) -> bytes:
+        """The quotation rendered as the proposal PDF."""
+
+        return QuotationPDFService.render(quotation, db)
+
+    @staticmethod
+    def pdf_filename(quotation) -> str:
+        return QuotationPDFService.filename(quotation)
+
+    @staticmethod
+    def pdf_attachment(quotation, db=None) -> list[dict]:
+        """The proposal PDF shaped for EmailService.
+
+        A failure here must not stop the email: the covering note and the
+        HTML body still carry the figures, so the message goes without the
+        attachment rather than not at all.
+        """
+
+        try:
+            return [{
+                "filename": QuotationPDFService.filename(quotation),
+                "content": QuotationPDFService.render(quotation, db),
+                "mime_type": "application/pdf",
+            }]
+        except Exception as exc:  # pragma: no cover - defensive
+            print("Quotation PDF could not be built:", exc)
+            return []
+
+    @staticmethod
     def send(
         quotation_id: int,
         request,
@@ -901,6 +932,7 @@ class QuotationService:
                     body,
                     getattr(request, "body_html", None),
                 ),
+                attachments=QuotationService.pdf_attachment(quotation, db),
             )
 
             return {
@@ -921,6 +953,9 @@ class QuotationService:
             ),
             cc=cc,
             bcc=bcc,
+            # The proposal itself travels as a PDF; the message body is the
+            # covering note, not the document.
+            attachments=QuotationService.pdf_attachment(quotation, db),
         )
 
         if not delivered:

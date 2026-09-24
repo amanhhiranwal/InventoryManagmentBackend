@@ -45,23 +45,26 @@ INVOICEABLE_ORDER_STATUSES = {
 #: Days between issue and due date when the form does not say otherwise.
 DEFAULT_VALIDITY_DAYS = 30
 
-#: What may still change at each status. A draft is fully editable. Once
-#: generated the lines, dates and addresses are fixed but the charges can
-#: still be corrected before it goes out; once sent only the payment
-#: received against it moves.
+#: Everything a draft may change. Generated carries the same set: an
+#: invoice waiting on approval is still ours to correct, and freezing it
+#: the moment it was generated meant cancelling and rebuilding the whole
+#: thing over a wrong quantity.
+_FULLY_EDITABLE = {
+    "issue_date", "due_date", "assigned_to", "billing_address",
+    "shipping_address", "items", "freight_charges",
+    "installation_lumpsum", "gst_percent", "amount_paid",
+    "advance_percent", "commercial_terms", "technical_notes",
+    "attachments",
+}
+
+#: What may still change at each status. Once the invoice has gone to the
+#: customer it is fixed - only the payment received against it moves, and
+#: the advance percentage, which is renegotiated often enough that
+#: cancelling the invoice over it would be absurd.
 EDITABLE_FIELDS: dict[str, set[str]] = {
-    ProformaInvoiceStatus.DRAFT: {
-        "issue_date", "due_date", "assigned_to", "billing_address",
-        "shipping_address", "items", "freight_charges",
-        "installation_lumpsum", "gst_percent", "amount_paid",
-        "advance_percent", "commercial_terms", "technical_notes",
-        "attachments",
-    },
-    ProformaInvoiceStatus.GENERATED: {
-        "freight_charges", "installation_lumpsum", "gst_percent",
-        "amount_paid",
-    },
-    ProformaInvoiceStatus.SENT: {"amount_paid"},
+    ProformaInvoiceStatus.DRAFT: set(_FULLY_EDITABLE),
+    ProformaInvoiceStatus.GENERATED: set(_FULLY_EDITABLE),
+    ProformaInvoiceStatus.SENT: {"amount_paid", "advance_percent"},
     ProformaInvoiceStatus.CANCELLED: set(),
 }
 
@@ -73,7 +76,7 @@ FIELD_LABELS = {
     "shipping_address": "Shipping Address",
     "items": "Products",
     "freight_charges": "Freight Charges",
-    "installation_lumpsum": "Lumpsum (Installation)",
+    "installation_lumpsum": "Installation",
     "gst_percent": "Estimated GST",
     "amount_paid": "Amount Paid",
     "advance_percent": "Payment Terms",

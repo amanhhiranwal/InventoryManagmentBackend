@@ -1,8 +1,10 @@
 from fastapi import APIRouter
 
+from app.routes.approval import router as approval_router
 from app.routes.auth import router as auth_router
 from app.routes.category_group import router as category_group_router
 from app.routes.company import router as company_router
+from app.routes.company_profile import router as company_profile_router
 from app.routes.customer import router as customer_router
 from app.routes.customer_type import router as customer_type_router
 from app.routes.inventory import router as inventory_router
@@ -38,6 +40,8 @@ async def health():
     }
 
 
+api_router.include_router(approval_router)
+api_router.include_router(company_profile_router)
 api_router.include_router(role_router)
 api_router.include_router(auth_router)
 api_router.include_router(user_router)

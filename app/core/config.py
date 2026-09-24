@@ -59,6 +59,22 @@ class Settings(BaseSettings):
     BANK_ACCOUNT_NUMBER: str = ""
     BANK_IFSC: str = ""
     BANK_UPI_VPA: str = ""
+    #: The "About us" paragraph on the quotation proposal PDF. Unset falls
+    #: back to a neutral description rather than leaving the section blank.
+    COMPANY_ABOUT: str = ""
+    #: Printed in the footer bar on every page of the proposal.
+    COMPANY_WEBSITE: str = ""
+    #: What the company sells, one per line or separated with "|". Listed
+    #: on the proposal's About page.
+    COMPANY_OFFERINGS: str = ""
+    #: Brand logo for the proposal. Relative paths resolve against the
+    #: backend root; unset uses the bundled app/assets/brand-logo.jpg.
+    COMPANY_LOGO_PATH: str = ""
+    #: Optional picture for the proposal cover, under the addresses. Unset
+    #: simply leaves the cover without one.
+    COMPANY_COVER_IMAGE: str = ""
+    #: Contact number printed on the proposal's signature block.
+    COMPANY_PHONE: str = ""
     #: Who signs the invoice. Falls back to the invoice's creator when unset.
     SIGNATORY_NAME: str = ""
     SIGNATORY_TITLE: str = ""
