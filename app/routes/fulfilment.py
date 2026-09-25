@@ -1,9 +1,9 @@
-"""The desks an order passes through, and the board everyone watches.
+"""The desks an order passes through after it has been approved.
 
 Two working screens - accounts and inventory - each showing only the
-orders waiting on that desk, and one read-only board showing where every
-order has got to. The desk screens are gated on the permission granted in
-Roles & Access; the board is open to anyone who can see orders.
+orders waiting on that desk, gated on the permission granted in Roles &
+Access. Where an order has got to is answered by the sales order's own
+Order Process panel, so there is no separate board here.
 """
 
 from fastapi import APIRouter, Depends
@@ -56,24 +56,6 @@ def procurement_desk(
     return {
         "success": True,
         "data": FulfilmentDeskService.queue(INVENTORY, current_user, db),
-    }
-
-
-@router.get("/tracking")
-def tracking_board(
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    """Where every order the caller can see has got to. Read-only.
-
-    No permission of its own: the board never shows an order the caller
-    could not already open, and gating it would mean a CEO needing a tick
-    box to answer a question their own team can answer.
-    """
-
-    return {
-        "success": True,
-        "data": FulfilmentDeskService.tracking(current_user, db),
     }
 
 

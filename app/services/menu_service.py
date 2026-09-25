@@ -25,8 +25,9 @@ RENAMED_BY_PATH = {
 #: and its children go; one the user has since renamed is left alone.
 #: "Fulfilment" grouped the two desks together, which put the accounts team
 #: and the warehouse behind the same heading - they are separate teams and
-#: now have separate menus.
-RETIRED_DEFAULT_MENUS = {"Fulfilment"}
+#: now have separate menus. "Order Tracking" was a second answer to a
+#: question the sales order's own Order Process panel already answers.
+RETIRED_DEFAULT_MENUS = {"Fulfilment", "Order Tracking"}
 
 #: Top-level menus the design moved: title -> (old defaults, new default).
 #: A row still at one of its old defaults is moved; one the user reordered
@@ -117,17 +118,6 @@ DEFAULT_MENUS_DATA = [
     "children": [
       {"title": "Procurement Desk", "icon": "LuPackageCheck", "path": "/fulfilment/procurement", "permission_key": "procurement_desk.read", "order_index": 1},
     ]
-  },
-  {
-    # The board is for everybody with the menu: it only ever shows what the
-    # caller may already see, and its whole point is that a CEO can answer
-    # "where is that order?" without asking two departments.
-    "title": "Order Tracking",
-    "icon": "LuRoute",
-    "path": "/fulfilment/tracking",
-    "permission_key": "fulfilment.menu",
-    "order_index": 9,
-    "children": []
   },
   {
     "title": "Reports",
@@ -222,14 +212,14 @@ class MenuService:
                 changed = True
 
         # Defaults withdrawn before anyone could have arranged them. Matched
-        # on the title *and* on there being no path, so a menu somebody
-        # built themselves is never swept up.
+        # on the title and on the path the default shipped with, so a menu
+        # somebody built themselves is never swept up.
         retired = duplicates + [
             row
             for row in rows
             if row.parent_id is None
             and row.title in RETIRED_DEFAULT_MENUS
-            and not row.path
+            and (row.path or "") in ("", "/fulfilment/tracking")
         ]
 
         for row in retired:

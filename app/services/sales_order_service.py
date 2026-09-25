@@ -17,7 +17,7 @@ from app.models.sales_order_activity import SalesOrderActivity
 from app.models.user import User
 from app.repositories.opportunity_repository import OpportunityRepository
 from app.repositories.sales_order_repository import SalesOrderRepository
-from app.services.fulfilment_notice import announce_stage
+from app.services.fulfilment_notice import record_stage_change
 from app.services.lead_service import get_visible_creator_user_ids
 from app.services.notification_service import NotificationService
 
@@ -685,7 +685,7 @@ class SalesOrderService:
         db.refresh(activity)
 
         if target and target != current_status:
-            announce_stage(
+            record_stage_change(
                 order,
                 db,
                 previous=current_status,
@@ -748,7 +748,7 @@ class SalesOrderService:
         saved = SalesOrderRepository.save(db, order)
 
         if target != previous_status:
-            announce_stage(
+            record_stage_change(
                 saved,
                 db,
                 previous=previous_status,

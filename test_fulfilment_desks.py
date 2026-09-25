@@ -11,8 +11,6 @@ checks all of that, including the parts that should be refused:
   * a rejection with no reason is refused;
   * the queue's numbers agree with the queue;
   * the stock figures come from what is actually on the shelf;
-  * the board shows the sales line their own orders and the desks all of
-    them;
   * a super admin's notifications cover everybody, and nobody else's do.
 
 Run seed_sales_team.py and seed_fulfilment_roles.py first. Everything it
@@ -27,9 +25,9 @@ from datetime import datetime, timezone
 
 from seed_sales_team import TEAM_PASSWORD, api, email_for, login, rows
 
-ADMIN = ("syn-crm-9f3a2@mailinator.com", "password123")
-ACCOUNTS = "accounts@synergy-demo.mailinator.com"
-INVENTORY = "inventory@synergy-demo.mailinator.com"
+ADMIN = ("superadmin@mailinator.com", "password123")
+ACCOUNTS = "accounts@mailinator.com"
+INVENTORY = "inventory@mailinator.com"
 
 TAG = uuid.uuid4().hex[:6]
 
@@ -236,9 +234,28 @@ try:
 
         if stock:
             line = stock[0]
+            # Read the catalogue rather than hard-coding a figure: stock
+            # moves now, so yesterday's number is not today's.
+            on_hand = next(
+                (
+                    float((i.get("attributes") or {}).get("instock") or 0)
+                    for i in rows(api("get", "/inventory/items", token["inventory"]))
+                    if str(i.get("serial_number") or "").upper() == "NX-9K-QIFP75-EX"
+                ),
+                None,
+            )
+
             check("the line is matched to a real item", line["known"] is True, str(line))
-            check("it reports what is on the shelf", line["available"] == 12, str(line["available"]))
-            check("2 wanted out of 12 is not short", line["short"] is False, str(line))
+            check(
+                "it reports what is actually on the shelf",
+                line["available"] == on_hand,
+                f"desk says {line['available']}, catalogue says {on_hand}",
+            )
+            check(
+                "an order it can cover is not flagged short",
+                line["short"] is (line["wanted"] > (on_hand or 0)),
+                str(line),
+            )
 
     # An order for something the shelf cannot cover is flagged.
     short_order = raise_order("Short Order", sku="NX-OPS-I5-8-256", qty=4)
@@ -300,38 +317,8 @@ try:
         str([e.get("action") for e in history][:3]),
     )
 
-    # ================================================== the tracking board
-    banner("8. The board everyone watches")
-
-    board = api("get", "/fulfilment/tracking", token["am_north_1"]).json()["data"]
-    seen = {r["id"] for r in board["orders"]}
-
-    check("the salesperson sees their own order", order["id"] in seen)
-    check("the board says whose move it is", all("with_desk" in r for r in board["orders"]))
-    check("and how far along it is", all("stage_index" in r for r in board["orders"]))
-
-    ceo_board = api("get", "/fulfilment/tracking", token["ceo"]).json()["data"]
-    check(
-        "the CEO sees their team's orders too",
-        order["id"] in {r["id"] for r in ceo_board["orders"]},
-    )
-
-    desk_board = api("get", "/fulfilment/tracking", token["accounts"]).json()["data"]
-    check(
-        "the accounts desk sees everything, being answerable for it",
-        len(desk_board["orders"]) >= len(ceo_board["orders"]),
-        f"{len(desk_board['orders'])} vs {len(ceo_board['orders'])}",
-    )
-
-    kpis = {k["key"]: k["value"] for k in desk_board["kpis"]}
-    check(
-        "the On Hold figure counts the rejected order",
-        kpis["on_hold"] >= 1,
-        str(kpis["on_hold"]),
-    )
-
     # ================================================== notifications
-    banner("9. Everyone sees their own work")
+    banner("8. Everyone sees their own work")
 
     def bell(who):
         return api("get", "/notifications", token[who] if who in token else who).json()
@@ -373,7 +360,7 @@ except Exception as exc:  # noqa: BLE001 - the report below still has to print
     print(f"\n  STOPPED  {exc}")
 
 finally:
-    banner("10. Clearing what the test created")
+    banner("9. Clearing what the test created")
 
     try:
         from sqlalchemy import text

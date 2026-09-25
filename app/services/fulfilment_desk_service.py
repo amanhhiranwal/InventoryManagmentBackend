@@ -5,8 +5,9 @@ Each desk has a queue of orders waiting on it, a few numbers across the
 top, and one decision to make on each order: approve it onward, or reject
 it with a reason and put it on hold.
 
-Everyone else gets the tracking view: every order they can see, and where
-it has got to. Read-only, because moving an order is the desk's job.
+Where an order has got to is shown on the sales order itself, which
+everyone who can see the order already has - so there is no separate board
+in here.
 """
 
 import logging
@@ -20,7 +21,6 @@ from app.core.fulfilment import (
     DESK_STAGES,
     DESKS,
     INVENTORY,
-    Desk,
     desk_for,
     holds_desk,
 )
@@ -28,17 +28,7 @@ from app.core.workflow_status import SalesOrderStatus
 from app.models.proforma_invoice import ProformaInvoice
 from app.models.sales_order import SalesOrder
 from app.models.user import User
-from app.services.lead_service import get_visible_creator_user_ids
-
 logger = logging.getLogger(__name__)
-
-#: Stages that are still in flight, for the tracking board and its numbers.
-IN_FLIGHT = [
-    stage
-    for stage in SalesOrderStatus.PIPELINE
-    if stage not in (SalesOrderStatus.DRAFT, SalesOrderStatus.COMPLETED)
-]
-
 
 def _user(current_user: dict, db: Session) -> User | None:
     try:
@@ -141,7 +131,7 @@ class FulfilmentDeskService:
             "kpis": (
                 FulfilmentDeskService._accounts_kpis(rows)
                 if role == ACCOUNTS
-                else FulfilmentDeskService._inventory_kpis(rows)
+                else FulfilmentDeskService._inventory_kpis(rows, current_user, db)
             ),
         }
 
@@ -201,10 +191,13 @@ class FulfilmentDeskService:
         }
 
         if with_stock:
+            from app.services.stock_movement_service import for_order
+
             row["stock"] = FulfilmentDeskService.stock_for(order, db)
-            row["stock_short"] = any(
-                line["short"] for line in row["stock"]
-            )
+            row["stock_short"] = any(line["short"] for line in row["stock"])
+            # What this order has already taken off the shelf, so the desk
+            # is not left guessing whether it has been counted down.
+            row["stock_movements"] = for_order(order.id)
 
         return row
 
@@ -341,17 +334,27 @@ class FulfilmentDeskService:
         ]
 
     @staticmethod
-    def _inventory_kpis(rows: list[dict]) -> list[dict]:
+    def _inventory_kpis(rows: list[dict], current_user: dict, db: Session) -> list[dict]:
+        from app.services.stock_movement_service import summary
+
         def at(*stages):
             return [r for r in rows if r["status"] in stages]
 
         short = [r for r in rows if r.get("stock_short")]
         oldest = max((r["waiting_days"] for r in rows), default=0)
+        shelf = summary(current_user, db)
 
         return [
             {
+                "key": "units_in_stock",
+                "label": "Units In Stock",
+                "value": shelf["units"],
+                "format": "count",
+                "hint": f"Across {shelf['products']} products on the shelf",
+            },
+            {
                 "key": "awaiting_stock",
-                "label": "Awaiting Stock Check",
+                "label": "Awaiting Stock",
                 "value": len(at(SalesOrderStatus.PAYMENT_VERIFIED)),
                 "format": "count",
                 "hint": "Paid orders waiting for inventory to confirm stock",
@@ -371,13 +374,6 @@ class FulfilmentDeskService:
                 "hint": "Picked, packed and waiting to go out",
             },
             {
-                "key": "out_for_delivery",
-                "label": "Out For Delivery",
-                "value": len(at(SalesOrderStatus.DISPATCHED)),
-                "format": "count",
-                "hint": "On the road, not yet confirmed as delivered",
-            },
-            {
                 "key": "short",
                 "label": "Short On Stock",
                 "value": len(short),
@@ -386,11 +382,12 @@ class FulfilmentDeskService:
                 "hint": "Orders with at least one line the shelf cannot cover",
             },
             {
-                "key": "oldest",
-                "label": "Longest Waiting",
-                "value": oldest,
-                "format": "days",
-                "hint": "How long the oldest item has sat at this desk",
+                "key": "out_of_stock",
+                "label": "Out Of Stock",
+                "value": shelf["out_of_stock"],
+                "format": "count",
+                "tone": "warn",
+                "hint": f"Products with nothing left. Oldest item here: {oldest}d",
             },
         ]
 
@@ -462,9 +459,9 @@ class FulfilmentDeskService:
         db.commit()
         db.refresh(order)
 
-        from app.services.fulfilment_notice import announce_stage
+        from app.services.fulfilment_notice import record_stage_change
 
-        announce_stage(
+        record_stage_change(
             order,
             db,
             previous=previous,
@@ -474,112 +471,3 @@ class FulfilmentDeskService:
         )
 
         return order
-
-    # ------------------------------------------------------------------
-    # The tracking board
-    # ------------------------------------------------------------------
-    @staticmethod
-    def tracking(current_user: dict, db: Session) -> dict:
-        """Where every order the caller can see has got to.
-
-        Read-only and open to anyone who can see orders, so a CEO or an
-        AVP can answer "where is that order?" without asking two desks.
-        Sales roles see their own reporting line; the desks and the super
-        admin see everything, because that is what they are answering for.
-        """
-
-        query = db.query(SalesOrder)
-
-        user = _user(current_user, db)
-        on_a_desk = holds_desk(user, ACCOUNTS) or holds_desk(user, INVENTORY)
-
-        if not current_user.get("is_super_admin") and not on_a_desk:
-            visible = get_visible_creator_user_ids(current_user, db)
-
-            if visible is not None:
-                query = query.filter(SalesOrder.creator_id.in_(visible))
-
-        orders = query.order_by(SalesOrder.id.desc()).all()
-
-        rows = []
-
-        for order in orders:
-            desk = desk_for(order.status)
-
-            rows.append({
-                "id": order.id,
-                "order_number": order.order_number,
-                "customer_name": order.customer_name,
-                "company_name": order.company_name,
-                "status": order.status,
-                "grand_total": float(order.grand_total or 0),
-                "advance_received": float(order.advance_received or 0),
-                "outstanding_balance": float(order.outstanding_balance or 0),
-                "order_date": order.order_date.isoformat() if order.order_date else None,
-                "waiting_days": _waiting_days(order),
-                # Whose move it is - the whole point of the board.
-                "with_desk": desk.role if desk else None,
-                "waiting_for": desk.queue_label if desk else None,
-                "stage_index": (
-                    SalesOrderStatus.PIPELINE.index(order.status)
-                    if order.status in SalesOrderStatus.PIPELINE
-                    else None
-                ),
-            })
-
-        in_flight = [r for r in rows if r["status"] in IN_FLIGHT]
-
-        return {
-            "pipeline": SalesOrderStatus.PIPELINE,
-            "orders": rows,
-            "kpis": [
-                {
-                    "key": "in_flight",
-                    "label": "Orders In Flight",
-                    "value": len(in_flight),
-                    "format": "count",
-                    "hint": "Approved but not yet closed",
-                },
-                {
-                    "key": "value_in_flight",
-                    "label": "Value In Flight",
-                    "value": round(sum(r["grand_total"] for r in in_flight), 2),
-                    "format": "currency",
-                    "hint": "What those orders are worth",
-                },
-                {
-                    "key": "with_accounts",
-                    "label": "With Accounts",
-                    "value": sum(1 for r in rows if r["with_desk"] == ACCOUNTS),
-                    "format": "count",
-                    "hint": "Waiting on a payment to be confirmed",
-                },
-                {
-                    "key": "with_inventory",
-                    "label": "With Inventory",
-                    "value": sum(1 for r in rows if r["with_desk"] == INVENTORY),
-                    "format": "count",
-                    "hint": "Waiting on stock, dispatch or delivery",
-                },
-                {
-                    "key": "on_hold",
-                    "label": "On Hold",
-                    "value": sum(
-                        1 for r in rows if r["status"] == SalesOrderStatus.ON_HOLD
-                    ),
-                    "format": "count",
-                    "tone": "warn",
-                    "hint": "Rejected at a desk and waiting on a correction",
-                },
-                {
-                    "key": "completed",
-                    "label": "Completed",
-                    "value": sum(
-                        1 for r in rows if r["status"] == SalesOrderStatus.COMPLETED
-                    ),
-                    "format": "count",
-                    "tone": "good",
-                    "hint": "Delivered, installed and paid in full",
-                },
-            ],
-        }

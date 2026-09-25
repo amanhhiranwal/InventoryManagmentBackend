@@ -22,7 +22,7 @@ import uuid
 import requests
 
 BASE = "http://localhost:8000/api/v1"
-ADMIN = ("syn-crm-9f3a2@mailinator.com", "password123")
+ADMIN = ("superadmin@mailinator.com", "password123")
 PASSWORD = "Password@123"
 TAG = uuid.uuid4().hex[:6]
 

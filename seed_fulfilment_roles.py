@@ -10,8 +10,8 @@ grant them more, or take them away. What they are granted here is
 deliberately narrow - an accounts person sees their own desk and the
 tracking board, and nothing else of the sales CRM, not even the dashboard.
 
-The sales roles gain the tracking menu too, so a CEO, an AVP or a Zonal
-Head can see where an order has got to without asking either desk.
+Everyone else follows an order on the sales order's own Order Process
+panel, which they already have - there is no separate tracking screen.
 
 Safe to run again: anything already there is left alone.
 
@@ -39,9 +39,13 @@ def one(response):
 
 #: permission -> which module it belongs to, for the Roles & Access screen.
 PERMISSIONS = {
-    "fulfilment.menu": ("Fulfilment", "See the Fulfilment menu and the tracking board"),
     "payment_desk.read": ("Fulfilment", "Work the accounts desk: verify payments, close orders"),
     "procurement_desk.read": ("Fulfilment", "Work the procurement desk: confirm stock, dispatch, deliver"),
+    # The catalogue side of the warehouse's job. inventory.read and
+    # inventory.create already existed; the other two never did, so nobody
+    # but a super admin could correct a stock figure.
+    "inventory.update": ("Inventory", "Edit a product and its stock level"),
+    "inventory.delete": ("Inventory", "Remove a product from the catalogue"),
 }
 
 #: role -> what it is for, and what it is granted.
@@ -51,21 +55,30 @@ ROLES = {
     # does have - which is their own desk.
     "Accounts": (
         "Confirms payments against proforma invoices and closes settled orders.",
-        ["payment_desk.read", "fulfilment.menu"],
+        ["payment_desk.read"],
     ),
+    # The warehouse keeps the catalogue as well as working the desk: they
+    # are the ones who know what is on the shelf, so they add and correct
+    # the products rather than asking a super admin to do it.
     "Inventory": (
-        "Confirms stock, takes orders into procurement, dispatches and delivers.",
-        ["procurement_desk.read", "fulfilment.menu", "inventory.read"],
+        "Confirms stock, takes orders into procurement, dispatches and "
+        "delivers, and keeps the product catalogue.",
+        [
+            "procurement_desk.read",
+            "inventory.read", "inventory.create", "inventory.update",
+            "inventory.delete",
+            # The product type, category group and unit lookups the
+            # catalogue screen needs come with inventory.read - granting
+            # the Masters pages themselves would put the warehouse in
+            # Masters, which is somebody else's job.
+        ],
     ),
 }
 
-#: The sales roles only gain the menu - the board, not either desk.
-WATCHERS = ["CEO", "AVP", "Zonal Head", "Area Manager", "Super Admin"]
-
 #: One person per desk, so the screens can actually be signed in to.
 STAFF = [
-    ("Neha", "Bansal", "Accounts", "accounts@synergy-demo.mailinator.com"),
-    ("Rahul", "Verma", "Inventory", "inventory@synergy-demo.mailinator.com"),
+    ("Neha", "Bansal", "Accounts", "accounts@mailinator.com"),
+    ("Rahul", "Verma", "Inventory", "inventory@mailinator.com"),
 ]
 
 
@@ -124,14 +137,6 @@ def main() -> int:
 
         grant(admin, roles[name], grants, existing)
 
-    # The watchers gain only the menu, so the board shows up for them.
-    print("\nThe board, for everyone above the desks")
-
-    for name in WATCHERS:
-        if name in roles:
-            grant(admin, roles[name], ["fulfilment.menu"], existing, quiet=True)
-            print(f"  {name} can see Order Tracking")
-
     # ------------------------------------------------------------- staff
     print("\nDesk staff")
 
@@ -139,6 +144,14 @@ def main() -> int:
         u["email"]: u
         for u in rows(api("get", "/users/", admin, params={"size": 200}))
     }
+
+    # Both desks serve the whole business, so they belong to every company.
+    # Without this the warehouse cannot file a product under anything and
+    # the catalogue is closed to them.
+    every_company = [
+        str(c["id"])
+        for c in rows(api("get", "/companies/", admin, params={"size": 200}))
+    ]
 
     for first, last, role_name, email in STAFF:
         if email in people:
@@ -159,7 +172,7 @@ def main() -> int:
             "employee_id": f"SYN-{role_name.upper()}",
             "phone_number": "9800000010",
             "role_ids": [str(role["id"])],
-            "company_ids": [],
+            "company_ids": every_company,
         })
 
         if created.status_code >= 400:

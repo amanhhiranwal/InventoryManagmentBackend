@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 
 from seed_sales_team import TEAM_PASSWORD, api, email_for, login, rows
 
-ADMIN = ("syn-crm-9f3a2@mailinator.com", "password123")
+ADMIN = ("superadmin@mailinator.com", "password123")
 
 #: owner, customer, contact, unit price, qty, discount %, how far to take it.
 #: "steps" is how many approvals to grant; "reject" rejects at the first.
@@ -75,8 +75,8 @@ def main() -> int:
 
     # Once an order is approved it belongs to the desks, so the seed has to
     # sign in as them to push it along - exactly as the team will.
-    token["accounts"] = login("accounts@synergy-demo.mailinator.com", TEAM_PASSWORD)
-    token["inventory"] = login("inventory@synergy-demo.mailinator.com", TEAM_PASSWORD)
+    token["accounts"] = login("accounts@mailinator.com", TEAM_PASSWORD)
+    token["inventory"] = login("inventory@mailinator.com", TEAM_PASSWORD)
 
     existing = {
         row.get("organization_name")

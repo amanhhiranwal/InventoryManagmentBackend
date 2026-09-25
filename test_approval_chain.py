@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 
 from seed_sales_team import TEAM_PASSWORD, api, email_for, login, rows
 
-ADMIN = ("syn-crm-9f3a2@mailinator.com", "password123")
+ADMIN = ("superadmin@mailinator.com", "password123")
 TAG = uuid.uuid4().hex[:6]
 
 passed, failed = [], []
@@ -54,8 +54,8 @@ try:
         token[key] = login(email_for(key), TEAM_PASSWORD)
 
     # The desks that own an order once it has been approved.
-    token["accounts"] = login("accounts@synergy-demo.mailinator.com", TEAM_PASSWORD)
-    token["inventory"] = login("inventory@synergy-demo.mailinator.com", TEAM_PASSWORD)
+    token["accounts"] = login("accounts@mailinator.com", TEAM_PASSWORD)
+    token["inventory"] = login("inventory@mailinator.com", TEAM_PASSWORD)
     print("Signed in as the super admin and the team.")
 
     # ------------------------------------------------------------ matrix

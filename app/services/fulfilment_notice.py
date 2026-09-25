@@ -117,6 +117,40 @@ def _line(owner_id: str | None, db: Session) -> tuple[User | None, list[User]]:
     return by_id.get(str(owner_id)), [by_id[uid] for uid in chain if uid in by_id]
 
 
+def record_stage_change(
+    order,
+    db: Session,
+    *,
+    previous: str | None,
+    actor_name: str | None = None,
+    actor_id=None,
+    remarks: str | None = None,
+) -> list[dict]:
+    """Everything that follows an order reaching a new stage.
+
+    The stock moves and the people are told. Kept together because the two
+    must not drift apart - an order that went out without the shelf being
+    counted down is exactly the bug this whole thing exists to stop - and
+    because every path that moves an order should do both.
+    """
+
+    from app.services.stock_movement_service import apply_for_stage
+
+    moved = apply_for_stage(order, previous or "", db, actor=actor_name)
+
+    announce_stage(
+        order,
+        db,
+        previous=previous,
+        actor_name=actor_name,
+        actor_id=actor_id,
+        remarks=remarks,
+        stock_moved=moved,
+    )
+
+    return moved
+
+
 def announce_stage(
     order,
     db: Session,
@@ -125,6 +159,7 @@ def announce_stage(
     actor_name: str | None = None,
     actor_id=None,
     remarks: str | None = None,
+    stock_moved: list[dict] | None = None,
 ) -> None:
     """Write to the reporting line about a sales order's new stage.
 
@@ -163,6 +198,16 @@ def announce_stage(
 
         if remarks:
             facts.append(("Remarks", remarks))
+
+        # What left the shelf, and what is left on it. Inventory care, and
+        # so does anyone wondering whether the next order can be filled.
+        for line in stock_moved or []:
+            facts.append((
+                ("Issued" if line["direction"] == "OUT" else "Returned")
+                + f" - {line['product']}",
+                f"{line['quantity']:g} of {line['stock_before']:g}, "
+                f"{line['stock_after']:g} left in stock",
+            ))
 
         # The trail so far, so nobody has to open the CRM to see how far
         # along the order is.
