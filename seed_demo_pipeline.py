@@ -202,12 +202,129 @@ def main() -> int:
             f", {granted} signed, {where}"
         )
 
+    fulfilment(token, admin, companies)
+
     print("\nWhat the team will see")
 
     for row in rows(api("get", "/quotations/", admin)):
         print(f"  {row['quote_number']:<10} {row.get('organization_name', ''):<26} {row['status']}")
 
+    for row in rows(api("get", "/orders", admin)):
+        print(f"  {str(row.get('order_number') or row['id']):<10} {row.get('customer_name', ''):<26} {row['status']}")
+
     return 0
+
+
+#: The journey past the quotation: an order, an invoice, the advance, and
+#: however far into fulfilment each one has got. Between them they put
+#: every stage of the chain on screen at once.
+ORDERS = [
+    {
+        "owner": "am_north_1", "customer": "Bluebells School",
+        "state": "Haryana", "price": 185000, "qty": 4,
+        "paid": None, "stage": None,
+        "note": "confirmed, invoice raised, waiting on the advance",
+    },
+    {
+        "owner": "am_north_2", "customer": "Riverside Agro",
+        "state": "Rajasthan", "price": 265000, "qty": 3,
+        "paid": "advance", "stage": "PROCUREMENT",
+        "note": "advance in, with inventory",
+    },
+    {
+        "owner": "am_south_1", "customer": "Coastal Seeds",
+        "state": "Kerala", "price": 95000, "qty": 8,
+        "paid": "advance", "stage": "INSTALLED",
+        "note": "installed, balance still owed",
+    },
+]
+
+
+def fulfilment(token, admin, companies):
+    """Carry three deals past the quotation and into fulfilment.
+
+    The approval chain was already on show; what came after it was not -
+    there were no invoices at all, so nobody could see what recording a
+    payment does to an order.
+    """
+
+    print("\nCarrying deals into fulfilment\n")
+
+    existing = {
+        row.get("customer_name")
+        for row in rows(api("get", "/orders", admin))
+    }
+
+    for deal in ORDERS:
+        if deal["customer"] in existing:
+            print(f"  {deal['customer']} already has an order")
+            continue
+
+        owner = token[deal["owner"]]
+        now = datetime.now(timezone.utc)
+
+        created = api("post", "/orders", owner, json={
+            "customer_name": deal["customer"],
+            "company_name": (
+                "Synergy South Seeds"
+                if deal["owner"].startswith("am_south")
+                else "Synergy North Agro"
+            ),
+            "state": deal["state"],
+            "order_date": now.isoformat(),
+            "items": [{
+                "product": "Interactive Flat Panel",
+                "model": "Qonevo IFP 75 - Core - 8/128",
+                "sku": "NX-9K-QIFP75-EX",
+                "qty": deal["qty"],
+                "rate": deal["price"],
+                "tax_rate": 18,
+            }],
+        })
+
+        if created.status_code >= 400:
+            print(f"  {deal['customer']}: {created.status_code} {created.text[:120]}")
+            continue
+
+        order = created.json()["data"]
+        reference = order.get("order_number") or order["id"]
+
+        # An invoice can only go on a confirmed order.
+        api("put", f"/orders/{order['id']}/status", owner, json={"status": "CONFIRMED"})
+
+        raised = api("post", "/proforma-invoices", owner, json={
+            "sales_order_id": order["id"],
+            "status": "DRAFT",
+            "advance_percent": 30,
+        })
+
+        if raised.status_code >= 400:
+            print(f"  {reference}: no invoice - {raised.text[:120]}")
+            continue
+
+        invoice = raised.json()["data"]
+        api("post", f"/proforma-invoices/{invoice['id']}/generate", owner)
+
+        if deal["paid"] == "advance":
+            # Recording the advance is what moves the order on - the
+            # status is never typed by hand.
+            api("put", f"/proforma-invoices/{invoice['id']}", owner, json={
+                "amount_paid": round(float(invoice["grand_total"]) * 0.3, 2),
+            })
+
+        if deal["stage"]:
+            for step in ("PROCUREMENT", "READY", "DISPATCHED", "DELIVERED", "INSTALLED"):
+                api("put", f"/orders/{order['id']}/status", owner, json={"status": step})
+
+                if step == deal["stage"]:
+                    break
+
+        final = api("get", f"/orders/{order['id']}", admin).json()["data"]
+
+        print(
+            f"  {reference} {deal['customer']}: {final['status']} "
+            f"({invoice['pi_number']}) - {deal['note']}"
+        )
 
 
 if __name__ == "__main__":

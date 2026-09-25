@@ -763,6 +763,13 @@ class QuotationService:
                 UUID(request.assigned_to_id) if request.assigned_to_id else None
             )
 
+        # The letterhead can still be switched while the quotation is a
+        # draft - nothing has gone to the client yet.
+        if getattr(request, "company_id", None) is not None:
+            quotation.company_id = QuotationService._selling_company(
+                request, quotation.creator_id, db
+            )
+
         if request.items is not None:
             quotation.items = [_item_dict(item) for item in request.items]
 

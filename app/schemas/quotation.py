@@ -106,6 +106,8 @@ class UpdateQuotationRequest(BaseModel):
     customer_type_id: Optional[int] = None
     state_id: Optional[int] = None
     assigned_to_id: Optional[str] = None
+    #: Moving a draft onto another of our companies' letterheads.
+    company_id: Optional[str] = None
 
 
 class UpdateQuotationStatusRequest(BaseModel):

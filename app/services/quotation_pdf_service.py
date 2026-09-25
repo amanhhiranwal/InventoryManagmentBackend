@@ -210,7 +210,7 @@ def _styles() -> dict:
 class QuotationPDFService:
 
     @staticmethod
-    def company(db=None, quotation=None) -> dict:
+    def company(db=None, quotation=None, company_id=None) -> dict:
         """Who the proposal comes from.
 
         The selling company first: one installation can run several, and a
@@ -218,10 +218,14 @@ class QuotationPDFService:
         Anything that company does not carry - the About copy, the range,
         who signs - falls back to the global Company Profile, and that in
         turn falls back to the environment.
+
+        ``company_id`` names the seller directly, for a quotation still
+        being typed: the picker has a company but nothing is saved yet, and
+        the preview has to follow the picker.
         """
 
         profile = CompanyProfileService.as_lists(db)
-        seller = QuotationPDFService._seller(db, quotation)
+        seller = QuotationPDFService._seller(db, quotation, company_id)
 
         return {
             "name": (seller and seller.company_name) or profile["company_legal_name"] or "Synergy Group",
@@ -284,13 +288,13 @@ class QuotationPDFService:
         return None
 
     @staticmethod
-    def _seller(db, quotation):
+    def _seller(db, quotation, company_id=None):
         """The company selling on this quotation, if one is set."""
 
-        if db is None or quotation is None:
+        if db is None:
             return None
 
-        company_id = getattr(quotation, "company_id", None)
+        company_id = company_id or getattr(quotation, "company_id", None)
 
         if not company_id:
             return None
