@@ -228,6 +228,36 @@ class NotificationService:
         )
 
     @staticmethod
+    def list_everyone(
+        db: Session,
+        limit: int = 30,
+        unread_only: bool = False,
+    ) -> list[tuple[Notification, str]]:
+        """Every notification in the system, newest first, with whose it is.
+
+        A super admin oversees all of it, so their bell shows the whole
+        business rather than only what was addressed to them - an AVP's
+        approvals, an accounts clerk's queue, a salesperson's assignments.
+        Each row carries the name it was sent to, because "Approval Needed"
+        means nothing without knowing whose approval.
+        """
+
+        query = db.query(Notification, User).join(
+            User, User.id == Notification.user_id
+        )
+
+        if unread_only:
+            query = query.filter(Notification.is_read.is_(False))
+
+        rows = (
+            query.order_by(Notification.created_at.desc(), Notification.id.desc())
+            .limit(max(1, min(limit, 100)))
+            .all()
+        )
+
+        return [(notification, _full_name(user)) for notification, user in rows]
+
+    @staticmethod
     def unread_count(db: Session, user_id: str) -> int:
         return (
             db.query(func.count(Notification.id))
@@ -240,15 +270,20 @@ class NotificationService:
         )
 
     @staticmethod
-    def mark_read(db: Session, user_id: str, notification_id: int) -> Notification:
-        notification = (
-            db.query(Notification)
-            .filter(
-                Notification.id == notification_id,
-                Notification.user_id == _to_uuid(user_id),
-            )
-            .first()
-        )
+    def mark_read(
+        db: Session,
+        user_id: str,
+        notification_id: int,
+        any_user: bool = False,
+    ) -> Notification:
+        query = db.query(Notification).filter(Notification.id == notification_id)
+
+        # A super admin reads the whole feed, so they can clear a row that
+        # was addressed to somebody else.
+        if not any_user:
+            query = query.filter(Notification.user_id == _to_uuid(user_id))
+
+        notification = query.first()
 
         if notification is None:
             raise HTTPException(status_code=404, detail="Notification not found")
@@ -280,9 +315,15 @@ class NotificationService:
         return updated
 
 
-def serialize_notification(notification: Notification) -> dict:
+def serialize_notification(
+    notification: Notification,
+    for_user: str | None = None,
+) -> dict:
     return {
         "id": notification.id,
+        # Only set on a super admin's feed, where the rows are other
+        # people's. Their own bell leaves it out.
+        "for_user": for_user,
         "module": notification.module,
         "entity_id": notification.entity_id,
         "action": notification.action,

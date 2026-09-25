@@ -52,6 +52,10 @@ try:
 
     for key in everyone:
         token[key] = login(email_for(key), TEAM_PASSWORD)
+
+    # The desks that own an order once it has been approved.
+    token["accounts"] = login("accounts@synergy-demo.mailinator.com", TEAM_PASSWORD)
+    token["inventory"] = login("inventory@synergy-demo.mailinator.com", TEAM_PASSWORD)
     print("Signed in as the super admin and the team.")
 
     # ------------------------------------------------------------ matrix
@@ -289,20 +293,22 @@ try:
         order = r.json()["data"]
         created_orders.append(order["id"])
 
+        # Who may push each step: the sales owner up to Confirmed, then the
+        # desks, because once an order is approved it stops being theirs.
         chain = [
-            ("PENDING_APPROVAL", "sent for approval"),
-            ("CONFIRMED", "approved"),
-            ("PAYMENT_VERIFIED", "payment verified by accounts"),
-            ("PROCUREMENT", "with inventory"),
-            ("READY", "ready to dispatch"),
-            ("DISPATCHED", "dispatched"),
-            ("DELIVERED", "delivered"),
-            ("INSTALLED", "installed"),
-            ("COMPLETED", "won"),
+            ("PENDING_APPROVAL", "sent for approval", "am_north_1"),
+            ("CONFIRMED", "approved", "am_north_1"),
+            ("PAYMENT_VERIFIED", "payment verified by accounts", "accounts"),
+            ("PROCUREMENT", "with inventory", "inventory"),
+            ("READY", "ready to dispatch", "inventory"),
+            ("DISPATCHED", "dispatched", "inventory"),
+            ("DELIVERED", "delivered", "inventory"),
+            ("INSTALLED", "installed", "am_north_1"),
+            ("COMPLETED", "won", "accounts"),
         ]
 
-        for status, label in chain:
-            step = api("put", f"/orders/{order['id']}/status", token["am_north_1"], json={
+        for status, label, who in chain:
+            step = api("put", f"/orders/{order['id']}/status", token[who], json={
                 "status": status, "remarks": f"Moved to {label}.",
             })
             check(f"the order reaches {label}", step.status_code == 200, f"{status}: {step.status_code} {step.text[:140]}")

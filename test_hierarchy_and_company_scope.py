@@ -68,9 +68,18 @@ try:
     print("1. Roles offered when creating a user")
     by_name = {r["role_name"]: r for r in rows(api("get", "/rbac/roles", admin))}
 
+    # The sales chart, plus the two desks an approved order passes through.
+    # Accounts and Inventory sit outside the reporting line on purpose -
+    # they answer for the whole company, not for one region.
     check(
-        "the role list is exactly Super Admin, CEO, AVP, Zonal Head, Area Manager",
-        sorted(by_name) == ["AVP", "Area Manager", "CEO", "Super Admin", "Zonal Head"],
+        "the sales chart is exactly Super Admin, CEO, AVP, Zonal Head, Area Manager",
+        sorted(set(by_name) - {"Accounts", "Inventory"})
+        == ["AVP", "Area Manager", "CEO", "Super Admin", "Zonal Head"],
+        str(sorted(by_name)),
+    )
+    check(
+        "and the two fulfilment desks are there beside it",
+        {"Accounts", "Inventory"} <= set(by_name),
         str(sorted(by_name)),
     )
 

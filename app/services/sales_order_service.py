@@ -3,6 +3,7 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.fulfilment import desk_for, holds_desk
 from app.core.workflow_status import (
     SALES_ORDER_TRANSITIONS,
     SalesOrderStatus,
@@ -13,6 +14,7 @@ from app.models.opportunity_activity import OpportunityActivity
 from app.models.quotation import Quotation
 from app.models.sales_order import SalesOrder
 from app.models.sales_order_activity import SalesOrderActivity
+from app.models.user import User
 from app.repositories.opportunity_repository import OpportunityRepository
 from app.repositories.sales_order_repository import SalesOrderRepository
 from app.services.fulfilment_notice import announce_stage
@@ -35,6 +37,59 @@ SALES_ORDER_STATUS_ACTIONS: dict[str, str] = {
     SalesOrderStatus.COMPLETED: "Order Completed",
     SalesOrderStatus.CANCELLED: "Order Cancelled",
 }
+
+
+def _staffs_the_desk(order: SalesOrder, current_user: dict, db: Session) -> bool:
+    """Whether this user works the desk the order is sitting at."""
+
+    desk = desk_for(order.status)
+
+    if desk is None:
+        return False
+
+    user = db.query(User).filter(User.id == current_user.get("user_id")).first()
+
+    return holds_desk(user, desk.role)
+
+
+def assert_desk_allows(
+    order: SalesOrder,
+    target: str,
+    current_user: dict,
+    db: Session,
+) -> None:
+    """Keep a stage move with the desk that owns it.
+
+    Once an order is approved it stops being the salesperson's to push:
+    accounts say the money arrived, inventory say the stock is there. Any
+    role can still put an order on hold or cancel it - that is a business
+    decision, not a desk's confirmation - and a super admin can do
+    anything, so a company with nobody in a role is never stuck.
+    """
+
+    if current_user.get("is_super_admin"):
+        return
+
+    desk = desk_for(order.status)
+
+    if desk is None or target == order.status:
+        return
+
+    if target in (SalesOrderStatus.ON_HOLD, SalesOrderStatus.CANCELLED):
+        return
+
+    user = db.query(User).filter(User.id == current_user.get("user_id")).first()
+
+    if holds_desk(user, desk.role):
+        return
+
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            f"Order {order.order_number or order.id} is with the {desk.role} "
+            f"desk. {desk.asks} Only {desk.role} can move it on."
+        ),
+    )
 
 
 def _to_uuid(value) -> UUID | None:
@@ -242,6 +297,12 @@ class SalesOrderService:
         visible_ids = get_visible_creator_user_ids(current_user, db)
 
         if visible_ids and str(order.creator_id) in visible_ids:
+            return
+
+        # A desk holding the order stands outside the sales reporting line:
+        # accounts verify the whole company's payments, and inventory ship
+        # for everybody. Refusing them here would leave orders stuck.
+        if _staffs_the_desk(order, current_user, db):
             return
 
         raise HTTPException(
@@ -598,6 +659,8 @@ class SalesOrderService:
                 target,
             )
 
+            assert_desk_allows(order, target, current_user, db)
+
             order.status = target
 
             if not action:
@@ -663,6 +726,8 @@ class SalesOrderService:
             previous_status,
             target,
         )
+
+        assert_desk_allows(order, target, current_user, db)
 
         order.status = target
 

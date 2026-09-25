@@ -15,6 +15,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
+from app.core.fulfilment import ACCOUNTS, INVENTORY, desk_for
 from app.core.workflow_status import SalesOrderStatus
 from app.models.user import User
 from app.services.email_service import EmailService
@@ -23,6 +24,13 @@ from app.services.hierarchy_service import HierarchyService
 from app.services.notification_service import notify_users
 
 logger = logging.getLogger(__name__)
+
+#: Where a desk works, so its notification opens the queue rather than one
+#: order in isolation.
+DESK_LINKS = {
+    ACCOUNTS: "/fulfilment/accounts",
+    INVENTORY: "/fulfilment/procurement",
+}
 
 #: What each stage means to the people reading about it, as a sentence
 #: rather than a status code.
@@ -50,7 +58,10 @@ STAGE_NOTE: dict[str, str] = {
     SalesOrderStatus.COMPLETED: (
         "The order is closed - delivered, installed and paid in full."
     ),
-    SalesOrderStatus.ON_HOLD: "The order has been put on hold.",
+    SalesOrderStatus.ON_HOLD: (
+        "The order has been put on hold and needs a correction before it can "
+        "go any further."
+    ),
     SalesOrderStatus.CANCELLED: "The order has been cancelled.",
 }
 
@@ -62,6 +73,29 @@ def _name(user: User | None) -> str:
     full = f"{user.first_name or ''} {user.last_name or ''}".strip()
 
     return full or (user.email or "Someone")
+
+
+def desk_holders(role: str, db: Session) -> list[User]:
+    """Everyone staffing a desk, so its queue is never a surprise.
+
+    Falls back to the super admins where nobody holds the role, because an
+    order nobody has been told about is an order that stops.
+    """
+
+    holders = [
+        user
+        for user in db.query(User).filter(User.is_active.is_(True)).all()
+        if role in {r.role_name for r in (user.roles or [])}
+    ]
+
+    if holders:
+        return holders
+
+    return (
+        db.query(User)
+        .filter(User.is_super_admin.is_(True), User.is_active.is_(True))
+        .all()
+    )
 
 
 def _line(owner_id: str | None, db: Session) -> tuple[User | None, list[User]]:
@@ -165,6 +199,28 @@ def announce_stage(
             actor_name=actor_name,
             commit=True,
         )
+
+        # And whoever the order has just landed on, with a link to their own
+        # desk rather than to the order's page: it is a job, not news.
+        next_desk = desk_for(stage)
+
+        if next_desk is not None:
+            holders = desk_holders(next_desk.role, db)
+
+            notify_users(
+                db,
+                [u.id for u in holders],
+                module="sales_order",
+                entity_id=order.id,
+                action=f"With {next_desk.role}",
+                message=f"{reference} - {next_desk.asks}",
+                link=DESK_LINKS.get(next_desk.role, link),
+                actor_id=actor_id,
+                actor_name=actor_name,
+                commit=True,
+            )
+
+            recipients += [u for u in holders if u not in recipients]
 
         addresses = [u.email for u in recipients if u.email]
 
