@@ -98,6 +98,8 @@ DEFAULT_MENUS_DATA = [
       # Who the proposals and emails come from. Super admin only, like the
       # rest of Masters - the page refuses anyone else.
       {"title": "Company Profile", "icon": "LuBuilding2", "path": "/company-profile", "permission_key": "company.read", "order_index": 8},
+      # Who signs off how much discount. Super admin only, like the rest.
+      {"title": "Quotation Approval", "icon": "LuPercent", "path": "/quotation-approval", "permission_key": "company.read", "order_index": 9},
     ]
   },
   {

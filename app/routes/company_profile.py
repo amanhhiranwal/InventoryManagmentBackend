@@ -1,5 +1,6 @@
 import os
 import shutil
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -64,6 +65,24 @@ def save_profile(
     }
 
 
+def _store_image(file: UploadFile, name: str) -> str:
+    ext = os.path.splitext(file.filename or "")[1].lower() or ".png"
+
+    if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+        raise HTTPException(
+            status_code=400,
+            detail="Use a PNG, JPG or WEBP image.",
+        )
+
+    os.makedirs(LOGO_DIR, exist_ok=True)
+    path = os.path.join(LOGO_DIR, f"{name}{ext}")
+
+    with open(path, "wb") as target:
+        shutil.copyfileobj(file.file, target)
+
+    return path
+
+
 @router.post("/logo")
 def upload_logo(
     file: UploadFile = File(...),
@@ -72,24 +91,69 @@ def upload_logo(
 ):
     """Replace the mark printed on every proposal."""
 
-    ext = os.path.splitext(file.filename or "")[1].lower() or ".png"
-
-    if ext not in (".jpg", ".jpeg", ".png", ".webp"):
-        raise HTTPException(
-            status_code=400,
-            detail="Use a PNG, JPG or WEBP image for the logo.",
-        )
-
-    os.makedirs(LOGO_DIR, exist_ok=True)
-    path = os.path.join(LOGO_DIR, f"brand{ext}")
-
-    with open(path, "wb") as target:
-        shutil.copyfileobj(file.file, target)
-
-    CompanyProfileService.save({"company_logo_path": path}, db)
+    CompanyProfileService.save(
+        {"company_logo_path": _store_image(file, "brand")}, db
+    )
 
     return {
         "success": True,
         "message": "Logo uploaded.",
         "data": CompanyProfileService.as_lists(db),
     }
+
+
+@router.post("/cover")
+def upload_cover(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user=Depends(require_super_admin),
+):
+    """The picture on the proposal cover, under the addresses.
+
+    Optional - without one the cover simply runs without a picture.
+    """
+
+    CompanyProfileService.save(
+        {"company_cover_image": _store_image(file, "cover")}, db
+    )
+
+    return {
+        "success": True,
+        "message": "Cover image uploaded.",
+        "data": CompanyProfileService.as_lists(db),
+    }
+
+
+@router.delete("/cover")
+def remove_cover(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_super_admin),
+):
+    CompanyProfileService.save({"company_cover_image": ""}, db)
+
+    return {
+        "success": True,
+        "message": "Cover image removed.",
+        "data": CompanyProfileService.as_lists(db),
+    }
+
+
+@router.get("/cover/image")
+def get_cover_image(db: Session = Depends(get_db)):
+    """The cover picture, for the preview to show.
+
+    Open like the logo: an <img> tag cannot carry an Authorization header.
+    """
+
+    from fastapi.responses import FileResponse
+
+    configured = CompanyProfileService.raw(db).get("company_cover_image") or ""
+    path = Path(configured) if configured else None
+
+    if path and not path.is_absolute():
+        path = Path(__file__).resolve().parents[2] / configured
+
+    if path is None or not path.exists():
+        raise HTTPException(status_code=404, detail="No cover image set.")
+
+    return FileResponse(str(path))

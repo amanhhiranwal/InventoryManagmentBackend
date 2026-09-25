@@ -29,33 +29,78 @@ class PriceType:
 #: this is the label shown on an approval step.
 FOUNDER = "Founder"
 
-#: Discount bands as (upper bound %, role that carries up to it). The last
-#: band has no bound - beyond the CEO's 20% only the founder can sign.
-DISCOUNT_BANDS: list[tuple[float | None, str]] = [
+#: Where the bands start before anyone has set them on the Masters screen.
+#: The last has no bound - past the CEO's ceiling only the founder can sign.
+DEFAULT_DISCOUNT_BANDS: list[tuple[float | None, str]] = [
     (15.0, "AVP"),
     (20.0, "CEO"),
     (None, FOUNDER),
 ]
 
+#: Kept for anything still importing the old name.
+DISCOUNT_BANDS = DEFAULT_DISCOUNT_BANDS
+
+
+def bands(db=None) -> list[tuple[float | None, str]]:
+    """The bands in force, as a super admin has set them.
+
+    Read from the Quotation Approval screen, falling back to the defaults
+    above, so the ceilings can be changed without a deployment. A bad or
+    missing setting falls back rather than refusing to price anything.
+    """
+
+    if db is None:
+        return DEFAULT_DISCOUNT_BANDS
+
+    try:
+        import json
+
+        from app.models.app_setting import AppSetting
+
+        row = (
+            db.query(AppSetting)
+            .filter(AppSetting.key == "discount_bands")
+            .first()
+        )
+
+        if row is None or not (row.value or "").strip():
+            return DEFAULT_DISCOUNT_BANDS
+
+        stored = json.loads(row.value)
+        parsed: list[tuple[float | None, str]] = []
+
+        for entry in stored:
+            role = str(entry.get("role") or "").strip()
+            bound = entry.get("to_percent")
+
+            if not role:
+                continue
+
+            parsed.append((None if bound is None else float(bound), role))
+
+        return parsed or DEFAULT_DISCOUNT_BANDS
+    except Exception:  # pragma: no cover - never block on a bad setting
+        return DEFAULT_DISCOUNT_BANDS
+
 #: Roles that can apply a discount but never approve their own band.
 APPLIES_ONLY = ("Area Manager", "Zonal Head")
 
 
-def discount_ceiling(role_name: str) -> float | None:
+def discount_ceiling(role_name: str, db=None) -> float | None:
     """The most this role can approve on its own, as a percentage.
 
     ``None`` means no ceiling - the founder signs any figure. It is not
     ``inf``, because this travels out as JSON.
     """
 
-    for bound, role in DISCOUNT_BANDS:
+    for bound, role in bands(db):
         if role == role_name:
             return bound
 
     return 0.0
 
 
-def approval_chain(price_type: str, discount_percent: float) -> list[str]:
+def approval_chain(price_type: str, discount_percent: float, db=None) -> list[str]:
     """The roles that must approve, senior-most last.
 
     An empty list means nothing needs approving: an undiscounted end
@@ -73,7 +118,7 @@ def approval_chain(price_type: str, discount_percent: float) -> list[str]:
 
     chain: list[str] = []
 
-    for bound, role in DISCOUNT_BANDS:
+    for bound, role in bands(db):
         chain.append(role)
 
         if bound is not None and discount <= bound:
@@ -82,10 +127,10 @@ def approval_chain(price_type: str, discount_percent: float) -> list[str]:
     return chain
 
 
-def describe_chain(price_type: str, discount_percent: float) -> str:
+def describe_chain(price_type: str, discount_percent: float, db=None) -> str:
     """One line explaining why these approvals are needed."""
 
-    chain = approval_chain(price_type, discount_percent)
+    chain = approval_chain(price_type, discount_percent, db)
 
     if price_type == PriceType.DP:
         return "Dealer price is a transfer price and is set by the CEO."
@@ -98,7 +143,7 @@ def describe_chain(price_type: str, discount_percent: float) -> str:
     if len(chain) == 1:
         return f"{discount:g}% discount is within the {chain[0]}'s authority."
 
-    ceiling = discount_ceiling(chain[0])
+    ceiling = discount_ceiling(chain[0], db)
 
     return (
         f"{discount:g}% discount is past the {chain[0]}'s {ceiling:g}%, "

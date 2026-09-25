@@ -1,11 +1,19 @@
 """One house style for every message the CRM sends.
 
 A notification about a deal is a business letter, not a debug log. Each
-one carries the company's own header, a short opening line, the facts as a
-labelled table, an action button, and a signature from the person it came
-from rather than "Synergy CRM Portal".
+one carries a header, a short opening line, the facts as a labelled table,
+an action button, and a signature from the person it came from.
 
-The plain-text alternative is built from the same pieces, so a client
+Two kinds of letter, because they go to different people:
+
+- ``internal`` is the portal writing to staff - approvals, assignments.
+  It is headed with the CRM's own name, because branding it as the selling
+  company would be odd on a message nobody outside sees, and misleading
+  where the CRM serves more than one company.
+- ``client`` is the company writing to a customer - a quotation going out.
+  That one carries the company's own name, address and contact.
+
+The plain-text alternative is built from the same pieces, so anyone
 reading in plain text gets the same letter without the styling.
 """
 
@@ -13,6 +21,7 @@ from html import escape
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.services.company_profile_service import CompanyProfileService
 
 NAVY = "#1f477b"
@@ -61,6 +70,7 @@ class EmailLetter:
         self,
         db: Session | None,
         *,
+        audience: str = "internal",
         heading: str,
         greeting: str | None = None,
         paragraphs: list[str] | None = None,
@@ -72,11 +82,24 @@ class EmailLetter:
     ):
         profile = CompanyProfileService.as_lists(db)
 
-        self.company = profile["company_legal_name"] or "Synergy Group"
-        self.website = profile["company_website"]
-        self.phone = profile["company_phone"]
-        self.email = profile["company_email"]
-        self.address = profile["company_address_lines"]
+        if audience == "client":
+            # The company writing to its customer.
+            self.company = profile["company_legal_name"] or "Synergy Group"
+            self.website = profile["company_website"]
+            self.phone = profile["company_phone"]
+            self.email = profile["company_email"]
+            self.address = profile["company_address_lines"]
+        else:
+            # The portal writing to its own staff. Deliberately not the
+            # selling company's branding: this never leaves the business,
+            # and one CRM may serve several companies.
+            self.company = settings.SMTP_FROM_NAME or "Synergy CRM Portal"
+            self.website = None
+            self.phone = None
+            self.email = profile["company_email"]
+            self.address = []
+
+        self.audience = audience
 
         self.heading = heading
         self.greeting = greeting
@@ -90,6 +113,12 @@ class EmailLetter:
         self.sign_name = sign_off_name or profile["signatory_name"] or self.company
         self.sign_title = sign_off_title or (
             profile["signatory_title"] if not sign_off_name else None
+        )
+
+        # On an internal note the signer's own company is not restated -
+        # everyone reading already works there.
+        self.sign_company = (
+            profile["company_legal_name"] if audience == "client" else None
         )
 
     # ------------------------------------------------------------------
@@ -123,7 +152,8 @@ class EmailLetter:
         if self.sign_title:
             lines.append(self.sign_title)
 
-        lines.append(self.company)
+        if self.sign_company:
+            lines.append(self.sign_company)
 
         contact = " | ".join(filter(None, [self.phone, self.email, self.website]))
         if contact:
@@ -194,7 +224,8 @@ class EmailLetter:
         if self.sign_title:
             sign_lines.append(e(self.sign_title))
 
-        sign_lines.append(e(self.company))
+        if self.sign_company:
+            sign_lines.append(e(self.sign_company))
 
         contact = " &nbsp;|&nbsp; ".join(
             e(part) for part in [self.phone, self.email, self.website] if part

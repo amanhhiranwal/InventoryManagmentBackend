@@ -43,6 +43,7 @@ def get_quotation_sender(current_user=Depends(get_current_user)):
 
 @router.get("/brand")
 def get_brand(
+    quotation_id: int | None = None,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -53,13 +54,25 @@ def get_brand(
     """
 
     from app.services.quotation_pdf_service import ABOUT_FALLBACK, QuotationPDFService
+    from app.services.quotation_service import QuotationService
 
-    company = QuotationPDFService.company(db)
+    # With a quotation named, the letterhead is that quotation's selling
+    # company - one installation can run several, and the preview has to
+    # show what the client will actually receive.
+    quotation = (
+        QuotationService.get_by_id(quotation_id, db) if quotation_id else None
+    )
+
+    company = QuotationPDFService.company(db, quotation)
     paragraphs = company["about_paragraphs"] or [ABOUT_FALLBACK]
 
     return {
         "success": True,
-        "data": {**company, "about": paragraphs},
+        "data": {
+            **company,
+            "about": paragraphs,
+            "sender": QuotationPDFService.sender(db, quotation),
+        },
     }
 
 

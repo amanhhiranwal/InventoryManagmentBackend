@@ -64,6 +64,9 @@ class CreateQuotationRequest(BaseModel):
     customer_type_id: Optional[int] = None
     state_id: Optional[int] = None
     assigned_to_id: Optional[str] = None
+    #: Which of our companies is selling, and so whose letterhead the
+    #: proposal carries. Unset falls back to the salesperson's own.
+    company_id: Optional[str] = None
 
 
 class UpdateQuotationRequest(BaseModel):

@@ -115,7 +115,7 @@ class ApprovalService:
         if price_type not in PriceType.ALL:
             raise HTTPException(status_code=400, detail="Unknown price type.")
 
-        chain = approval_chain(price_type, discount_percent)
+        chain = approval_chain(price_type, discount_percent, db)
 
         if not chain:
             return None
@@ -613,7 +613,7 @@ class ApprovalService:
                 paragraphs = [
                     f"{approval.requested_by_name} has raised {label.lower()} "
                     f"{reference} and it is now with you to approve.",
-                    describe_chain(approval.price_type, approval.discount_percent),
+                    describe_chain(approval.price_type, approval.discount_percent, db),
                 ]
                 note = None
                 signed_by = approval.requested_by_name
@@ -638,7 +638,7 @@ class ApprovalService:
                 heading = f"{label} {reference} now needs your approval"
                 paragraphs = [
                     f"{actor} has approved this, and it has come up to you.",
-                    describe_chain(approval.price_type, approval.discount_percent),
+                    describe_chain(approval.price_type, approval.discount_percent, db),
                 ]
                 note = None
                 signed_by = actor
@@ -769,7 +769,7 @@ class ApprovalService:
         )
 
 
-def serialize_approval(approval: SalesApproval) -> dict:
+def serialize_approval(approval: SalesApproval, db=None) -> dict:
     waiting_on = (
         approval.steps[approval.current_step]["role"]
         if approval.status == ApprovalStatus.PENDING and approval.steps
@@ -796,5 +796,5 @@ def serialize_approval(approval: SalesApproval) -> dict:
         "requested_at": approval.requested_at.isoformat() if approval.requested_at else None,
         "decided_at": approval.decided_at.isoformat() if approval.decided_at else None,
         "remarks": approval.remarks,
-        "reason": describe_chain(approval.price_type, approval.discount_percent),
+        "reason": describe_chain(approval.price_type, approval.discount_percent, db),
     }
