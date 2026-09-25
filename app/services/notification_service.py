@@ -21,6 +21,61 @@ MODULE_LINKS = {
 }
 
 
+def notify_users(
+    db: Session,
+    user_ids,
+    *,
+    module: str,
+    entity_id: int,
+    action: str,
+    message: str,
+    link: str | None = None,
+    actor_id=None,
+    actor_name: str | None = None,
+    commit: bool = True,
+) -> None:
+    """Put one notification in front of specific people.
+
+    Used where the recipients are not the record's own creator and
+    assignee - an approval goes to whoever is holding it up, which is
+    decided by the hierarchy rather than by the document.
+
+    A failure here is logged and swallowed: a notification must never stop
+    the action it describes.
+    """
+
+    try:
+        seen: set[str] = set()
+
+        for raw in user_ids or []:
+            user_id = _to_uuid(raw)
+
+            if user_id is None or str(user_id) in seen:
+                continue
+
+            seen.add(str(user_id))
+
+            db.add(
+                Notification(
+                    user_id=user_id,
+                    module=module,
+                    entity_id=entity_id,
+                    action=action,
+                    title=action,
+                    message=message[:1000],
+                    link=link,
+                    actor_id=_to_uuid(actor_id),
+                    actor_name=actor_name,
+                )
+            )
+
+        if commit:
+            db.commit()
+    except Exception:  # noqa: BLE001 - never block the underlying action
+        db.rollback()
+        logger.exception("Could not notify users about %s %s", module, action)
+
+
 def _to_uuid(value) -> UUID | None:
     if value is None or value == "":
         return None

@@ -55,9 +55,6 @@ DEFAULT_MENUS_DATA = [
       # Raised against a confirmed sales order, so whoever can see orders can
       # see their invoices - no separate permission to grant.
       {"title": "Proforma Invoice", "icon": "LuReceiptText", "path": "/sales/proforma-invoices", "permission_key": "order.read", "order_index": 5},
-      # Anyone who can raise a quotation can see the approvals on it; the
-      # page itself only shows what the user is allowed to act on.
-      {"title": "Approvals", "icon": "LuBadgeCheck", "path": "/sales/approvals", "permission_key": "quotation.read", "order_index": 6},
     ]
   },
   {
@@ -98,6 +95,9 @@ DEFAULT_MENUS_DATA = [
       {"title": "Category Group", "icon": "LuLayers", "path": "/category-groups", "permission_key": "category_group.read", "order_index": 5},
       {"title": "Units", "icon": "LuList", "path": "/units", "permission_key": "unit.read", "order_index": 6},
       {"title": "Roles & Access", "icon": "LuShieldCheck", "path": "/rbac", "permission_key": "role.read", "order_index": 7},
+      # Who the proposals and emails come from. Super admin only, like the
+      # rest of Masters - the page refuses anyone else.
+      {"title": "Company Profile", "icon": "LuBuilding2", "path": "/company-profile", "permission_key": "company.read", "order_index": 8},
     ]
   },
   {
