@@ -7,6 +7,7 @@ from app.routes.company import router as company_router
 from app.routes.company_profile import router as company_profile_router
 from app.routes.customer import router as customer_router
 from app.routes.customer_type import router as customer_type_router
+from app.routes.fulfilment import router as fulfilment_router
 from app.routes.inventory import router as inventory_router
 from app.routes.lead import router as lead_router
 from app.routes.lead_source import router as lead_source_router
@@ -41,6 +42,7 @@ async def health():
 
 
 api_router.include_router(approval_router)
+api_router.include_router(fulfilment_router)
 api_router.include_router(company_profile_router)
 api_router.include_router(role_router)
 api_router.include_router(auth_router)

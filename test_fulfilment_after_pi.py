@@ -1,15 +1,17 @@
 """What happens after the proforma invoice, and whose letterhead it goes on.
 
-Two things that were missing once a quotation had been approved:
+Runs a whole order from confirmed to completed: the advance is recorded on
+the invoice, accounts verify it, inventory move it through fulfilment, the
+salesperson signs off the installation, and accounts close it once the
+balance is settled.
 
-  * recording a payment on the proforma invoice did nothing to the sales
-    order - "payment verified" had to be typed a second time, and the
-    advance and balance never reached the order at all;
-  * the letterhead logo was always the group's, whichever of our companies
-    was actually selling.
+Two things this guards in particular:
 
-So this runs a whole order from confirmed to completed through the invoice,
-and checks the brand endpoints follow the selling company.
+  * money landing on the invoice reaches the order - the advance and the
+    balance used never to get there at all - but does *not* move the order
+    by itself, because verifying a payment is the accounts desk's call;
+  * the letterhead follows the selling company rather than always being the
+    group's.
 
 Run seed_sales_team.py first. Everything it creates is removed again.
 
@@ -22,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 
 from seed_sales_team import TEAM_PASSWORD, api, email_for, login, rows
 
-ADMIN = ("syn-crm-9f3a2@mailinator.com", "password123")
+ADMIN = ("superadmin@mailinator.com", "password123")
 TAG = uuid.uuid4().hex[:6]
 
 passed, failed = [], []
@@ -54,6 +56,9 @@ try:
 
     for key in ("avp", "am_north_1"):
         token[key] = login(email_for(key), TEAM_PASSWORD)
+
+    token["accounts"] = login("accounts@mailinator.com", TEAM_PASSWORD)
+    token["inventory"] = login("inventory@mailinator.com", TEAM_PASSWORD)
 
     owner = token["am_north_1"]
     print("Signed in as the super admin and the team.")
@@ -125,9 +130,11 @@ try:
 
     after = order_now()
 
+    # Recording a figure on the invoice is not the same as accounts saying
+    # the money arrived - the order waits for them.
     check(
-        "the order moves itself to Payment Verified",
-        after["status"] == "PAYMENT_VERIFIED",
+        "the order still waits on accounts",
+        after["status"] == "CONFIRMED",
         after["status"],
     )
     check(
@@ -139,6 +146,16 @@ try:
         "so is the balance still owed",
         abs(float(after.get("outstanding_balance") or 0) - (grand_total - advance)) < 1,
         str(after.get("outstanding_balance")),
+    )
+
+    verified = api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
+        "approve": True, "remarks": "Advance seen in the bank.",
+    })
+    check("accounts verify it", verified.status_code == 200, f"{verified.status_code} {verified.text[:160]}")
+    check(
+        "and it moves to Payment Verified",
+        order_now()["status"] == "PAYMENT_VERIFIED",
+        order_now()["status"],
     )
 
     history = rows(api("get", f"/orders/{order['id']}/activities", admin))
@@ -154,8 +171,14 @@ try:
     # ================================================== the rest of the chain
     banner("3. Through to installation")
 
-    for stage in ("PROCUREMENT", "READY", "DISPATCHED", "DELIVERED", "INSTALLED"):
-        r = api("put", f"/orders/{order['id']}/status", owner, json={"status": stage})
+    for stage, who in (
+        ("PROCUREMENT", "inventory"),
+        ("READY", "inventory"),
+        ("DISPATCHED", "inventory"),
+        ("DELIVERED", "inventory"),
+        ("INSTALLED", "am_north_1"),
+    ):
+        r = api("put", f"/orders/{order['id']}/status", token[who], json={"status": stage})
         check(f"the order reaches {stage.lower()}", r.status_code == 200, f"{r.status_code} {r.text[:120]}")
 
     check("it is installed but not closed", order_now()["status"] == "INSTALLED", order_now()["status"])
@@ -168,9 +191,14 @@ try:
     })
     check("the balance is recorded", r.status_code == 200, f"{r.status_code} {r.text[:200]}")
 
+    closed_by = api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
+        "approve": True, "remarks": "Balance settled.",
+    })
+    check("accounts close it out", closed_by.status_code == 200, f"{closed_by.status_code} {closed_by.text[:160]}")
+
     closed = order_now()
 
-    check("the order closes itself", closed["status"] == "COMPLETED", closed["status"])
+    check("the order is completed", closed["status"] == "COMPLETED", closed["status"])
     check(
         "nothing is left outstanding",
         float(closed.get("outstanding_balance") or 0) <= 1,

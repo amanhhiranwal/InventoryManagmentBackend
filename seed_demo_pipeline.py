@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 
 from seed_sales_team import TEAM_PASSWORD, api, email_for, login, rows
 
-ADMIN = ("syn-crm-9f3a2@mailinator.com", "password123")
+ADMIN = ("superadmin@mailinator.com", "password123")
 
 #: owner, customer, contact, unit price, qty, discount %, how far to take it.
 #: "steps" is how many approvals to grant; "reject" rejects at the first.
@@ -72,6 +72,11 @@ def main() -> int:
         for key in ("avp", "ceo", "am_north_1", "am_north_2", "am_south_1")
     }
     token["Founder"] = admin
+
+    # Once an order is approved it belongs to the desks, so the seed has to
+    # sign in as them to push it along - exactly as the team will.
+    token["accounts"] = login("accounts@mailinator.com", TEAM_PASSWORD)
+    token["inventory"] = login("inventory@mailinator.com", TEAM_PASSWORD)
 
     existing = {
         row.get("organization_name")
@@ -306,18 +311,33 @@ def fulfilment(token, admin, companies):
         api("post", f"/proforma-invoices/{invoice['id']}/generate", owner)
 
         if deal["paid"] == "advance":
-            # Recording the advance is what moves the order on - the
-            # status is never typed by hand.
+            # Sales record what came in; accounts are the ones who say it
+            # arrived, which is what releases the order to inventory.
             api("put", f"/proforma-invoices/{invoice['id']}", owner, json={
                 "amount_paid": round(float(invoice["grand_total"]) * 0.3, 2),
             })
 
-        if deal["stage"]:
-            for step in ("PROCUREMENT", "READY", "DISPATCHED", "DELIVERED", "INSTALLED"):
-                api("put", f"/orders/{order['id']}/status", owner, json={"status": step})
+            api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
+                "approve": True,
+                "remarks": "Advance received against the proforma invoice.",
+            })
 
-                if step == deal["stage"]:
-                    break
+        # Inventory walk it the rest of the way; the installation sign-off
+        # is the salesperson's, being the one on site.
+        for step, who in (
+            ("PROCUREMENT", "inventory"),
+            ("READY", "inventory"),
+            ("DISPATCHED", "inventory"),
+            ("DELIVERED", "inventory"),
+            ("INSTALLED", deal["owner"]),
+        ):
+            if not deal["stage"]:
+                break
+
+            api("put", f"/orders/{order['id']}/status", token[who], json={"status": step})
+
+            if step == deal["stage"]:
+                break
 
         final = api("get", f"/orders/{order['id']}", admin).json()["data"]
 
