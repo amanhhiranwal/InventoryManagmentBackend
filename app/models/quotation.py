@@ -134,6 +134,17 @@ class Quotation(Base):
     creator_id = Column(UUID(as_uuid=True), nullable=False)
     assigned_to_id = Column(UUID(as_uuid=True), nullable=True)
 
+    #: Which of our companies is selling. The proposal is branded from this
+    #: company - its name, website and logo - because one installation can
+    #: run several, and a quotation for one must not go out under another's
+    #: letterhead. Unset falls back to the global Company Profile.
+    company_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(
         DateTime,

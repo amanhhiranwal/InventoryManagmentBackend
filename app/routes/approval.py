@@ -1,11 +1,11 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.approvals import (
-    DISCOUNT_BANDS,
+    bands,
     FOUNDER,
     PriceType,
     approval_chain,
@@ -14,8 +14,10 @@ from app.core.approvals import (
 )
 from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
+from app.middleware.permission_middleware import require_super_admin
 from app.models.approval import ApprovalDocument
 from app.services.approval_service import ApprovalService, serialize_approval
+from app.services.company_profile_service import CompanyProfileService
 
 router = APIRouter(
     prefix="/approvals",
@@ -42,14 +44,17 @@ class DecideRequest(BaseModel):
 
 
 @router.get("/matrix")
-def get_matrix(current_user=Depends(get_current_user)):
+def get_matrix(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     """The discount bands, so a form can say who will have to approve."""
 
-    bands = []
+    rows = []
     floor = 0.0
 
-    for bound, role in DISCOUNT_BANDS:
-        bands.append({
+    for bound, role in bands(db):
+        rows.append({
             "role": role,
             "from_percent": floor,
             "to_percent": bound,
@@ -63,7 +68,7 @@ def get_matrix(current_user=Depends(get_current_user)):
     return {
         "success": True,
         "data": {
-            "bands": bands,
+            "bands": rows,
             "founder_role": FOUNDER,
             "price_types": [
                 {"value": PriceType.ECP, "label": "End Customer Price"},
@@ -73,23 +78,100 @@ def get_matrix(current_user=Depends(get_current_user)):
     }
 
 
+class BandRequest(BaseModel):
+    role: str
+    #: None on the last band: past every ceiling, the founder signs.
+    to_percent: Optional[float] = None
+
+
+class MatrixRequest(BaseModel):
+    bands: list[BandRequest]
+
+
+@router.put("/matrix")
+def save_matrix(
+    request: MatrixRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_super_admin),
+):
+    """Set who may approve how much.
+
+    The ceilings have to climb - a CEO who could sign less than an AVP
+    would make the chain nonsense - and the last band must be open, or a
+    big enough discount would have nobody to approve it.
+    """
+
+    import json
+
+    entries = [
+        {"role": band.role.strip(), "to_percent": band.to_percent}
+        for band in request.bands
+        if band.role.strip()
+    ]
+
+    if not entries:
+        raise HTTPException(status_code=400, detail="Add at least one approval band.")
+
+    if entries[-1]["to_percent"] is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "The last band must have no ceiling, or a discount above it "
+                "would have nobody who could approve it."
+            ),
+        )
+
+    previous = 0.0
+
+    for entry in entries[:-1]:
+        ceiling = entry["to_percent"]
+
+        if ceiling is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Set a ceiling for the {entry['role']}.",
+            )
+
+        if ceiling <= previous:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"The {entry['role']}'s ceiling must be above the "
+                    f"{previous:g}% below it."
+                ),
+            )
+
+        previous = ceiling
+
+    CompanyProfileService.save_raw("discount_bands", json.dumps(entries), db)
+
+    return {
+        "success": True,
+        "message": "Approval bands saved. New quotations use them straight away.",
+        "data": get_matrix(db, current_user)["data"],
+    }
+
+
 @router.get("/preview")
 def preview_chain(
     price_type: str = PriceType.ECP,
     discount_percent: float = 0.0,
+    db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """Who would have to approve this, without raising anything."""
 
-    chain = approval_chain(price_type, discount_percent)
+    chain = approval_chain(price_type, discount_percent, db)
 
     return {
         "success": True,
         "data": {
             "chain": chain,
-            "reason": describe_chain(price_type, discount_percent),
+            "reason": describe_chain(price_type, discount_percent, db),
             "needs_approval": bool(chain),
-            "ceilings": {role: discount_ceiling(role) for _, role in DISCOUNT_BANDS},
+            "ceilings": {
+                role: discount_ceiling(role, db) for _, role in bands(db)
+            },
         },
     }
 
@@ -127,7 +209,7 @@ def request_approval(
     return {
         "success": True,
         "message": f"Sent to the {waiting_on} for approval.",
-        "data": serialize_approval(approval),
+        "data": serialize_approval(approval, db),
     }
 
 
@@ -141,7 +223,7 @@ def pending_for_me(
     return {
         "success": True,
         "data": [
-            serialize_approval(a) for a in ApprovalService.waiting_on(current_user, db)
+            serialize_approval(a, db) for a in ApprovalService.waiting_on(current_user, db)
         ],
     }
 
@@ -156,7 +238,7 @@ def list_approvals(
     return {
         "success": True,
         "data": [
-            serialize_approval(a)
+            serialize_approval(a, db)
             for a in ApprovalService.raised_by_team(current_user, db)
         ],
     }
@@ -176,7 +258,7 @@ def approval_for_document(
 
     return {
         "success": True,
-        "data": serialize_approval(approval) if approval else None,
+        "data": serialize_approval(approval, db) if approval else None,
     }
 
 
@@ -202,7 +284,7 @@ def decide(
             if request.approve
             else "Rejected, and the requester has been told."
         ),
-        "data": serialize_approval(approval),
+        "data": serialize_approval(approval, db),
     }
 
 
@@ -217,5 +299,5 @@ def withdraw(
     return {
         "success": True,
         "message": "Approval request withdrawn.",
-        "data": serialize_approval(approval),
+        "data": serialize_approval(approval, db),
     }

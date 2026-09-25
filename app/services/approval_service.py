@@ -18,8 +18,11 @@ from sqlalchemy.orm import Session
 from app.core.approvals import PriceType, approval_chain, describe_chain
 from app.models.approval import ApprovalDocument, ApprovalStatus, SalesApproval
 from app.models.user import User
+from app.core.config import settings
 from app.services.email_service import EmailService
+from app.services.email_templates import EmailLetter, inr
 from app.services.hierarchy_service import HierarchyService
+from app.services.notification_service import notify_users
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,13 @@ DOCUMENT_LINKS = {
     ApprovalDocument.QUOTATION: "/sales/quotations/{id}",
     ApprovalDocument.SALES_ORDER: "/sales/orders/{id}",
 }
+
+def app_url(path: str) -> str:
+    """A path on the CRM as a full link, for a button in an email."""
+
+    base = (settings.FRONTEND_URL or "").rstrip("/")
+    return f"{base}{path}" if base else path
+
 
 DOCUMENT_LABELS = {
     ApprovalDocument.QUOTATION: "Quotation",
@@ -105,7 +115,7 @@ class ApprovalService:
         if price_type not in PriceType.ALL:
             raise HTTPException(status_code=400, detail="Unknown price type.")
 
-        chain = approval_chain(price_type, discount_percent)
+        chain = approval_chain(price_type, discount_percent, db)
 
         if not chain:
             return None
@@ -592,60 +602,111 @@ class ApprovalService:
 
             to, cc = ApprovalService._chain_emails(approval, db)
 
+            if not to and not cc:
+                return
+
             if event == "raised":
                 waiting_on = approval.steps[approval.current_step]["role"]
-                subject = f"Approval needed: {label} {reference}"
-                headline = (
-                    f"{approval.requested_by_name} has sent {label.lower()} "
-                    f"{reference} up for approval, and it is waiting on the "
-                    f"{waiting_on}."
-                )
+                subject = f"Approval needed - {label} {reference}"
+                greeting = f"Dear {waiting_on},"
+                heading = f"{label} {reference} needs your approval"
+                paragraphs = [
+                    f"{approval.requested_by_name} has raised {label.lower()} "
+                    f"{reference} and it is now with you to approve.",
+                    describe_chain(approval.price_type, approval.discount_percent, db),
+                ]
+                note = None
+                signed_by = approval.requested_by_name
             elif event == "approved" and approval.status == ApprovalStatus.APPROVED:
-                subject = f"Approved: {label} {reference}"
-                headline = f"{actor} approved {label.lower()} {reference}. It is now fully approved."
+                subject = f"Approved - {label} {reference}"
+                greeting = f"Dear {approval.requested_by_name},"
+                heading = f"{label} {reference} is fully approved"
+                paragraphs = [
+                    f"{actor} has given the final approval. You can go ahead "
+                    + (
+                        "and send this quotation to the client."
+                        if approval.document_type == ApprovalDocument.QUOTATION
+                        else "and move this order into fulfilment."
+                    ),
+                ]
+                note = None
+                signed_by = actor
             elif event == "approved":
                 waiting_on = approval.steps[approval.current_step]["role"]
-                subject = f"Approval needed: {label} {reference}"
-                headline = (
-                    f"{actor} approved {label.lower()} {reference}. "
-                    f"It now needs the {waiting_on}."
-                )
+                subject = f"Approval needed - {label} {reference}"
+                greeting = f"Dear {waiting_on},"
+                heading = f"{label} {reference} now needs your approval"
+                paragraphs = [
+                    f"{actor} has approved this, and it has come up to you.",
+                    describe_chain(approval.price_type, approval.discount_percent, db),
+                ]
+                note = None
+                signed_by = actor
             else:
-                subject = f"Rejected: {label} {reference}"
-                headline = f"{actor} rejected {label.lower()} {reference}."
+                subject = f"Not approved - {label} {reference}"
+                greeting = f"Dear {approval.requested_by_name},"
+                heading = f"{label} {reference} was not approved"
+                paragraphs = [
+                    f"{actor} has declined this. It has gone back to draft so "
+                    "the pricing can be reworked and raised again.",
+                ]
+                note = None
+                signed_by = actor
 
-            lines = [
-                headline,
-                "",
-                describe_chain(approval.price_type, approval.discount_percent),
+            facts: list[tuple[str, str]] = [
+                (f"{label} No.", reference),
+                ("Raised by", approval.requested_by_name or "-"),
             ]
 
             if approval.document_value:
-                lines.append(f"Order value: INR {approval.document_value:,.2f}")
+                facts.append(("Order value", inr(approval.document_value)))
             if approval.discount_amount:
-                lines.append(
-                    f"Discount: {approval.discount_percent:g}% "
-                    f"(INR {approval.discount_amount:,.2f})"
-                )
+                facts.append((
+                    "Discount",
+                    f"{approval.discount_percent:g}% ({inr(approval.discount_amount)})",
+                ))
             if approval.orc_amount:
-                lines.append(
-                    f"ORC: {float(approval.orc_percent or 0):g}% "
-                    f"(INR {approval.orc_amount:,.2f})"
-                )
+                facts.append((
+                    "ORC",
+                    f"{float(approval.orc_percent or 0):g}% ({inr(approval.orc_amount)})",
+                ))
+            if approval.price_type == PriceType.DP:
+                facts.append(("Price type", "Dealer price (transfer price)"))
             if approval.remarks:
-                lines += ["", f"Remarks: {approval.remarks}"]
+                facts.append(("Remarks", approval.remarks))
 
-            lines += ["", f"Open it: {link}" if link else ""]
+            # Where it has got to, so nobody has to open the CRM to find out.
+            trail = " -> ".join(
+                f"{step['role']}"
+                + (
+                    f" ({step['decision'].title()})"
+                    if step.get("decision")
+                    else " (pending)"
+                )
+                for step in approval.steps
+            )
+            facts.append(("Approval chain", trail))
 
-            body = "\n".join(line for line in lines if line is not None)
+            letter = EmailLetter(
+                db,
+                heading=heading,
+                greeting=greeting,
+                paragraphs=paragraphs,
+                facts=facts,
+                action=(f"Open {label.lower()} {reference}", app_url(link)) if link else None,
+                note=note,
+                sign_off_name=signed_by,
+            )
 
-            if not to and not cc:
-                return
+            ApprovalService._notify_in_app(
+                approval, db, heading=heading, link=link, actor=signed_by
+            )
 
             EmailService.send(
                 to=to or cc,
                 subject=subject,
-                text_body=body,
+                text_body=letter.text(),
+                html_body=letter.html(),
                 cc=cc if to else [],
             )
         except Exception:  # noqa: BLE001 - never block the decision
@@ -656,7 +717,59 @@ class ApprovalService:
             )
 
 
-def serialize_approval(approval: SalesApproval) -> dict:
+    @staticmethod
+    def _notify_in_app(
+        approval: SalesApproval,
+        db: Session,
+        *,
+        heading: str,
+        link: str,
+        actor: str | None,
+    ) -> None:
+        """Ring the bell for the people this concerns.
+
+        Pending goes to whoever is holding it up; a decision goes back to
+        the person who raised it and their managers, so the outcome lands
+        with the people waiting on it rather than only in an inbox.
+        """
+
+        module = (
+            "quotation"
+            if approval.document_type == ApprovalDocument.QUOTATION
+            else "sales_order"
+        )
+
+        if approval.status == ApprovalStatus.PENDING:
+            recipients = [
+                approver.id
+                for approver in ApprovalService.approvers_for_step(approval, db)
+            ]
+            action = "Approval Needed"
+        else:
+            recipients = [approval.requested_by] if approval.requested_by else []
+            recipients += [
+                manager.id
+                for manager in ApprovalService._managers_of(approval.requested_by, db)
+            ]
+            action = (
+                "Approved"
+                if approval.status == ApprovalStatus.APPROVED
+                else "Not Approved"
+            )
+
+        notify_users(
+            db,
+            recipients,
+            module=module,
+            entity_id=approval.document_id,
+            action=action,
+            message=heading,
+            link=link or None,
+            actor_name=actor,
+        )
+
+
+def serialize_approval(approval: SalesApproval, db=None) -> dict:
     waiting_on = (
         approval.steps[approval.current_step]["role"]
         if approval.status == ApprovalStatus.PENDING and approval.steps
@@ -683,5 +796,5 @@ def serialize_approval(approval: SalesApproval) -> dict:
         "requested_at": approval.requested_at.isoformat() if approval.requested_at else None,
         "decided_at": approval.decided_at.isoformat() if approval.decided_at else None,
         "remarks": approval.remarks,
-        "reason": describe_chain(approval.price_type, approval.discount_percent),
+        "reason": describe_chain(approval.price_type, approval.discount_percent, db),
     }

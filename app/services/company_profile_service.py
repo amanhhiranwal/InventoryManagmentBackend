@@ -76,6 +76,23 @@ class CompanyProfileService:
         return CompanyProfileService.raw(db)
 
     @staticmethod
+    def save_raw(key: str, value: str, db: Session) -> None:
+        """Store one setting that is not part of the company profile.
+
+        The approval bands live here too: it is the same table, and they
+        are set on the same kind of Masters screen.
+        """
+
+        row = db.query(AppSetting).filter(AppSetting.key == key).first()
+
+        if row is None:
+            db.add(AppSetting(key=key, value=value))
+        else:
+            row.value = value
+
+        db.commit()
+
+    @staticmethod
     def as_lists(db: Session | None) -> dict:
         """The profile with the multi-line fields already split."""
 

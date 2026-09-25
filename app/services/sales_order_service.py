@@ -15,6 +15,7 @@ from app.models.sales_order import SalesOrder
 from app.models.sales_order_activity import SalesOrderActivity
 from app.repositories.opportunity_repository import OpportunityRepository
 from app.repositories.sales_order_repository import SalesOrderRepository
+from app.services.fulfilment_notice import announce_stage
 from app.services.lead_service import get_visible_creator_user_ids
 from app.services.notification_service import NotificationService
 
@@ -620,6 +621,16 @@ class SalesOrderService:
         db.refresh(order)
         db.refresh(activity)
 
+        if target and target != current_status:
+            announce_stage(
+                order,
+                db,
+                previous=current_status,
+                actor_name=current_user.get("name") or current_user.get("email"),
+                actor_id=current_user.get("user_id"),
+                remarks=remarks or None,
+            )
+
         return order, activity
 
     @staticmethod
@@ -669,7 +680,19 @@ class SalesOrderService:
                 commit=False,
             )
 
-        return SalesOrderRepository.save(db, order)
+        saved = SalesOrderRepository.save(db, order)
+
+        if target != previous_status:
+            announce_stage(
+                saved,
+                db,
+                previous=previous_status,
+                actor_name=current_user.get("name") or current_user.get("email"),
+                actor_id=current_user.get("user_id"),
+                remarks=getattr(request, "remarks", None),
+            )
+
+        return saved
 
     @staticmethod
     def delete(order_id: int, current_user: dict, db: Session) -> None:

@@ -230,6 +230,7 @@ def serialize_quotation(quotation: Quotation) -> dict:
     return {
         "id": quotation.id,
         "quote_number": quotation.quote_number,
+        "company_id": str(quotation.company_id) if quotation.company_id else None,
         "opportunity_id": quotation.opportunity_id,
         "status": quotation.status,
 
@@ -542,6 +543,33 @@ class QuotationService:
     # Write
     # ------------------------------------------------------------------
     @staticmethod
+    @staticmethod
+    def _selling_company(request, creator_id, db: Session):
+        """Which company this quotation is being sold by.
+
+        The form wins. Otherwise, if the salesperson belongs to exactly one
+        company it is obvious; belonging to several, it is left unset and
+        the proposal falls back to the global Company Profile rather than
+        guessing which letterhead to use.
+        """
+
+        chosen = getattr(request, "company_id", None)
+
+        if chosen:
+            try:
+                return UUID(str(chosen))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid selling company.")
+
+        try:
+            from app.services.company_scope_service import CompanyScopeService
+
+            mine = CompanyScopeService.assigned_company_ids(str(creator_id), db)
+            return UUID(mine[0]) if len(mine) == 1 else None
+        except Exception:  # pragma: no cover - branding falls back
+            return None
+
+    @staticmethod
     def create(
         request,
         creator_id: UUID,
@@ -641,6 +669,10 @@ class QuotationService:
                 if request.assigned_to_id
                 else (opportunity.assigned_to_id if opportunity else None)
             ),
+            # Which of our companies is selling, so the proposal goes out
+            # under the right letterhead. Taken from the form, or from the
+            # only company the salesperson belongs to.
+            company_id=QuotationService._selling_company(request, creator_id, db),
             **totals,
         )
 
@@ -729,6 +761,13 @@ class QuotationService:
         if request.assigned_to_id is not None:
             quotation.assigned_to_id = (
                 UUID(request.assigned_to_id) if request.assigned_to_id else None
+            )
+
+        # The letterhead can still be switched while the quotation is a
+        # draft - nothing has gone to the client yet.
+        if getattr(request, "company_id", None) is not None:
+            quotation.company_id = QuotationService._selling_company(
+                request, quotation.creator_id, db
             )
 
         if request.items is not None:

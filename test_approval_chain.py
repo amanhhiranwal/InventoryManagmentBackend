@@ -353,6 +353,20 @@ finally:
 
         if created_approvals:
             run("delete from sales_approval where id = any(:ids)", ids=created_approvals)
+        # The bell rings for every step, so those rows go too - otherwise a
+        # test run leaves stale approvals in real people's notifications.
+        if created_quotations:
+            run(
+                "delete from notifications where module = 'quotation'"
+                " and entity_id = any(:ids)",
+                ids=created_quotations,
+            )
+        if created_orders:
+            run(
+                "delete from notifications where module = 'sales_order'"
+                " and entity_id = any(:ids)",
+                ids=created_orders,
+            )
         if created_quotations:
             run("delete from sales_quotation_activity where quotation_id = any(:ids)", ids=created_quotations)
             run("delete from sales_quotation where id = any(:ids)", ids=created_quotations)

@@ -210,29 +210,132 @@ def _styles() -> dict:
 class QuotationPDFService:
 
     @staticmethod
-    def company(db=None) -> dict:
+    def company(db=None, quotation=None, company_id=None) -> dict:
         """Who the proposal comes from.
 
-        Read from the Company Profile screen, falling back to the
-        environment, so the details can be changed without a deployment.
+        The selling company first: one installation can run several, and a
+        quotation for Unique Event must not go out under Qonevo's website.
+        Anything that company does not carry - the About copy, the range,
+        who signs - falls back to the global Company Profile, and that in
+        turn falls back to the environment.
+
+        ``company_id`` names the seller directly, for a quotation still
+        being typed: the picker has a company but nothing is saved yet, and
+        the preview has to follow the picker.
         """
 
         profile = CompanyProfileService.as_lists(db)
+        seller = QuotationPDFService._seller(db, quotation, company_id)
 
         return {
-            "name": profile["company_legal_name"] or "Synergy Group",
-            "address": profile["company_address_lines"],
-            "gstin": profile["company_gstin"] or None,
-            "website": profile["company_website"] or None,
-            "email": profile["company_email"] or None,
-            "phone": profile["company_phone"] or None,
+            "name": (seller and seller.company_name) or profile["company_legal_name"] or "Synergy Group",
+            "address": (
+                QuotationPDFService._seller_address(seller)
+                or profile["company_address_lines"]
+            ),
+            "gstin": (seller and seller.gst_number) or profile["company_gstin"] or None,
+            "website": (seller and seller.website) or profile["company_website"] or None,
+            "email": (seller and seller.email) or profile["company_email"] or None,
+            "phone": (seller and seller.phone_number) or profile["company_phone"] or None,
             "signatory": profile["signatory_name"] or None,
             "signatory_title": profile["signatory_title"] or None,
             "offerings": profile["company_offering_list"],
             "about_paragraphs": profile["company_about_paragraphs"],
-            "logo_path": profile["company_logo_path"],
+            "logo_path": (
+                QuotationPDFService._seller_logo(seller) or profile["company_logo_path"]
+            ),
             "cover_image": profile["company_cover_image"],
         }
+
+    @staticmethod
+    def sender(db, quotation) -> dict | None:
+        """The person sending the quotation.
+
+        Submitted By names them rather than the company's standing
+        signatory - a client should see who they have been dealing with,
+        and a proposal signed by someone they have never spoken to reads
+        as a form letter. The assignee first, then whoever raised it.
+        """
+
+        if db is None or quotation is None:
+            return None
+
+        for attr in ("assigned_to_id", "creator_id"):
+            user_id = getattr(quotation, attr, None)
+
+            if not user_id:
+                continue
+
+            try:
+                from app.models.user import User
+
+                user = db.query(User).filter(User.id == user_id).first()
+
+                if user is None:
+                    continue
+
+                name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+
+                return {
+                    "name": name or user.email,
+                    "title": (user.roles[0].role_name if user.roles else None),
+                    "email": user.email,
+                    "phone": user.phone_number,
+                }
+            except Exception:  # pragma: no cover - fall back to the profile
+                return None
+
+        return None
+
+    @staticmethod
+    def _seller(db, quotation, company_id=None):
+        """The company selling on this quotation, if one is set."""
+
+        if db is None:
+            return None
+
+        company_id = company_id or getattr(quotation, "company_id", None)
+
+        if not company_id:
+            return None
+
+        try:
+            from app.models.company import Company
+
+            return db.query(Company).filter(Company.id == company_id).first()
+        except Exception:  # pragma: no cover - fall back to the profile
+            return None
+
+    @staticmethod
+    def _seller_address(seller) -> list[str]:
+        if seller is None:
+            return []
+
+        parts = [
+            seller.address_line_1,
+            seller.address_line_2,
+            seller.city,
+            seller.state,
+            seller.postal_code,
+            seller.country,
+        ]
+        return [str(part).strip() for part in parts if str(part or "").strip()]
+
+    @staticmethod
+    def _seller_logo(seller) -> str:
+        """The company's own logo, as a path this process can open.
+
+        Stored as a URL on the company record; only the part under uploads/
+        is any use here.
+        """
+
+        url = (getattr(seller, "logo_url", None) or "").strip() if seller else ""
+
+        if not url:
+            return ""
+
+        marker = "/uploads/"
+        return "uploads/" + url.split(marker, 1)[1] if marker in url else ""
 
     @staticmethod
     def filename(quotation) -> str:
@@ -309,7 +412,7 @@ class QuotationPDFService:
     # Sections
     # ------------------------------------------------------------------
     @staticmethod
-    def _cover(quotation, company, s) -> list:
+    def _cover(quotation, company, sender, s) -> list:
         headline = (
             quotation.opportunity_name
             or (quotation.items or [{}])[0].get("product")
@@ -319,11 +422,20 @@ class QuotationPDFService:
         submitted_to = [quotation.organization_name or quotation.contact_name or "-"]
         submitted_to += _address_lines(quotation.billing_address)
 
-        submitted_by = [company["signatory"] or company["name"]]
-        if company["signatory"]:
-            if company["signatory_title"]:
-                submitted_by.append(company["signatory_title"])
+        if sender:
+            submitted_by = [sender["name"]]
+            if sender["title"]:
+                submitted_by.append(sender["title"])
             submitted_by.append(company["name"])
+            submitted_by += [
+                line for line in (sender["email"], sender["phone"]) if line
+            ]
+        else:
+            submitted_by = [company["signatory"] or company["name"]]
+            if company["signatory"]:
+                if company["signatory_title"]:
+                    submitted_by.append(company["signatory_title"])
+                submitted_by.append(company["name"])
 
         block = Table(
             [[
@@ -654,15 +766,33 @@ class QuotationPDFService:
         return flow
 
     @staticmethod
-    def _signature(company, s) -> list:
+    def _signature(company, sender, s) -> list:
+        """Signed by whoever is sending it, over the company's details."""
+
         block = [Paragraph("Best Regards", s["sign"])]
 
-        if company["signatory"]:
-            block.append(Paragraph(company["signatory"], s["sign"]))
-        if company["signatory_title"]:
-            block.append(Paragraph(company["signatory_title"], s["sign"]))
+        name = (sender and sender["name"]) or company["signatory"]
+        title = (sender and sender["title"]) or company["signatory_title"]
+
+        if name:
+            block.append(Paragraph(name, s["sign"]))
+        if title:
+            block.append(Paragraph(title, s["sign"]))
 
         block.append(Paragraph(company["name"], s["sign"]))
+
+        contact = [
+            line
+            for line in (
+                (sender and sender["phone"]) or company["phone"],
+                (sender and sender["email"]) or company["email"],
+                company["website"],
+            )
+            if line
+        ]
+
+        if contact:
+            block.append(Paragraph(" | ".join(contact), s["small"]))
 
         for line in company["address"][:2]:
             block.append(Paragraph(line, s["small"]))
@@ -679,7 +809,8 @@ class QuotationPDFService:
     def render(quotation, db=None) -> bytes:
         """The whole proposal as PDF bytes."""
 
-        company = QuotationPDFService.company(db)
+        company = QuotationPDFService.company(db, quotation)
+        sender = QuotationPDFService.sender(db, quotation)
         s = _styles()
         buffer = BytesIO()
 
@@ -720,12 +851,12 @@ class QuotationPDFService:
         ])
 
         story = [
-            *QuotationPDFService._cover(quotation, company, s),
+            *QuotationPDFService._cover(quotation, company, sender, s),
             *QuotationPDFService._about(quotation, company, s),
             *QuotationPDFService._offer(quotation, s),
             *QuotationPDFService._totals(quotation, s),
             *QuotationPDFService._terms(quotation, s),
-            *QuotationPDFService._signature(company, s),
+            *QuotationPDFService._signature(company, sender, s),
         ]
 
         document.build(story)
