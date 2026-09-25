@@ -15,13 +15,21 @@ from app.models.sales_order import SalesOrder
 from app.models.sales_order_activity import SalesOrderActivity
 from app.repositories.opportunity_repository import OpportunityRepository
 from app.repositories.sales_order_repository import SalesOrderRepository
+from app.services.fulfilment_notice import announce_stage
 from app.services.lead_service import get_visible_creator_user_ids
 from app.services.notification_service import NotificationService
 
 #: Headline written onto the activity entry when an order reaches a status.
 SALES_ORDER_STATUS_ACTIONS: dict[str, str] = {
     SalesOrderStatus.DRAFT: "Sales Order Created",
-    SalesOrderStatus.CONFIRMED: "Sent For Approval",
+    SalesOrderStatus.PENDING_APPROVAL: "Sent For Approval",
+    SalesOrderStatus.CONFIRMED: "Order Approved",
+    SalesOrderStatus.PAYMENT_VERIFIED: "Payment Verified",
+    SalesOrderStatus.PROCUREMENT: "With Inventory / Procurement",
+    SalesOrderStatus.READY: "Ready To Dispatch",
+    SalesOrderStatus.DISPATCHED: "Order Dispatched",
+    SalesOrderStatus.DELIVERED: "Order Delivered",
+    SalesOrderStatus.INSTALLED: "Installation Completed",
     SalesOrderStatus.ON_HOLD: "Order Put On Hold",
     SalesOrderStatus.RELEASED: "Order Released",
     SalesOrderStatus.COMPLETED: "Order Completed",
@@ -152,10 +160,14 @@ def compute_order_totals(
     freight_charges = _as_float(freight_charges)
     installation_lumpsum = _as_float(installation_lumpsum)
 
+    # The order is where the margin given away actually lands: the
+    # discount and the ORC both come off, then delivery and installation
+    # are added back. The ORC was being added rather than subtracted, which
+    # made every order carrying one look larger than it was.
     taxable_amount = (
         subtotal
         - discount_amount
-        + orc_amount
+        - orc_amount
         + freight_charges
         + installation_lumpsum
     )
@@ -609,6 +621,16 @@ class SalesOrderService:
         db.refresh(order)
         db.refresh(activity)
 
+        if target and target != current_status:
+            announce_stage(
+                order,
+                db,
+                previous=current_status,
+                actor_name=current_user.get("name") or current_user.get("email"),
+                actor_id=current_user.get("user_id"),
+                remarks=remarks or None,
+            )
+
         return order, activity
 
     @staticmethod
@@ -658,7 +680,19 @@ class SalesOrderService:
                 commit=False,
             )
 
-        return SalesOrderRepository.save(db, order)
+        saved = SalesOrderRepository.save(db, order)
+
+        if target != previous_status:
+            announce_stage(
+                saved,
+                db,
+                previous=previous_status,
+                actor_name=current_user.get("name") or current_user.get("email"),
+                actor_id=current_user.get("user_id"),
+                remarks=getattr(request, "remarks", None),
+            )
+
+        return saved
 
     @staticmethod
     def delete(order_id: int, current_user: dict, db: Session) -> None:

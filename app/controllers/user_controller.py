@@ -39,6 +39,9 @@ class UserController:
             "employee_id": user.employee_id,
             "role_id": role_ids[0] if role_ids else "",
             "role_ids": role_ids,
+            # Named as well as identified, so a picker can show "Priya (Zonal
+            # Head)" without loading the roles master first.
+            "role_names": [r.role_name for r in user.roles],
             "company_ids": company_ids,
             "permissions": permissions,
             "is_super_admin": user.is_super_admin,

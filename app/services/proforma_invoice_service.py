@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta
 from uuid import UUID
 
@@ -25,6 +26,8 @@ from app.services.sales_order_service import (
 )
 from app.services.notification_service import NotificationService
 
+logger = logging.getLogger(__name__)
+
 #: Headline written onto the activity entry when an invoice reaches a status.
 PROFORMA_INVOICE_STATUS_ACTIONS: dict[str, str] = {
     ProformaInvoiceStatus.DRAFT: "Proforma Invoice Drafted",
@@ -45,23 +48,26 @@ INVOICEABLE_ORDER_STATUSES = {
 #: Days between issue and due date when the form does not say otherwise.
 DEFAULT_VALIDITY_DAYS = 30
 
-#: What may still change at each status. A draft is fully editable. Once
-#: generated the lines, dates and addresses are fixed but the charges can
-#: still be corrected before it goes out; once sent only the payment
-#: received against it moves.
+#: Everything a draft may change. Generated carries the same set: an
+#: invoice waiting on approval is still ours to correct, and freezing it
+#: the moment it was generated meant cancelling and rebuilding the whole
+#: thing over a wrong quantity.
+_FULLY_EDITABLE = {
+    "issue_date", "due_date", "assigned_to", "billing_address",
+    "shipping_address", "items", "freight_charges",
+    "installation_lumpsum", "gst_percent", "amount_paid",
+    "advance_percent", "commercial_terms", "technical_notes",
+    "attachments",
+}
+
+#: What may still change at each status. Once the invoice has gone to the
+#: customer it is fixed - only the payment received against it moves, and
+#: the advance percentage, which is renegotiated often enough that
+#: cancelling the invoice over it would be absurd.
 EDITABLE_FIELDS: dict[str, set[str]] = {
-    ProformaInvoiceStatus.DRAFT: {
-        "issue_date", "due_date", "assigned_to", "billing_address",
-        "shipping_address", "items", "freight_charges",
-        "installation_lumpsum", "gst_percent", "amount_paid",
-        "advance_percent", "commercial_terms", "technical_notes",
-        "attachments",
-    },
-    ProformaInvoiceStatus.GENERATED: {
-        "freight_charges", "installation_lumpsum", "gst_percent",
-        "amount_paid",
-    },
-    ProformaInvoiceStatus.SENT: {"amount_paid"},
+    ProformaInvoiceStatus.DRAFT: set(_FULLY_EDITABLE),
+    ProformaInvoiceStatus.GENERATED: set(_FULLY_EDITABLE),
+    ProformaInvoiceStatus.SENT: {"amount_paid", "advance_percent"},
     ProformaInvoiceStatus.CANCELLED: set(),
 }
 
@@ -73,7 +79,7 @@ FIELD_LABELS = {
     "shipping_address": "Shipping Address",
     "items": "Products",
     "freight_charges": "Freight Charges",
-    "installation_lumpsum": "Lumpsum (Installation)",
+    "installation_lumpsum": "Installation",
     "gst_percent": "Estimated GST",
     "amount_paid": "Amount Paid",
     "advance_percent": "Payment Terms",
@@ -436,7 +442,12 @@ class ProformaInvoiceService:
             for key, value in _totals(invoice).items():
                 setattr(invoice, key, value)
 
-        if "amount_paid" in changes and (invoice.amount_paid or 0.0) != previous_paid:
+        paid_changed = (
+            "amount_paid" in changes
+            and (invoice.amount_paid or 0.0) != previous_paid
+        )
+
+        if paid_changed:
             ProformaInvoiceService.record_activity(
                 db,
                 invoice,
@@ -454,7 +465,109 @@ class ProformaInvoiceService:
         db.commit()
         db.refresh(invoice)
 
+        if paid_changed:
+            ProformaInvoiceService._carry_payment_to_order(
+                invoice, current_user, db
+            )
+
         return invoice
+
+    @staticmethod
+    def _carry_payment_to_order(
+        invoice: ProformaInvoice,
+        current_user: dict,
+        db: Session,
+    ) -> None:
+        """Move the sales order on when money lands against its invoice.
+
+        The proforma invoice is how the advance is collected, so recording
+        a payment here is what "payment verified" means on the order - it
+        should not have to be typed twice. Advance and balance are copied
+        onto the order as well, so the fulfilment screens can show what is
+        still owed without opening the invoice.
+
+        An order that is paid in full after installation is closed out.
+        Anything else is left where it is: this only ever moves an order
+        forward one step, never backwards.
+
+        Never allowed to break the payment it is reacting to.
+        """
+
+        if not invoice.sales_order_id:
+            return
+
+        try:
+            from app.models.sales_order import SalesOrder
+            from app.services.fulfilment_notice import announce_stage
+
+            order = (
+                db.query(SalesOrder)
+                .filter(SalesOrder.id == invoice.sales_order_id)
+                .first()
+            )
+
+            if order is None:
+                return
+
+            paid = float(invoice.amount_paid or 0.0)
+            balance = float(invoice.balance_due or 0.0)
+
+            order.advance_received = paid
+            order.outstanding_balance = balance
+
+            previous = order.status
+            target = None
+
+            if paid > 0 and previous == SalesOrderStatus.CONFIRMED:
+                target = SalesOrderStatus.PAYMENT_VERIFIED
+            elif balance <= 0 and previous == SalesOrderStatus.INSTALLED:
+                target = SalesOrderStatus.COMPLETED
+
+            if target:
+                order.status = target
+
+                SalesOrderService.record_activity(
+                    db,
+                    order,
+                    action=(
+                        "Payment Verified"
+                        if target == SalesOrderStatus.PAYMENT_VERIFIED
+                        else "Order Completed"
+                    ),
+                    description=(
+                        f"{format_inr(paid)} received against proforma invoice "
+                        f"{invoice.pi_number or invoice.id}. Balance "
+                        f"{format_inr(balance)}."
+                    ),
+                    from_status=previous,
+                    to_status=target,
+                    user_id=current_user.get("user_id"),
+                    commit=False,
+                )
+
+            db.add(order)
+            db.commit()
+            db.refresh(order)
+
+            if target:
+                announce_stage(
+                    order,
+                    db,
+                    previous=previous,
+                    actor_name=current_user.get("name") or current_user.get("email"),
+                    actor_id=current_user.get("user_id"),
+                    remarks=(
+                        f"{format_inr(paid)} received against "
+                        f"{invoice.pi_number or 'the proforma invoice'}."
+                    ),
+                )
+        except Exception:  # noqa: BLE001 - the payment itself already stands
+            db.rollback()
+            logger.exception(
+                "Payment on proforma invoice %s could not be carried to its "
+                "sales order",
+                invoice.id,
+            )
 
     @staticmethod
     def _move(
