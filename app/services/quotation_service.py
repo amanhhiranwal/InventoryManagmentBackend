@@ -1108,6 +1108,88 @@ class QuotationService:
             "</div>"
         )
 
+    @staticmethod
+    def delete(quotation_id: int, current_user: dict, db: Session) -> None:
+        """Remove a quotation and its activity trail.
+
+        Refused once a sales order has been raised from it: the order
+        needs the quotation it was priced from, and an order whose
+        quotation has vanished cannot be explained to anybody later. A
+        quotation that came to nothing is marked Rejected or left to
+        expire, which is what the status field is for.
+
+        Refused too while a discount request is still with an approver -
+        withdrawing the quotation underneath them would leave the request
+        pointing at nothing for the AVP or the CEO to decide on.
+        """
+
+        quotation = QuotationService.get_by_id(quotation_id, db)
+
+        QuotationService.assert_can_modify(quotation, current_user, db)
+
+        from app.models.approval import (
+            ApprovalDocument,
+            ApprovalStatus,
+            SalesApproval,
+        )
+        from app.models.sales_order import SalesOrder
+
+        order = (
+            db.query(SalesOrder)
+            .filter(SalesOrder.quotation_id == str(quotation.id))
+            .first()
+        )
+
+        if order is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Sales order {order.order_number or order.id} was raised from "
+                    "this quotation. It cannot be deleted while that order exists."
+                ),
+            )
+
+        pending = (
+            db.query(SalesApproval)
+            .filter(
+                SalesApproval.document_type == ApprovalDocument.QUOTATION,
+                SalesApproval.document_id == quotation.id,
+                SalesApproval.status == ApprovalStatus.PENDING,
+            )
+            .first()
+        )
+
+        if pending is not None:
+            steps = pending.steps or []
+            waiting_on = (
+                steps[pending.current_step].get("role")
+                if pending.current_step < len(steps)
+                else None
+            )
+
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "A discount on this quotation is still waiting on the "
+                    f"{waiting_on or 'approver'}. Withdraw the approval request "
+                    "first."
+                ),
+            )
+
+        db.query(QuotationActivity).filter(
+            QuotationActivity.quotation_id == quotation.id
+        ).delete(synchronize_session=False)
+
+        db.query(SalesApproval).filter(
+            SalesApproval.document_type == ApprovalDocument.QUOTATION,
+            SalesApproval.document_id == quotation.id,
+        ).delete(synchronize_session=False)
+
+        NotificationService.delete_for_entity(db, "quotation", quotation.id)
+
+        db.delete(quotation)
+        db.commit()
+
 
 def format_inr(amount: float | None) -> str:
     """Format in the Indian grouping used across the UI, e.g. 57,61,940."""

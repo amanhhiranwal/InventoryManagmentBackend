@@ -419,3 +419,19 @@ def convert_lead_to_opportunity(
         current_user,
         db,
     )
+
+
+@router.delete("/{lead_id}")
+def delete_lead(
+    lead_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Remove a lead, once it has not become an opportunity."""
+
+    LeadService.delete_lead(lead_id, current_user, db)
+
+    return {
+        "success": True,
+        "message": "Lead deleted successfully.",
+    }

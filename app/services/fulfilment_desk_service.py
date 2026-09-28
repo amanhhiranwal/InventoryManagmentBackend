@@ -75,6 +75,30 @@ class FulfilmentDeskService:
         )
 
     @staticmethod
+    def assert_can_view(order: SalesOrder, current_user: dict, db: Session) -> None:
+        """Whether this user may read the order on a desk screen.
+
+        Reading is not moving. A desk person's queue already puts every
+        order in the business at their stages in front of them, so the only
+        thing this adds is being able to open one that has since moved on -
+        which is when it is asked about, because that is when the customer
+        rings up querying a delivery. Everyone else falls back to the
+        ordinary rule: the reporting line.
+        """
+
+        if current_user.get("is_super_admin"):
+            return
+
+        user = _user(current_user, db)
+
+        if any(holds_desk(user, role) for role in (ACCOUNTS, INVENTORY)):
+            return
+
+        from app.services.sales_order_service import SalesOrderService
+
+        SalesOrderService.assert_can_edit(order, current_user, db)
+
+    @staticmethod
     def can_decide(order: SalesOrder, current_user: dict, db: Session) -> bool:
         """Whether this user is the one the order is waiting on."""
 

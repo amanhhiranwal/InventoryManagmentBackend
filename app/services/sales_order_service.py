@@ -560,6 +560,8 @@ class SalesOrderService:
         order_id: int,
         current_user: dict,
         db: Session,
+        *,
+        access_checked: bool = False,
     ) -> list[dict]:
         """The order's history, newest first, with the originating
         opportunity's entries merged in.
@@ -568,11 +570,17 @@ class SalesOrderService:
         demo happened, a proposal went out, the order was created - so the
         opportunity's half is merged on read rather than copied at creation,
         which would go stale the moment the opportunity moved on.
+
+        ``access_checked`` is for a caller that has already decided the
+        reader may see this order on its own terms - the desk screens, where
+        an accounts or inventory person may read an order the reporting line
+        would refuse them. Everyone else falls through to the reporting rule.
         """
 
         order = SalesOrderService.get_by_id(order_id, db)
 
-        SalesOrderService.assert_can_edit(order, current_user, db)
+        if not access_checked:
+            SalesOrderService.assert_can_edit(order, current_user, db)
 
         rows: list[dict] = [
             {

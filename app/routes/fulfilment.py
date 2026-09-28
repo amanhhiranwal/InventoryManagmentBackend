@@ -19,6 +19,7 @@ from app.services.sales_order_service import (
     SalesOrderService,
     serialize_sales_order,
 )
+from app.services.stock_movement_service import for_order as stock_movements_for
 
 router = APIRouter(
     prefix="/fulfilment",
@@ -70,16 +71,21 @@ def desk_order(
 
     order = SalesOrderService.get_by_id(order_id, db)
 
-    SalesOrderService.assert_can_edit(order, current_user, db)
+    FulfilmentDeskService.assert_can_view(order, current_user, db)
 
     return {
         "success": True,
         "data": {
             "order": serialize_sales_order(order),
             "stock": FulfilmentDeskService.stock_for(order, db),
+            # What the order actually took off the shelf. The desk queues
+            # carry this too, but an order drops out of them the moment it
+            # moves on - and "what did we issue against this?" is asked
+            # most often afterwards, when the customer queries a delivery.
+            "stock_movements": stock_movements_for(order.id),
             "can_decide": FulfilmentDeskService.can_decide(order, current_user, db),
             "activities": SalesOrderService.get_activities(
-                order_id, current_user, db
+                order_id, current_user, db, access_checked=True
             ),
         },
     }
