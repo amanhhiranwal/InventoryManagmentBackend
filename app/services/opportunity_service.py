@@ -684,6 +684,75 @@ class OpportunityService:
 
         return opportunity
 
+    @staticmethod
+    def delete(opportunity_id: int, current_user: dict, db: Session) -> None:
+        """Remove an opportunity and its activity trail.
+
+        Refused while a quotation or a sales order still points at it: the
+        deal downstream is the record that matters, and orphaning it would
+        break the trail from order back to where the deal came from. Mark
+        the opportunity Lost instead when it simply did not come off.
+
+        The lead it came from is handed back to Qualified, so it does not
+        sit at Converted pointing at an opportunity that is gone.
+        """
+
+        opportunity = OpportunityService.get_by_id(opportunity_id, db)
+
+        OpportunityService.assert_can_edit(opportunity, current_user, db)
+
+        from app.models.quotation import Quotation
+        from app.models.sales_order import SalesOrder
+
+        quotation = (
+            db.query(Quotation)
+            .filter(Quotation.opportunity_id == opportunity.id)
+            .first()
+        )
+
+        if quotation is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Quotation {quotation.quote_number or quotation.id} was "
+                    "raised on this opportunity. Delete that first, or mark the "
+                    "opportunity Lost instead."
+                ),
+            )
+
+        order = (
+            db.query(SalesOrder)
+            .filter(SalesOrder.opportunity_id == opportunity.id)
+            .first()
+        )
+
+        if order is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Sales order {order.order_number or order.id} came from this "
+                    "opportunity. It cannot be deleted while that order exists."
+                ),
+            )
+
+        if opportunity.lead_id:
+            from app.models.lead import Lead
+
+            lead = db.query(Lead).filter(Lead.id == opportunity.lead_id).first()
+
+            if lead is not None and lead.status == LeadStatus.CONVERTED:
+                lead.status = LeadStatus.QUALIFIED
+                lead.stage = "lead"
+
+        db.query(OpportunityActivity).filter(
+            OpportunityActivity.opportunity_id == opportunity.id
+        ).delete(synchronize_session=False)
+
+        NotificationService.delete_for_entity(db, "opportunity", opportunity.id)
+
+        db.delete(opportunity)
+        db.commit()
+
 
 def serialize_opportunity(opportunity: Opportunity) -> dict:
     """Shape an Opportunity for the API, matching the existing response style."""

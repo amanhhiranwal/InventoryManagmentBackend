@@ -314,6 +314,25 @@ class NotificationService:
 
         return updated
 
+    @staticmethod
+    def delete_for_entity(db: Session, module: str, entity_id: int) -> int:
+        """Drop every bell entry pointing at a record being deleted.
+
+        Without this the notification survives its subject, and clicking
+        it opens a page for something that no longer exists. Not committed
+        here - it runs inside the caller's delete, so the record and its
+        notifications go together or not at all.
+        """
+
+        return (
+            db.query(Notification)
+            .filter(
+                Notification.module == module,
+                Notification.entity_id == entity_id,
+            )
+            .delete(synchronize_session=False)
+        )
+
 
 def serialize_notification(
     notification: Notification,
