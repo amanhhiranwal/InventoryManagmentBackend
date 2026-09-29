@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 
+from app.core.references import highest_issued, next_number
 from app.models.quotation import Quotation
 
 
@@ -43,14 +44,20 @@ class QuotationRepository:
     def next_quote_number(db: Session) -> str:
         """Allocate the next QT-#### reference.
 
-        Derived from the highest existing id rather than a row count so
-        deleting a quotation cannot hand its number to a later one.
+        From a counter that only moves forward. Deriving it from the
+        highest existing id was meant to stop a number being reused, and
+        did not: delete the newest quotation and the highest id falls back
+        with it, so the next one raised takes the same number.
         """
 
-        last = db.query(Quotation).order_by(Quotation.id.desc()).first()
-        next_id = (last.id if last else 0) + 1
-
-        return f"QT-{3000 + next_id}"
+        return "QT-{}".format(
+            3000
+            + next_number(
+                db,
+                "quotation",
+                lambda: highest_issued(db, Quotation.quote_number, offset=3000),
+            )
+        )
 
     @staticmethod
     def get_visible(
