@@ -11,11 +11,13 @@ from app.core.workflow_status import (
     assert_transition,
     normalize_quotation_status,
 )
+from app.models.approval import ApprovalDocument
 from app.models.opportunity_activity import OpportunityActivity
 from app.models.quotation import Quotation
 from app.models.quotation_activity import QuotationActivity
 from app.repositories.opportunity_repository import OpportunityRepository
 from app.repositories.quotation_repository import QuotationRepository
+from app.services.approval_service import ApprovalService
 from app.services.email_service import EmailService
 from app.services.lead_service import get_visible_creator_user_ids
 from app.services.quotation_pdf_service import QuotationPDFService
@@ -864,6 +866,27 @@ class QuotationService:
         )
 
         previous_status = quotation.status
+
+        if (
+            target == QuotationStatus.PENDING_APPROVAL
+            and previous_status != target
+            and ApprovalService.open_for(
+                ApprovalDocument.QUOTATION, quotation.id, db
+            )
+            is None
+        ):
+            # Setting the status by hand parked the quotation where nobody
+            # was looking: it said Pending Approval, and no approver had
+            # been asked for anything, so it waited for ever. The status is
+            # the chain's to set - see ApprovalService._hold_document.
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Nothing has been sent for approval on this quotation. "
+                    "Open it and use Send For Approval, which works out who "
+                    "has to sign for the discount and asks them."
+                ),
+            )
 
         quotation.status = target
 
