@@ -52,6 +52,10 @@ def banner(title):
 
 token = {}
 created_orders = []
+created_invoices = []
+#: serial -> what was on the shelf before this suite touched it. Dispatching
+#: an order really does take stock off, so the run has to put it back.
+stock_before_run: dict[str, float] = {}
 
 try:
     admin = login(*ADMIN)
@@ -67,7 +71,21 @@ try:
     owner = token["am_north_1"]
     now = datetime.now(timezone.utc)
 
-    def raise_order(label, sku="NX-9K-QIFP75-EX", qty=2):
+    def shelf(serial):
+        """What the catalogue says is on the shelf, right now."""
+
+        for row in rows(api("get", "/inventory/items", token["inventory"])):
+            if str(row.get("serial_number") or "").upper() == serial.upper():
+                return float((row.get("attributes") or {}).get("instock") or 0)
+        return None
+
+    def remember_stock(serial):
+        if serial not in stock_before_run:
+            stock_before_run[serial] = shelf(serial)
+
+    def raise_order(label, sku="NX-9K-QIFP75-EX", qty=2, invoiced=True):
+        remember_stock(sku)
+
         created = api("post", "/orders", owner, json={
             "customer_name": f"{label} {TAG}",
             "company_name": "Synergy North Agro",
@@ -87,7 +105,35 @@ try:
 
         api("put", f"/orders/{order['id']}/status", owner, json={"status": "CONFIRMED"})
 
+        if invoiced:
+            invoice_order(order)
+
         return order
+
+    def invoice_order(order, paid=True):
+        """Raise the proforma invoice, and record the advance on it.
+
+        Accounts are asked to confirm the advance *against the invoice*,
+        and are now refused if there is no invoice or nothing has been
+        received - so an order that is meant to get past that desk needs
+        both.
+        """
+
+        raised = api("post", "/proforma-invoices", owner, json={
+            "sales_order_id": order["id"],
+            "status": "DRAFT",
+            "advance_percent": 30,
+        })
+
+        invoice = raised.json()["data"]
+        created_invoices.append(invoice["id"])
+
+        if paid:
+            api("put", f"/proforma-invoices/{invoice['id']}", owner, json={
+                "amount_paid": round(float(invoice["grand_total"]) * 0.3, 2),
+            })
+
+        return invoice
 
     def status_of(order_id):
         return api("get", f"/orders/{order_id}", admin).json()["data"]["status"]
@@ -129,7 +175,10 @@ try:
     # ================================================ the accounts queue
     banner("2. The accounts queue")
 
-    order = raise_order("Desk Test")
+    # Left uninvoiced on purpose: the queue should show the advance as
+    # outstanding, and section 4 uses it to check the desk refuses to
+    # verify money that was never recorded.
+    order = raise_order("Desk Test", invoiced=False)
 
     queue = api("get", "/fulfilment/accounts", token["accounts"]).json()["data"]
     mine = [row for row in queue["orders"] if row["id"] == order["id"]]
@@ -197,7 +246,36 @@ try:
     api("put", f"/orders/{order['id']}/status", admin, json={"status": "CONFIRMED"})
 
     # ================================================== the decision
-    banner("4. Accounts decide")
+    banner("4. Accounts decide - and only on money that exists")
+
+    # An order used to reach the warehouse with nothing recorded against
+    # it at all: the desk asked accounts to confirm the advance "against
+    # the proforma invoice" while never requiring one to exist.
+    nothing = api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
+        "approve": True, "remarks": "Says he has paid.",
+    })
+    check("an order with no proforma invoice cannot be verified", nothing.status_code == 400, f"got {nothing.status_code}")
+    check(
+        "and the refusal says to raise one",
+        "proforma invoice" in nothing.text.lower(),
+        nothing.text[:140],
+    )
+
+    invoice = invoice_order(order, paid=False)
+
+    unpaid = api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
+        "approve": True, "remarks": "Says he has paid.",
+    })
+    check("an invoice with nothing received on it cannot be verified either", unpaid.status_code == 400, f"got {unpaid.status_code}")
+    check(
+        "and the refusal names the invoice",
+        "PI-" in unpaid.text,
+        unpaid.text[:140],
+    )
+
+    api("put", f"/proforma-invoices/{invoice['id']}", owner, json={
+        "amount_paid": round(float(invoice["grand_total"]) * 0.3, 2),
+    })
 
     approved = api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
         "approve": True, "remarks": "Advance received in full.",
@@ -360,12 +438,50 @@ except Exception as exc:  # noqa: BLE001 - the report below still has to print
     print(f"\n  STOPPED  {exc}")
 
 finally:
-    banner("9. Clearing what the test created")
+    banner("9. Clearing what the test created, and putting the stock back")
 
     try:
+        # The shelf first. Dispatching an order really does take stock off
+        # it, so a suite that does not put it back leaves the catalogue
+        # quietly wrong - this one had walked NX-9K-QIFP75-EX down from 12
+        # to 10 over a handful of runs.
+        for serial, was in stock_before_run.items():
+            if was is None:
+                continue
+
+            item = next(
+                (
+                    i for i in rows(api("get", "/inventory/items", admin))
+                    if str(i.get("serial_number") or "").upper() == serial.upper()
+                ),
+                None,
+            )
+
+            if item is None or float((item.get("attributes") or {}).get("instock") or 0) == was:
+                continue
+
+            attributes = dict(item.get("attributes") or {})
+            attributes["instock"] = was
+
+            api("put", f"/inventory/items/{item['_id']}", admin, json={
+                "name": item.get("name"),
+                "serial_number": item.get("serial_number"),
+                "product_type_code": item.get("product_type_code"),
+                "category": item.get("category"),
+                "attributes": attributes,
+                "company_id": item.get("company_id"),
+            })
+            print(f"   {serial} put back to {was:.0f}")
+
         from sqlalchemy import text
 
+        from app.database.mongodb import sync_mongo_db
         from app.database.postgres import SessionLocal
+
+        if created_orders:
+            sync_mongo_db["inventory_movements"].delete_many(
+                {"order_id": {"$in": created_orders}}
+            )
 
         session = SessionLocal()
 
@@ -375,6 +491,11 @@ finally:
             except Exception as exc:
                 session.rollback()
                 print("   could not clear:", str(exc).split("\n")[0][:90])
+
+        if created_invoices:
+            run("delete from notifications where module = 'proforma_invoice' and entity_id = any(:ids)", ids=created_invoices)
+            run("delete from sales_proforma_invoice_activity where proforma_invoice_id = any(:ids)", ids=created_invoices)
+            run("delete from sales_proforma_invoice where id = any(:ids)", ids=created_invoices)
 
         if created_orders:
             # Every stage rings the bell, so those rows go too - otherwise a

@@ -327,7 +327,17 @@ finally:
     try:
         from sqlalchemy import text
 
+        from app.database.mongodb import sync_mongo_db
         from app.database.postgres import SessionLocal
+
+        # This suite orders made-up SKUs, so dispatch finds nothing on the
+        # shelf to take and the catalogue is left alone. The ledger still
+        # gets a line per dispatch, and those point at orders that are
+        # about to go.
+        if created_orders:
+            sync_mongo_db["inventory_movements"].delete_many(
+                {"order_id": {"$in": created_orders}}
+            )
 
         session = SessionLocal()
 
