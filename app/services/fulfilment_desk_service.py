@@ -24,7 +24,7 @@ from app.core.fulfilment import (
     desk_for,
     holds_desk,
 )
-from app.core.workflow_status import SalesOrderStatus
+from app.core.workflow_status import ProformaInvoiceStatus, SalesOrderStatus
 from app.models.proforma_invoice import ProformaInvoice
 from app.models.sales_order import SalesOrder
 from app.models.user import User
@@ -419,6 +419,51 @@ class FulfilmentDeskService:
     # The decision
     # ------------------------------------------------------------------
     @staticmethod
+    def assert_advance_recorded(order: SalesOrder, db: Session) -> None:
+        """Refuse to verify a payment that was never recorded.
+
+        The desk asks accounts to confirm the advance "against the
+        proforma invoice", but nothing required the invoice to exist or
+        the figure on it to be anything at all - so an order could reach
+        the warehouse with no money and no paperwork behind it, which is
+        exactly what happened to SO-00036.
+
+        How much is enough is still the clerk's judgement: a part payment
+        they are willing to accept goes through, and the queue shows them
+        it is short of what was asked. Nothing at all does not.
+        """
+
+        invoice = (
+            db.query(ProformaInvoice)
+            .filter(
+                ProformaInvoice.sales_order_id == order.id,
+                ProformaInvoice.status != ProformaInvoiceStatus.CANCELLED,
+            )
+            .order_by(ProformaInvoice.id.desc())
+            .first()
+        )
+
+        if invoice is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Order {order.order_number} has no proforma invoice. "
+                    "Raise one and record the advance against it before "
+                    "verifying the payment."
+                ),
+            )
+
+        if float(invoice.amount_paid or 0) <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Nothing has been received against {invoice.pi_number}. "
+                    "Record what the customer has paid on the invoice, then "
+                    "verify it here."
+                ),
+            )
+
+    @staticmethod
     def decide(
         order_id: int,
         approve: bool,
@@ -458,6 +503,9 @@ class FulfilmentDeskService:
                 status_code=400,
                 detail="Say why it is being rejected - it goes on hold with the reason.",
             )
+
+        if approve and order.status == SalesOrderStatus.CONFIRMED:
+            FulfilmentDeskService.assert_advance_recorded(order, db)
 
         target = desk.approves_to if approve else SalesOrderStatus.ON_HOLD
         previous = order.status
