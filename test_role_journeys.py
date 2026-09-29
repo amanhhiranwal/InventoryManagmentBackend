@@ -22,6 +22,7 @@ the manual test script:
         dispatch takes every line off the shelf
     12. a record raised in error can be deleted, and one with work built
         on top of it cannot
+    13. a deleted document does not hand its reference to the next one
 
 Run seed_sales_team.py, seed_fulfilment_roles.py, seed_role_access.py and
 seed_product_catalogue.py first. Everything this creates is removed again,
@@ -607,6 +608,21 @@ try:
     created["orders"].append(short_order["id"])
 
     api("put", f"/orders/{short_order['id']}/status", owner, json={"status": "CONFIRMED"})
+
+    # Accounts will not pass an order with nothing recorded against it, so
+    # this one is invoiced and paid like any other before it reaches the
+    # warehouse. The money is section 5's subject; here it is only setup.
+    short_invoice = api("post", "/proforma-invoices", owner, json={
+        "sales_order_id": short_order["id"],
+        "status": "DRAFT",
+        "advance_percent": 30,
+    }).json()["data"]
+    created["invoices"].append(short_invoice["id"])
+
+    api("put", f"/proforma-invoices/{short_invoice['id']}", owner, json={
+        "amount_paid": round(float(short_invoice["grand_total"]) * 0.3, 2),
+    })
+
     api("put", f"/fulfilment/orders/{short_order['id']}/decide", token["accounts"], json={
         "approve": True, "remarks": "Paid up front.",
     })
@@ -769,12 +785,60 @@ try:
             f"got {blocked.status_code} {blocked.text[:140]}",
         )
 
+    # ================================ 13. a reference is never handed out twice
+    banner("13. A deleted document does not hand its number on")
+
+    def raise_throwaway(label):
+        raised = api("post", "/orders", owner, json={
+            "customer_name": f"{label} {TAG}",
+            "company_name": "Synergy North Agro",
+            "state": "Delhi",
+            "order_date": now.isoformat(),
+            "items": [{
+                "product": "Interactive Flat Panel 75in",
+                "sku": "NX-9K-QIFP75-EX",
+                "qty": 1,
+                "rate": 185000,
+                "tax_rate": 18,
+            }],
+        })
+
+        return raised.json()["data"]
+
+    from sqlalchemy import text as _sql
+
+    from app.database.postgres import SessionLocal as _Session
+
+    first = raise_throwaway("Numbering A")
+    check("an order takes the next number", bool(first.get("order_number")), str(first.get("order_number")))
+
+    # Remove it the way a real deletion would, then raise another. The
+    # next number used to be worked out as "the highest row plus one", so
+    # this second order took the first one's reference - and every stock
+    # movement, email and notification naming it meant two different
+    # orders.
+    scrub = _Session()
+    scrub.execute(_sql("delete from sales_order_activity where sales_order_id = :id"), {"id": first["id"]})
+    scrub.execute(_sql("delete from notifications where module = 'sales_order' and entity_id = :id"), {"id": first["id"]})
+    scrub.execute(_sql("delete from sales_order where id = :id"), {"id": first["id"]})
+    scrub.commit()
+    scrub.close()
+
+    second = raise_throwaway("Numbering B")
+    created["orders"].append(second["id"])
+
+    check(
+        "the next one does not reuse it",
+        second.get("order_number") != first.get("order_number"),
+        f"both came out as {first.get('order_number')}",
+    )
+
 except Exception as exc:  # noqa: BLE001 - the report below still has to print
     failed.append(f"{section}: the run stopped - {exc}")
     print(f"\n  STOPPED  {exc}")
 
 finally:
-    banner("12. Clearing up, and putting the stock back")
+    banner("14. Clearing up, and putting the stock back")
 
     try:
         admin = token.get("admin") or login(ADMIN_EMAIL, ADMIN_PASSWORD)

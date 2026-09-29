@@ -7,6 +7,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.references import highest_issued, next_number
 from app.core.workflow_status import (
     PROFORMA_INVOICE_TRANSITIONS,
     ProformaInvoiceStatus,
@@ -267,19 +268,20 @@ class ProformaInvoiceService:
     def next_pi_number(db: Session) -> str:
         """The next PI-XXXXX reference.
 
-        Follows the highest reference issued rather than the row id: ids
-        skip whenever an insert is rolled back, and invoice numbers should
-        run on without gaps.
+        From a counter rather than from the highest reference on the
+        table. Both run on without gaps - the counter is incremented
+        inside this transaction, so an insert that rolls back gives the
+        number back - but only the counter refuses to re-issue the number
+        of an invoice that has since been cancelled and removed.
         """
 
-        highest = 0
-
-        for (reference,) in db.query(ProformaInvoice.pi_number).all():
-            digits = "".join(ch for ch in (reference or "") if ch.isdigit())
-            if digits:
-                highest = max(highest, int(digits))
-
-        return f"PI-{highest + 1:05d}"
+        return "PI-{:05d}".format(
+            next_number(
+                db,
+                "proforma_invoice",
+                lambda: highest_issued(db, ProformaInvoice.pi_number),
+            )
+        )
 
     @staticmethod
     def create(request, current_user: dict, db: Session) -> ProformaInvoice:

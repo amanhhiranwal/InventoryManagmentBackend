@@ -103,6 +103,20 @@ try:
 
     quotation = make_quotation("Banded Discount")
 
+    # Pending Approval is the chain's to set, not a status to type. Marking
+    # it by hand used to park the quotation where nobody was looking: it
+    # read Pending Approval, no approver had been asked for anything, and
+    # it waited for ever.
+    by_hand = api("put", f"/quotations/{quotation['id']}/status", token["am_north_1"], json={
+        "status": "PENDING_APPROVAL",
+    })
+    check("Pending Approval cannot be set by hand", by_hand.status_code == 400, f"got {by_hand.status_code}")
+    check(
+        "and the refusal points at Send For Approval",
+        "send for approval" in by_hand.text.lower(),
+        by_hand.text[:140],
+    )
+
     # The quote itself never carries the discount: 10 x 100,000 stands.
     check(
         "the quote is the list price, with no discount applied",

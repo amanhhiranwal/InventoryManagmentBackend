@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 
+from app.core.references import highest_issued, next_number
 from app.models.sales_order import SalesOrder
 
 
@@ -69,14 +70,18 @@ class SalesOrderRepository:
 
     @staticmethod
     def next_order_number(db: Session) -> str:
-        """Generate the next SO-XXXXX reference."""
+        """Allocate the next SO-XXXXX reference.
 
-        last = (
-            db.query(SalesOrder)
-            .order_by(SalesOrder.id.desc())
-            .first()
+        Taken from a counter that only moves forward. It used to be the
+        highest row plus one, which handed a deleted order's number to the
+        next one raised - SO-00036 had been seven different orders, and
+        every stock movement they made is filed under that one name.
+        """
+
+        return "SO-{:05d}".format(
+            next_number(
+                db,
+                "sales_order",
+                lambda: highest_issued(db, SalesOrder.order_number),
+            )
         )
-
-        next_id = (last.id + 1) if last else 1
-
-        return f"SO-{next_id:05d}"
