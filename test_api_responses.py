@@ -7,7 +7,7 @@ import urllib.request
 try:
     print("Logging in...")
     login_data = json.dumps({
-        "email": "syn-crm-9f3a2@mailinator.com",
+        "email": "superadmin@mailinator.com",
         "password": "password123"
     }).encode("utf-8")
     

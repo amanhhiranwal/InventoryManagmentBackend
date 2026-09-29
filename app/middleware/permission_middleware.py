@@ -21,12 +21,12 @@ ALIAS_MAP = {
     "customer_type.create": {"customer_type.read", "customer_type.view", "customer_type.create", "lead.read", "sales.menu"},
     "customer_type.delete": {"customer_type.delete"},
 
-    "product_type.read": {"product_type.read", "product_type.view", "product_type.create", "lead.read", "sales.menu"},
+    "product_type.read": {"product_type.read", "product_type.view", "product_type.create", "lead.read", "sales.menu", "inventory.read"},
     "product_type.create": {"product_type.read", "product_type.view", "product_type.create", "lead.read", "sales.menu"},
     "product_type.update": {"product_type.update"},
     "product_type.delete": {"product_type.delete"},
 
-    "category_group.read": {"category_group.read", "category_group.view", "category_group.create", "lead.read", "sales.menu"},
+    "category_group.read": {"category_group.read", "category_group.view", "category_group.create", "lead.read", "sales.menu", "inventory.read"},
     "category_group.create": {"category_group.read", "category_group.view", "category_group.create", "lead.read", "sales.menu"},
     "category_group.delete": {"category_group.delete"},
 
@@ -47,7 +47,7 @@ ALIAS_MAP = {
     "order.read": {"order.read", "order.view", "sales.menu"},
     "quotation.read": {"quotation.read", "quotation.view", "sales.menu"},
     "inventory.read": {"inventory.read", "inventory.view", "lead.read", "lead.create", "sales.menu"},
-    "unit.read": {"unit.read", "unit.view", "lead.read", "sales.menu"},
+    "unit.read": {"unit.read", "unit.view", "lead.read", "sales.menu", "inventory.read"},
     "customer.read": {"customer.read", "customer.view", "sales.menu"},
 }
 

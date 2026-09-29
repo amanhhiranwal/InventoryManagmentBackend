@@ -233,3 +233,21 @@ def send_quotation(
     """Email the quotation to the client and move it to SENT."""
 
     return QuotationController.send(quotation_id, request, current_user, db)
+
+
+@router.delete("/{quotation_id}")
+def delete_quotation(
+    quotation_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Remove a quotation, once nothing downstream depends on it."""
+
+    from app.services.quotation_service import QuotationService
+
+    QuotationService.delete(quotation_id, current_user, db)
+
+    return {
+        "success": True,
+        "message": "Quotation deleted successfully.",
+    }

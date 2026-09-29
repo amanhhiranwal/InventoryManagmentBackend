@@ -26,7 +26,14 @@ import sys
 import requests
 
 BASE = "http://localhost:8000/api/v1"
-ADMIN_EMAIL = "syn-crm-9f3a2@mailinator.com"
+
+#: Every demo account is the role's own name in front of one domain -
+#: ceo@, avp@, accounts@ - so the team can type them from memory.
+#: Mailinator inboxes are public, so nothing confidential should ever be
+#: addressed to one of these.
+MAIL_DOMAIN = "mailinator.com"
+
+ADMIN_EMAIL = f"superadmin@{MAIL_DOMAIN}"
 ADMIN_PASSWORD = "password123"
 
 #: Everyone seeded here shares one password, so the team can be tried out
@@ -91,7 +98,9 @@ def rows(response):
 
 
 def email_for(key):
-    return f"{key.replace('_', '.')}@synergy-demo.mailinator.com"
+    """The address for a seeded role: am_north_1 -> am.north.1@..."""
+
+    return f"{key.replace('_', '.')}@{MAIL_DOMAIN}"
 
 
 def seed(token) -> dict:

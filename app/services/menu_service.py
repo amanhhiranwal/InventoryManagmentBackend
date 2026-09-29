@@ -13,11 +13,31 @@ RENAMED_DEFAULT_TITLES = {
   "Sales Orders": "Sales Order",
 }
 
-#: Top-level menus the design moved: title -> (old default, new default).
-#: A row still at its old default is moved; one the user reordered is not.
+#: Renames that would be ambiguous on the title alone, so the path decides.
+#: "Accounts" used to mean the user directory, which reads as the finance
+#: team now that there is an accounts desk - so the directory becomes
+#: "Users" and the name is freed up for the desk.
+RENAMED_BY_PATH = {
+  ("Accounts", "/users"): "Users",
+}
+
+#: Default menus withdrawn before anyone could have arranged them. The row
+#: and its children go; one the user has since renamed is left alone.
+#: "Fulfilment" grouped the two desks together, which put the accounts team
+#: and the warehouse behind the same heading - they are separate teams and
+#: now have separate menus. "Order Tracking" was a second answer to a
+#: question the sales order's own Order Process panel already answers.
+RETIRED_DEFAULT_MENUS = {"Fulfilment", "Order Tracking"}
+
+#: Top-level menus the design moved: title -> (old defaults, new default).
+#: A row still at one of its old defaults is moved; one the user reordered
+#: is not. Several carry more than one old position, having moved once for
+#: the design and again to make room for the desks.
 MOVED_DEFAULT_ORDER = {
-  "Customers": (2, 6),
-  "Reports": (6, 7),
+  "Customers": ((2,), 6),
+  "Reports": ((6, 7, 8), 10),
+  "Masters": ((8, 9), 11),
+  "Workflows": ((9, 10), 12),
 }
 
 #: Set once the default menus have been checked in this process.
@@ -58,7 +78,9 @@ DEFAULT_MENUS_DATA = [
     ]
   },
   {
-    "title": "Accounts",
+    # The user directory. Called "Accounts" until the finance team needed
+    # that word for their own desk.
+    "title": "Users",
     "icon": "LuUsers",
     "path": "/users",
     "permission_key": "user.read",
@@ -74,11 +96,35 @@ DEFAULT_MENUS_DATA = [
     "children": []
   },
   {
+    # The finance team's own menu. Separate from procurement on purpose:
+    # they are different people doing different jobs, and an accounts
+    # clerk granted only this permission sees nothing else.
+    "title": "Accounts",
+    "icon": "LuWallet",
+    "path": None,
+    "permission_key": "payment_desk.read",
+    "order_index": 7,
+    "children": [
+      {"title": "Accounts Desk", "icon": "LuWallet", "path": "/fulfilment/accounts", "permission_key": "payment_desk.read", "order_index": 1},
+    ]
+  },
+  {
+    # The warehouse's menu, gated on its own permission.
+    "title": "Procurement",
+    "icon": "LuPackageCheck",
+    "path": None,
+    "permission_key": "procurement_desk.read",
+    "order_index": 8,
+    "children": [
+      {"title": "Procurement Desk", "icon": "LuPackageCheck", "path": "/fulfilment/procurement", "permission_key": "procurement_desk.read", "order_index": 1},
+    ]
+  },
+  {
     "title": "Reports",
     "icon": "LuTrendingUp",
     "path": "/reports",
     "permission_key": "reports.read",
-    "order_index": 7,
+    "order_index": 10,
     "children": []
   },
   {
@@ -86,7 +132,7 @@ DEFAULT_MENUS_DATA = [
     "icon": "LuDatabase",
     "path": None,
     "permission_key": "masters.menu",
-    "order_index": 8,
+    "order_index": 11,
     "children": [
       {"title": "Companies", "icon": "LuBuilding", "path": "/companies", "permission_key": "company.read", "order_index": 1},
       {"title": "Locations", "icon": "LuMapPin", "path": "/locations", "permission_key": "location.read", "order_index": 2},
@@ -107,7 +153,7 @@ DEFAULT_MENUS_DATA = [
     "icon": "LuGitBranch",
     "path": "/workflows",
     "permission_key": "workflow.read",
-    "order_index": 9,
+    "order_index": 12,
     "children": []
   }
 ]
@@ -140,6 +186,55 @@ class MenuService:
                     row.title = new_title
                     changed = True
 
+        # Renames where the title alone is ambiguous, so the path decides.
+        # If the destination already exists at the same path - which happens
+        # when the new default was seeded before this rename shipped - the
+        # old row is a duplicate of it and goes.
+        duplicates: list[MenuItem] = []
+
+        for (old_title, path), new_title in RENAMED_BY_PATH.items():
+            for row in [
+                r for r in rows if r.title == old_title and r.path == path
+            ]:
+                already = any(
+                    other.title == new_title
+                    and other.path == path
+                    and other.parent_id == row.parent_id
+                    and other.id != row.id
+                    for other in rows
+                )
+
+                if already:
+                    duplicates.append(row)
+                else:
+                    row.title = new_title
+
+                changed = True
+
+        # Defaults withdrawn before anyone could have arranged them. Matched
+        # on the title and on the path the default shipped with, so a menu
+        # somebody built themselves is never swept up.
+        retired = duplicates + [
+            row
+            for row in rows
+            if row.parent_id is None
+            and row.title in RETIRED_DEFAULT_MENUS
+            and (row.path or "") in ("", "/fulfilment/tracking")
+        ]
+
+        for row in retired:
+            for child in [r for r in rows if r.parent_id == row.id]:
+                db.delete(child)
+
+            db.delete(row)
+            changed = True
+
+        if retired:
+            gone = {row.id for row in retired}
+            rows = [
+                r for r in rows if r.id not in gone and r.parent_id not in gone
+            ]
+
         # Default positions the design changed (Customers now sits after
         # Inventory). Checked against the old defaults first, so moving one
         # row cannot be mistaken for another row's old position.
@@ -147,8 +242,8 @@ class MenuService:
             (row, new)
             for row in rows
             if row.parent_id is None
-            for title, (old, new) in MOVED_DEFAULT_ORDER.items()
-            if row.title == title and row.order_index == old
+            for title, (olds, new) in MOVED_DEFAULT_ORDER.items()
+            if row.title == title and row.order_index in olds
         ]
         for row, new in moves:
             row.order_index = new

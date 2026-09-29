@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.controllers.opportunity_controller import OpportunityController
 from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
+from app.services.opportunity_service import OpportunityService
 from app.schemas.opportunity import (
     CreateOpportunityRequest,
     LogOpportunityActivityRequest,
@@ -104,3 +105,19 @@ def update_opportunity_status(
         current_user,
         db,
     )
+
+
+@router.delete("/{opportunity_id}")
+def delete_opportunity(
+    opportunity_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Remove an opportunity, once nothing downstream depends on it."""
+
+    OpportunityService.delete(opportunity_id, current_user, db)
+
+    return {
+        "success": True,
+        "message": "Opportunity deleted successfully.",
+    }

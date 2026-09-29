@@ -24,7 +24,7 @@ import requests
 
 from seed_sales_team import BASE, TEAM_PASSWORD, api, email_for, login, rows
 
-ADMIN = ("syn-crm-9f3a2@mailinator.com", "password123")
+ADMIN = ("superadmin@mailinator.com", "password123")
 TAG = uuid.uuid4().hex[:6]
 
 passed, failed = [], []
@@ -113,7 +113,15 @@ try:
     banner("2. Roles & Access")
 
     admin_roles = {r["role_name"] for r in rows(api("get", "/rbac/roles", admin))}
-    check("a super admin sees every role", len(admin_roles) == 5, str(sorted(admin_roles)))
+    check(
+        "a super admin sees every role - the sales chart and both desks",
+        admin_roles
+        >= {
+            "Super Admin", "CEO", "AVP", "Zonal Head", "Area Manager",
+            "Accounts", "Inventory",
+        },
+        str(sorted(admin_roles)),
+    )
 
     zh_roles = rows(api("get", "/rbac/roles", token["zh_north"]))
     check("a Zonal Head sees only the roles below theirs", {r["role_name"] for r in zh_roles} == {"Area Manager"}, str([r["role_name"] for r in zh_roles]))

@@ -478,17 +478,17 @@ class ProformaInvoiceService:
         current_user: dict,
         db: Session,
     ) -> None:
-        """Move the sales order on when money lands against its invoice.
+        """Carry money landing on the invoice across to the sales order.
 
-        The proforma invoice is how the advance is collected, so recording
-        a payment here is what "payment verified" means on the order - it
-        should not have to be typed twice. Advance and balance are copied
-        onto the order as well, so the fulfilment screens can show what is
-        still owed without opening the invoice.
+        The advance and the balance are copied onto the order, so the
+        fulfilment screens can show what is still owed without opening the
+        invoice, and the accounts desk is told there is something to look
+        at.
 
-        An order that is paid in full after installation is closed out.
-        Anything else is left where it is: this only ever moves an order
-        forward one step, never backwards.
+        Deliberately does *not* move the order along. Verifying a payment
+        is the accounts desk's call, made on their own screen with a name
+        against it - a salesperson typing a figure into the invoice is not
+        the same thing as accounts confirming the money arrived.
 
         Never allowed to break the payment it is reacting to.
         """
@@ -498,7 +498,6 @@ class ProformaInvoiceService:
 
         try:
             from app.models.sales_order import SalesOrder
-            from app.services.fulfilment_notice import announce_stage
 
             order = (
                 db.query(SalesOrder)
@@ -515,52 +514,24 @@ class ProformaInvoiceService:
             order.advance_received = paid
             order.outstanding_balance = balance
 
-            previous = order.status
-            target = None
-
-            if paid > 0 and previous == SalesOrderStatus.CONFIRMED:
-                target = SalesOrderStatus.PAYMENT_VERIFIED
-            elif balance <= 0 and previous == SalesOrderStatus.INSTALLED:
-                target = SalesOrderStatus.COMPLETED
-
-            if target:
-                order.status = target
-
-                SalesOrderService.record_activity(
-                    db,
-                    order,
-                    action=(
-                        "Payment Verified"
-                        if target == SalesOrderStatus.PAYMENT_VERIFIED
-                        else "Order Completed"
-                    ),
-                    description=(
-                        f"{format_inr(paid)} received against proforma invoice "
-                        f"{invoice.pi_number or invoice.id}. Balance "
-                        f"{format_inr(balance)}."
-                    ),
-                    from_status=previous,
-                    to_status=target,
-                    user_id=current_user.get("user_id"),
-                    commit=False,
-                )
+            SalesOrderService.record_activity(
+                db,
+                order,
+                action="Payment Received",
+                description=(
+                    f"{format_inr(paid)} received against proforma invoice "
+                    f"{invoice.pi_number or invoice.id}. Balance "
+                    f"{format_inr(balance)}. Waiting on accounts to verify."
+                ),
+                user_id=current_user.get("user_id"),
+                commit=False,
+            )
 
             db.add(order)
             db.commit()
             db.refresh(order)
 
-            if target:
-                announce_stage(
-                    order,
-                    db,
-                    previous=previous,
-                    actor_name=current_user.get("name") or current_user.get("email"),
-                    actor_id=current_user.get("user_id"),
-                    remarks=(
-                        f"{format_inr(paid)} received against "
-                        f"{invoice.pi_number or 'the proforma invoice'}."
-                    ),
-                )
+            ProformaInvoiceService._tell_accounts(order, invoice, paid, db)
         except Exception:  # noqa: BLE001 - the payment itself already stands
             db.rollback()
             logger.exception(
@@ -568,6 +539,38 @@ class ProformaInvoiceService:
                 "sales order",
                 invoice.id,
             )
+
+    @staticmethod
+    def _tell_accounts(order, invoice, paid: float, db: Session) -> None:
+        """Ring the accounts desk when money lands on one of their orders."""
+
+        from app.core.fulfilment import ACCOUNTS, desk_for
+        from app.services.fulfilment_notice import desk_holders
+        from app.services.notification_service import notify_users
+
+        desk = desk_for(order.status)
+
+        if desk is None or desk.role != ACCOUNTS:
+            return
+
+        holders = desk_holders(ACCOUNTS, db)
+
+        if not holders:
+            return
+
+        notify_users(
+            db,
+            [user.id for user in holders],
+            module="sales_order",
+            entity_id=order.id,
+            action="Payment To Verify",
+            message=(
+                f"{order.order_number or order.id} - {format_inr(paid)} "
+                f"received against {invoice.pi_number or 'the proforma invoice'}."
+            ),
+            link="/fulfilment/accounts",
+            commit=True,
+        )
 
     @staticmethod
     def _move(

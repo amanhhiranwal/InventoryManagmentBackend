@@ -38,10 +38,10 @@ def sync_db_and_seed():
     try:
         print("\n--- 2. Checking / Creating Super Admin User ---")
         super_admin = (
-            db.query(User).filter(User.email == "syn-crm-9f3a2@mailinator.com").first()
+            db.query(User).filter(User.email == "superadmin@mailinator.com").first()
         )
         if not super_admin:
-            print("Creating syn-crm-9f3a2@mailinator.com...")
+            print("Creating superadmin@mailinator.com...")
             role = db.query(Role).filter(Role.role_name == "Super Admin").first()
             if not role:
                 role = Role(role_name="Super Admin", description="Super Administrator")
@@ -53,7 +53,7 @@ def sync_db_and_seed():
             super_admin = User(
                 first_name="Super",
                 last_name="Admin",
-                email="syn-crm-9f3a2@mailinator.com",
+                email="superadmin@mailinator.com",
                 password=hashed_pw,
                 employee_id="EMP-SUPERADMIN",
                 is_super_admin=True,

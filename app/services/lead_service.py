@@ -446,3 +446,45 @@ class LeadService:
         db.commit()
         db.refresh(lead)
         return lead
+
+    @staticmethod
+    def delete_lead(lead_id: str, current_user: dict, db: Session) -> None:
+        """Remove a lead, and the activity trail that hangs off it.
+
+        Refused once the lead has become an opportunity: deleting it would
+        leave that opportunity pointing at nothing, and the opportunity is
+        the more valuable record of the two. Close the lead as Lost if it
+        came to nothing - that keeps the history, which is usually what
+        somebody reaching for Delete actually wants.
+        """
+
+        lead = db.query(Lead).filter(Lead.id == int(lead_id)).first()
+
+        if not lead:
+            raise HTTPException(status_code=404, detail="Lead not found")
+
+        LeadService.assert_can_modify_lead(lead, current_user, db)
+
+        from app.models.opportunity import Opportunity
+
+        opportunity = (
+            db.query(Opportunity).filter(Opportunity.lead_id == lead.id).first()
+        )
+
+        if opportunity is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"This lead became opportunity {opportunity.title or opportunity.id}. "
+                    "Delete that first, or mark the lead Lost instead."
+                ),
+            )
+
+        db.query(LeadActivity).filter(LeadActivity.lead_id == lead.id).delete(
+            synchronize_session=False
+        )
+
+        NotificationService.delete_for_entity(db, "lead", lead.id)
+
+        db.delete(lead)
+        db.commit()

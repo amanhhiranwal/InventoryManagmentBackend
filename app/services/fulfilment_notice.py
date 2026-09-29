@@ -15,6 +15,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
+from app.core.fulfilment import ACCOUNTS, INVENTORY, desk_for
 from app.core.workflow_status import SalesOrderStatus
 from app.models.user import User
 from app.services.email_service import EmailService
@@ -23,6 +24,13 @@ from app.services.hierarchy_service import HierarchyService
 from app.services.notification_service import notify_users
 
 logger = logging.getLogger(__name__)
+
+#: Where a desk works, so its notification opens the queue rather than one
+#: order in isolation.
+DESK_LINKS = {
+    ACCOUNTS: "/fulfilment/accounts",
+    INVENTORY: "/fulfilment/procurement",
+}
 
 #: What each stage means to the people reading about it, as a sentence
 #: rather than a status code.
@@ -50,7 +58,10 @@ STAGE_NOTE: dict[str, str] = {
     SalesOrderStatus.COMPLETED: (
         "The order is closed - delivered, installed and paid in full."
     ),
-    SalesOrderStatus.ON_HOLD: "The order has been put on hold.",
+    SalesOrderStatus.ON_HOLD: (
+        "The order has been put on hold and needs a correction before it can "
+        "go any further."
+    ),
     SalesOrderStatus.CANCELLED: "The order has been cancelled.",
 }
 
@@ -62,6 +73,29 @@ def _name(user: User | None) -> str:
     full = f"{user.first_name or ''} {user.last_name or ''}".strip()
 
     return full or (user.email or "Someone")
+
+
+def desk_holders(role: str, db: Session) -> list[User]:
+    """Everyone staffing a desk, so its queue is never a surprise.
+
+    Falls back to the super admins where nobody holds the role, because an
+    order nobody has been told about is an order that stops.
+    """
+
+    holders = [
+        user
+        for user in db.query(User).filter(User.is_active.is_(True)).all()
+        if role in {r.role_name for r in (user.roles or [])}
+    ]
+
+    if holders:
+        return holders
+
+    return (
+        db.query(User)
+        .filter(User.is_super_admin.is_(True), User.is_active.is_(True))
+        .all()
+    )
 
 
 def _line(owner_id: str | None, db: Session) -> tuple[User | None, list[User]]:
@@ -83,6 +117,40 @@ def _line(owner_id: str | None, db: Session) -> tuple[User | None, list[User]]:
     return by_id.get(str(owner_id)), [by_id[uid] for uid in chain if uid in by_id]
 
 
+def record_stage_change(
+    order,
+    db: Session,
+    *,
+    previous: str | None,
+    actor_name: str | None = None,
+    actor_id=None,
+    remarks: str | None = None,
+) -> list[dict]:
+    """Everything that follows an order reaching a new stage.
+
+    The stock moves and the people are told. Kept together because the two
+    must not drift apart - an order that went out without the shelf being
+    counted down is exactly the bug this whole thing exists to stop - and
+    because every path that moves an order should do both.
+    """
+
+    from app.services.stock_movement_service import apply_for_stage
+
+    moved = apply_for_stage(order, previous or "", db, actor=actor_name)
+
+    announce_stage(
+        order,
+        db,
+        previous=previous,
+        actor_name=actor_name,
+        actor_id=actor_id,
+        remarks=remarks,
+        stock_moved=moved,
+    )
+
+    return moved
+
+
 def announce_stage(
     order,
     db: Session,
@@ -91,6 +159,7 @@ def announce_stage(
     actor_name: str | None = None,
     actor_id=None,
     remarks: str | None = None,
+    stock_moved: list[dict] | None = None,
 ) -> None:
     """Write to the reporting line about a sales order's new stage.
 
@@ -130,6 +199,16 @@ def announce_stage(
         if remarks:
             facts.append(("Remarks", remarks))
 
+        # What left the shelf, and what is left on it. Inventory care, and
+        # so does anyone wondering whether the next order can be filled.
+        for line in stock_moved or []:
+            facts.append((
+                ("Issued" if line["direction"] == "OUT" else "Returned")
+                + f" - {line['product']}",
+                f"{line['quantity']:g} of {line['stock_before']:g}, "
+                f"{line['stock_after']:g} left in stock",
+            ))
+
         # The trail so far, so nobody has to open the CRM to see how far
         # along the order is.
         facts.append(("Fulfilment", _strip(stage)))
@@ -165,6 +244,28 @@ def announce_stage(
             actor_name=actor_name,
             commit=True,
         )
+
+        # And whoever the order has just landed on, with a link to their own
+        # desk rather than to the order's page: it is a job, not news.
+        next_desk = desk_for(stage)
+
+        if next_desk is not None:
+            holders = desk_holders(next_desk.role, db)
+
+            notify_users(
+                db,
+                [u.id for u in holders],
+                module="sales_order",
+                entity_id=order.id,
+                action=f"With {next_desk.role}",
+                message=f"{reference} - {next_desk.asks}",
+                link=DESK_LINKS.get(next_desk.role, link),
+                actor_id=actor_id,
+                actor_name=actor_name,
+                commit=True,
+            )
+
+            recipients += [u for u in holders if u not in recipients]
 
         addresses = [u.email for u in recipients if u.email]
 
