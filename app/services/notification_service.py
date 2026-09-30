@@ -108,7 +108,7 @@ def _subject(module: str, record) -> str:
     if module == "quotation":
         name = record.organization_name or record.contact_name or ""
         return " · ".join(
-            part for part in (ref(record.quote_number, f"Quotation #{record.id}"), name) if part
+            part for part in (ref(record.quote_number, f"Proposal #{record.id}"), name) if part
         )
 
     if module == "sales_order":

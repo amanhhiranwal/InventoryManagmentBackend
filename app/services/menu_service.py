@@ -11,6 +11,11 @@ from app.schemas.menu import CreateMenuItemRequest, UpdateMenuItemRequest
 RENAMED_DEFAULT_TITLES = {
   "Oppurtunity": "Opportunity",
   "Sales Orders": "Sales Order",
+  # The document is called a proposal on every screen the design covers.
+  # The record, its route and its QT- reference are unchanged; only what
+  # a person reads has.
+  "Quotation": "Proposal",
+  "Quotation Approval": "Proposal Approval",
 }
 
 #: Renames that would be ambiguous on the title alone, so the path decides.
@@ -70,7 +75,7 @@ DEFAULT_MENUS_DATA = [
     "children": [
       {"title": "Leads", "icon": "LuUser", "path": "/leads", "permission_key": "lead.read", "order_index": 1},
       {"title": "Opportunity", "icon": "LuStar", "path": "/sales/opportunities", "permission_key": "opportunity.read", "order_index": 2},
-      {"title": "Quotation", "icon": "LuQuoteOpen", "path": "/sales/quotations", "permission_key": "quotation.read", "order_index": 3},
+      {"title": "Proposal", "icon": "LuQuoteOpen", "path": "/sales/quotations", "permission_key": "quotation.read", "order_index": 3},
       {"title": "Sales Order", "icon": "LuFileText", "path": "/sales/orders", "permission_key": "order.read", "order_index": 4},
       # Raised against a confirmed sales order, so whoever can see orders can
       # see their invoices - no separate permission to grant.
@@ -145,7 +150,7 @@ DEFAULT_MENUS_DATA = [
       # rest of Masters - the page refuses anyone else.
       {"title": "Company Profile", "icon": "LuBuilding2", "path": "/company-profile", "permission_key": "company.read", "order_index": 8},
       # Who signs off how much discount. Super admin only, like the rest.
-      {"title": "Quotation Approval", "icon": "LuPercent", "path": "/quotation-approval", "permission_key": "company.read", "order_index": 9},
+      {"title": "Proposal Approval", "icon": "LuPercent", "path": "/quotation-approval", "permission_key": "company.read", "order_index": 9},
     ]
   },
   {

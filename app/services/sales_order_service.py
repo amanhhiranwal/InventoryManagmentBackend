@@ -381,6 +381,7 @@ class SalesOrderService:
                 else 30.0
             ),
             commercial_terms=request.commercial_terms,
+            payment_terms=request.payment_terms,
             technical_notes=request.technical_notes,
             attachments=request.attachments,
             creator_id=_to_uuid(current_user.get("user_id")),
@@ -462,6 +463,7 @@ class SalesOrderService:
             "remarks",
             "advance_percent",
             "commercial_terms",
+            "payment_terms",
             "technical_notes",
             "attachments",
         ]
@@ -858,6 +860,7 @@ def serialize_sales_order(order: SalesOrder) -> dict:
             2,
         ),
         "commercial_terms": order.commercial_terms or [],
+        "payment_terms": order.payment_terms,
         "technical_notes": order.technical_notes,
         "attachments": order.attachments or [],
         "creator_id": str(order.creator_id) if order.creator_id else None,

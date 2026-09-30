@@ -75,7 +75,7 @@ def banner(title):
 SIDEBARS = {
     "admin": [
         ("Dashboard", []),
-        ("Sales", ["Leads", "Opportunity", "Quotation", "Sales Order", "Proforma Invoice"]),
+        ("Sales", ["Leads", "Opportunity", "Proposal", "Sales Order", "Proforma Invoice"]),
         ("Users", []),
         ("Inventory", []),
         ("Customers", []),
@@ -85,7 +85,7 @@ SIDEBARS = {
         ("Masters", [
             "Companies", "Locations", "Customer Type", "Product Type",
             "Category Group", "Units", "Roles & Access", "Company Profile",
-            "Quotation Approval",
+            "Proposal Approval",
         ]),
         ("Workflows", []),
     ],
@@ -94,7 +94,7 @@ SIDEBARS = {
     # menu, which is why this list is shared.
     "sales": [
         ("Dashboard", []),
-        ("Sales", ["Leads", "Opportunity", "Quotation", "Sales Order", "Proforma Invoice"]),
+        ("Sales", ["Leads", "Opportunity", "Proposal", "Sales Order", "Proforma Invoice"]),
         ("Users", []),
         ("Inventory", []),
         ("Customers", []),

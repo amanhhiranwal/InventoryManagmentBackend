@@ -89,6 +89,7 @@ class CreateSalesOrderRequest(BaseModel):
 
     #: Commercial conditions, one string per bullet, and the agreed scope.
     commercial_terms: Optional[List[str]] = None
+    payment_terms: Optional[str] = None
     technical_notes: Optional[str] = None
 
     #: Annexures attached to the order: [{name, size, type}].
@@ -150,6 +151,7 @@ class UpdateSalesOrderRequest(BaseModel):
 
     #: Commercial conditions, one string per bullet, and the agreed scope.
     commercial_terms: Optional[List[str]] = None
+    payment_terms: Optional[str] = None
     technical_notes: Optional[str] = None
 
     #: Annexures attached to the order: [{name, size, type}].
