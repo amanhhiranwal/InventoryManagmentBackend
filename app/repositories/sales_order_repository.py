@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 
-from app.core.references import highest_issued, next_number
+from app.core.references import highest_issued, next_number, peek_next
 from app.models.sales_order import SalesOrder
 
 
@@ -67,6 +67,23 @@ class SalesOrderRepository:
             )
 
         return query.order_by(SalesOrder.id.desc()).all()
+
+    @staticmethod
+    def preview_order_number(db: Session) -> str:
+        """The reference the next order would take, without taking it.
+
+        Shown on the New Sales Order form, which used to read "Assigned on
+        save" and leave the user wondering what they were about to raise.
+        It is a preview: whoever saves first gets it.
+        """
+
+        return "SO-{:05d}".format(
+            peek_next(
+                db,
+                "sales_order",
+                lambda: highest_issued(db, SalesOrder.order_number),
+            )
+        )
 
     @staticmethod
     def next_order_number(db: Session) -> str:
