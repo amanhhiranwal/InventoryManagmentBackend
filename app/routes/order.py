@@ -26,6 +26,22 @@ def create_order(
     return SalesOrderController.create(request, current_user, db)
 
 
+@router.get("/next-number")
+def next_order_number(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """The reference a new order would take. Declared above /{order_id}
+    so the path is not read as an id."""
+
+    from app.repositories.sales_order_repository import SalesOrderRepository
+
+    return {
+        "success": True,
+        "data": {"order_number": SalesOrderRepository.preview_order_number(db)},
+    }
+
+
 @router.get("")
 def get_orders(
     db: Session = Depends(get_db),

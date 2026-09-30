@@ -78,3 +78,21 @@ def highest_issued(db: Session, column, offset: int = 0) -> int:
             highest = max(highest, int(digits) - offset)
 
     return highest
+
+
+def peek_next(db: Session, series: str, issued_so_far: Callable[[], int]) -> int:
+    """What the next number *would* be, without taking it.
+
+    For showing a reference on a form before anything is saved. It reads
+    rather than increments, so opening a form never burns a number and two
+    people opening one at the same time both see the same figure - which
+    is why what they see is a preview and not a promise. The number is
+    only theirs once the record is written.
+    """
+
+    row = db.execute(
+        text("SELECT seq FROM document_counter WHERE name = :name"),
+        {"name": series},
+    ).first()
+
+    return (int(row[0]) if row is not None else max(0, issued_so_far())) + 1

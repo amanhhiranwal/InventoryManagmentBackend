@@ -321,12 +321,12 @@ def _to_uuid(value) -> UUID | None:
 
 #: Headline written onto the activity entry when a quotation reaches a status.
 QUOTATION_STATUS_ACTIONS: dict[str, str] = {
-    QuotationStatus.DRAFT: "Quotation Drafted",
+    QuotationStatus.DRAFT: "Proposal Drafted",
     QuotationStatus.PENDING_APPROVAL: "Sent For Approval",
     QuotationStatus.SENT: "Sent To Client",
     QuotationStatus.ACCEPTED: "Accepted By Client",
     QuotationStatus.REJECTED: "Rejected By Client",
-    QuotationStatus.EXPIRED: "Quotation Expired",
+    QuotationStatus.EXPIRED: "Proposal Expired",
 }
 
 
@@ -350,7 +350,7 @@ class QuotationService:
         quotation = QuotationRepository.get_by_id(db, quotation_id)
 
         if quotation is None:
-            raise HTTPException(status_code=404, detail="Quotation not found")
+            raise HTTPException(status_code=404, detail="Proposal not found")
 
         return quotation
 
@@ -689,7 +689,7 @@ class QuotationService:
                 quotation.status,
                 "Quotation Drafted",
             ),
-            description=f"Quotation {quotation.quote_number} created.",
+            description=f"Proposal {quotation.quote_number} created.",
             to_status=quotation.status,
             user_id=str(creator_id),
         )
@@ -740,7 +740,7 @@ class QuotationService:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Quotation {quotation.quote_number} has already been "
+                    f"Proposal {quotation.quote_number} has already been "
                     f"{quotation.status.lower()} and can no longer be edited. "
                     "Raise a revision instead."
                 ),
@@ -939,7 +939,7 @@ class QuotationService:
                 "mime_type": "application/pdf",
             }]
         except Exception as exc:  # pragma: no cover - defensive
-            print("Quotation PDF could not be built:", exc)
+            print("Proposal PDF could not be built:", exc)
             return []
 
     @staticmethod
@@ -970,7 +970,7 @@ class QuotationService:
         bcc = [address.strip() for address in (request.bcc or []) if address.strip()]
 
         subject = request.subject or (
-            f"Commercial & Technical Quotation [{quotation.quote_number}]"
+            f"Commercial & Technical Proposal [{quotation.quote_number}]"
             f" - {quotation.opportunity_name or quotation.organization_name or ''}".strip()
         )
 

@@ -118,6 +118,12 @@ class SalesOrder(Base):
     #: Commercial conditions carried onto the order, one string per bullet.
     commercial_terms = Column(JSON, nullable=True)
 
+    #: How the order is to be paid, in its own words. Held apart from the
+    #: conditions above because it is the one clause accounts read on its
+    #: own - it decides what the proforma invoice asks for - and a bullet
+    #: in a list is a poor place to look for it.
+    payment_terms = Column(String(500), nullable=True)
+
     #: Free text describing the agreed scope of work on site.
     technical_notes = Column(String(2000), nullable=True)
 

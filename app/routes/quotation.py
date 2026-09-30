@@ -249,5 +249,5 @@ def delete_quotation(
 
     return {
         "success": True,
-        "message": "Quotation deleted successfully.",
+        "message": "Proposal deleted successfully.",
     }

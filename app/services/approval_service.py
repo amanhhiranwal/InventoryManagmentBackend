@@ -40,7 +40,8 @@ def app_url(path: str) -> str:
 
 
 DOCUMENT_LABELS = {
-    ApprovalDocument.QUOTATION: "Quotation",
+    # What a person reads. The document type itself stays QUOTATION.
+    ApprovalDocument.QUOTATION: "Proposal",
     ApprovalDocument.SALES_ORDER: "Sales order",
 }
 
