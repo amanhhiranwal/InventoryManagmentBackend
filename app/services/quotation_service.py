@@ -958,6 +958,27 @@ class QuotationService:
         quotation = QuotationService.get_by_id(quotation_id, db)
         QuotationService.assert_can_modify(quotation, current_user, db)
 
+        # Nothing goes to a client on a discount nobody has signed for yet.
+        # The chain exists precisely so a price leaves the building only
+        # once somebody with the authority has agreed to it, and an email
+        # cannot be recalled. A test send to oneself is still allowed.
+        if not getattr(request, "test_only", False):
+            pending = ApprovalService.open_for(
+                ApprovalDocument.QUOTATION, quotation.id, db
+            )
+
+            if pending is not None:
+                waiting_on = pending.steps[pending.current_step]["role"]
+
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"{quotation.quote_number} is waiting on the "
+                        f"{waiting_on} to approve its discount. It can be "
+                        "sent to the client once that is cleared."
+                    ),
+                )
+
         recipients = [address.strip() for address in (request.to or []) if address.strip()]
 
         if not recipients:
@@ -1092,6 +1113,22 @@ class QuotationService:
         lines += [
             f"  - Total Value: {format_inr(quotation.total_payable)}"
             f"{_gst_clause(quotation)}",
+            "",
+            "Payment Terms:",
+        ]
+
+        # The same split the PDF prints, from the same figures, so changing
+        # the advance on the proposal changes the covering email with it.
+        # Written out rather than restated here: two copies of one rule is
+        # how the letter and the document start disagreeing.
+        from app.services.quotation_pdf_service import QuotationPDFService
+
+        for term in QuotationPDFService.payment_terms(quotation):
+            lines.append(f"  - {term}")
+
+        lines += [
+            f"  - This offer is valid until "
+            f"{quotation.validation_date.strftime('%d %b %Y') if quotation.validation_date else 'the date stated on the proposal'}.",
             "",
             "Kindly review the attached quotation and let us know if you "
             "require any adjustments or technical clarifications.",
