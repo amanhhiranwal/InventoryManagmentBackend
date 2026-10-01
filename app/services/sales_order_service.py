@@ -152,6 +152,7 @@ def compute_order_totals(
     orc_input: float | None = None,
     freight_charges: float = 0.0,
     installation_lumpsum: float = 0.0,
+    shifting_charges: float = 0.0,
     gst_percent: float = 18.0,
     advance_received: float = 0.0,
 ) -> dict:
@@ -167,6 +168,17 @@ def compute_order_totals(
         gst          = taxable * gst%
         grand total  = taxable + gst
         outstanding  = grand total - advance received
+
+    And what the order is actually worth to us, which is a different
+    question from what the customer pays:
+
+        revenue      = grand total - freight - installation
+                                   - shifting - gst
+
+    Delivery and installation are passed straight through, the GST goes to
+    the government, and shifting is a cost we carry. The ORC is already out
+    of the grand total - it comes off the taxable amount above - so taking
+    it off again here would count the same commission twice.
     """
 
     rows = _items_to_json(items) or []
@@ -214,6 +226,7 @@ def compute_order_totals(
 
     freight_charges = _as_float(freight_charges)
     installation_lumpsum = _as_float(installation_lumpsum)
+    shifting_charges = _as_float(shifting_charges)
 
     # The order is where the margin given away actually lands: the
     # discount and the ORC both come off, then delivery and installation
@@ -231,6 +244,16 @@ def compute_order_totals(
     gst_amount = taxable_amount * gst_percent / 100.0
     grand_total = taxable_amount + gst_amount
 
+    # What the order leaves us once everything that was never ours has
+    # been taken back out.
+    total_revenue = (
+        grand_total
+        - freight_charges
+        - installation_lumpsum
+        - shifting_charges
+        - gst_amount
+    )
+
     # An advance cannot exceed the order, and the balance never goes negative.
     advance_received = max(0.0, min(_as_float(advance_received), grand_total))
 
@@ -245,10 +268,12 @@ def compute_order_totals(
         "orc_input": orc_input,
         "freight_charges": round(freight_charges, 2),
         "installation_lumpsum": round(installation_lumpsum, 2),
+        "shifting_charges": round(shifting_charges, 2),
         "taxable_amount": round(taxable_amount, 2),
         "gst_percent": round(gst_percent, 2),
         "gst_amount": round(gst_amount, 2),
         "grand_total": round(grand_total, 2),
+        "total_revenue": round(total_revenue, 2),
         "advance_received": round(advance_received, 2),
         "outstanding_balance": round(grand_total - advance_received, 2),
     }
@@ -396,6 +421,9 @@ class SalesOrderService:
                 installation_lumpsum=(
                     getattr(request, "installation_lumpsum", 0.0) or 0.0
                 ),
+                shifting_charges=(
+                    getattr(request, "shifting_charges", 0.0) or 0.0
+                ),
                 gst_percent=(
                     getattr(request, "gst_percent", None)
                     if getattr(request, "gst_percent", None) is not None
@@ -490,7 +518,7 @@ class SalesOrderService:
         money_fields = (
             "items", "discount_mode", "discount_input", "orc_mode",
             "orc_input", "freight_charges", "installation_lumpsum",
-            "gst_percent", "advance_received",
+            "shifting_charges", "gst_percent", "advance_received",
         )
 
         if any(getattr(request, field, None) is not None for field in money_fields):
@@ -508,6 +536,7 @@ class SalesOrderService:
                 installation_lumpsum=pick(
                     "installation_lumpsum", order.installation_lumpsum
                 ),
+                shifting_charges=pick("shifting_charges", order.shifting_charges),
                 gst_percent=pick("gst_percent", order.gst_percent or 18.0),
                 advance_received=pick(
                     "advance_received", order.advance_received
@@ -819,6 +848,8 @@ def serialize_sales_order(order: SalesOrder) -> dict:
         "discount_input": order.discount_input,
         "freight_charges": order.freight_charges or 0.0,
         "installation_lumpsum": order.installation_lumpsum or 0.0,
+        "shifting_charges": order.shifting_charges or 0.0,
+        "total_revenue": order.total_revenue or 0.0,
         "gst_percent": order.gst_percent if order.gst_percent is not None else 18.0,
         "advance_received": order.advance_received or 0.0,
         "outstanding_balance": order.outstanding_balance or 0.0,
