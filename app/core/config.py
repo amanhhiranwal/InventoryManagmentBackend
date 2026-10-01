@@ -49,10 +49,12 @@ class Settings(BaseSettings):
     #: a placeholder account number that survived into a real invoice would
     #: send money to the wrong place; an unset value shows as "Not configured"
     #: instead.
-    COMPANY_LEGAL_NAME: str = ""
+    COMPANY_LEGAL_NAME: str = "SYNERGY GLOBAL PRIVATE LIMITED"
     #: Multi-line address; separate lines with "|" in .env.
-    COMPANY_ADDRESS: str = ""
-    COMPANY_GSTIN: str = ""
+    COMPANY_ADDRESS: str = (
+        "B-66 Sector 65, Noida, Gautambuddha Nagar|Uttar Pradesh 201301"
+    )
+    COMPANY_GSTIN: str = "09AAACQ7899Q1Z6"
     BANK_BENEFICIARY_NAME: str = ""
     BANK_NAME: str = ""
     BANK_BRANCH: str = ""
@@ -73,6 +75,18 @@ class Settings(BaseSettings):
     #: Optional picture for the proposal cover, under the addresses. Unset
     #: simply leaves the cover without one.
     COMPANY_COVER_IMAGE: str = ""
+
+    #: The seller's state. Its code decides whether a sale is taxed as
+    #: CGST + SGST or as IGST, so it is not decoration.
+    COMPANY_STATE_NAME: str = "Uttar Pradesh"
+    COMPANY_STATE_CODE: str = "09"
+
+    #: The rest of what a remittance needs. The account itself is already
+    #: declared above as BANK_*; these only add what a GST document asks
+    #: for and the payment screen shows.
+    BANK_SWIFT: str = ""
+    #: A QR image for BANK_UPI_VPA, relative to the backend root.
+    UPI_QR_PATH: str = ""
     #: Contact number printed on the proposal's signature block.
     COMPANY_PHONE: str = ""
     #: Who signs the invoice. Falls back to the invoice's creator when unset.

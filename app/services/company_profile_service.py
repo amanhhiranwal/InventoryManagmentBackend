@@ -25,6 +25,20 @@ FIELDS: dict[str, str] = {
     "company_cover_image": "COMPANY_COVER_IMAGE",
     "signatory_name": "SIGNATORY_NAME",
     "signatory_title": "SIGNATORY_TITLE",
+
+    # Where the money is to be sent. On the profile rather than printed
+    # into the invoice template, because an account number changes and a
+    # proforma invoice carrying the old one is how a payment goes astray.
+    "company_state_name": "COMPANY_STATE_NAME",
+    "company_state_code": "COMPANY_STATE_CODE",
+    "bank_account_name": "BANK_BENEFICIARY_NAME",
+    "bank_name": "BANK_NAME",
+    "bank_account_number": "BANK_ACCOUNT_NUMBER",
+    "bank_branch": "BANK_BRANCH",
+    "bank_ifsc": "BANK_IFSC",
+    "bank_swift": "BANK_SWIFT",
+    "upi_vpa": "BANK_UPI_VPA",
+    "upi_qr_path": "UPI_QR_PATH",
 }
 
 #: Written as one block and split on "|" or newlines when read.

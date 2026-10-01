@@ -120,7 +120,7 @@ def main() -> int:
             "items": [{
                 "product": "Interactive Flat Panel",
                 "model": "Qonevo IFP 75 - Core - 8/128",
-                "sku": "NX-9K-QIFP75-EX",
+                "sku": "SG-SPX7-LANGO3576",
                 "quantity": deal["qty"],
                 "unit_price": deal["price"],
                 "discount": deal["discount"],
@@ -280,7 +280,7 @@ def fulfilment(token, admin, companies):
             "items": [{
                 "product": "Interactive Flat Panel",
                 "model": "Qonevo IFP 75 - Core - 8/128",
-                "sku": "NX-9K-QIFP75-EX",
+                "sku": "SG-SPX7-LANGO3576",
                 "qty": deal["qty"],
                 "rate": deal["price"],
                 "tax_rate": 18,

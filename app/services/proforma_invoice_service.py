@@ -4,9 +4,10 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.core.config import settings
+from app.services.company_profile_service import CompanyProfileService
 from app.core.references import highest_issued, next_number
 from app.core.workflow_status import (
     PROFORMA_INVOICE_TRANSITIONS,
@@ -57,7 +58,7 @@ _FULLY_EDITABLE = {
     "issue_date", "due_date", "assigned_to", "billing_address",
     "shipping_address", "items", "freight_charges",
     "installation_lumpsum", "gst_percent", "amount_paid",
-    "advance_percent", "commercial_terms", "technical_notes",
+    "advance_percent", "commercial_terms", "payment_terms", "technical_notes",
     "attachments",
 }
 
@@ -85,6 +86,7 @@ FIELD_LABELS = {
     "amount_paid": "Amount Paid",
     "advance_percent": "Payment Terms",
     "commercial_terms": "Commercial Conditions",
+    "payment_terms": "Payment Terms",
     "technical_notes": "Technical Notes",
     "attachments": "Attached Documents",
 }
@@ -200,33 +202,46 @@ class ProformaInvoiceService:
         return invoice
 
     @staticmethod
-    def company_profile() -> dict:
-        """Seller identity and banking details printed on every invoice."""
+    def company_profile(db: Session | None = None) -> dict:
+        """Seller identity and banking details printed on every invoice.
 
-        address = [
-            line.strip()
-            for line in (settings.COMPANY_ADDRESS or "").split("|")
-            if line.strip()
-        ]
+        Read through the company profile, which answers from the database
+        first and the environment second. It used to read the environment
+        directly, so an account number corrected on the Company Profile
+        screen never reached the invoice the customer pays against - the
+        one field where a stale value sends money to the wrong place.
+        """
+
+        profile = CompanyProfileService.as_lists(db)
 
         return {
-            "legal_name": settings.COMPANY_LEGAL_NAME or None,
-            "address_lines": address,
-            "gstin": settings.COMPANY_GSTIN or None,
+            "legal_name": profile["company_legal_name"] or None,
+            "address_lines": profile["company_address_lines"],
+            "gstin": profile["company_gstin"] or None,
+            "state_name": profile["company_state_name"] or None,
+            "state_code": profile["company_state_code"] or None,
             "bank": {
-                "beneficiary_name": settings.BANK_BENEFICIARY_NAME or None,
-                "bank_name": settings.BANK_NAME or None,
-                "branch": settings.BANK_BRANCH or None,
-                "account_number": settings.BANK_ACCOUNT_NUMBER or None,
-                "ifsc": settings.BANK_IFSC or None,
-                "upi_vpa": settings.BANK_UPI_VPA or None,
+                "beneficiary_name": profile["bank_account_name"] or None,
+                "bank_name": profile["bank_name"] or None,
+                "branch": profile["bank_branch"] or None,
+                "account_number": profile["bank_account_number"] or None,
+                "ifsc": profile["bank_ifsc"] or None,
+                "swift": profile["bank_swift"] or None,
+                "upi_vpa": profile["upi_vpa"] or None,
+                #: Served by the uploads route; the document shows the real
+                #: code rather than an icon standing in for one.
+                "upi_qr_url": (
+                    "/api/v1/company-profile/upi-qr/image"
+                    if profile["upi_qr_path"]
+                    else None
+                ),
             },
             "signatory": {
-                "name": settings.SIGNATORY_NAME or None,
-                "title": settings.SIGNATORY_TITLE or None,
+                "name": profile["signatory_name"] or None,
+                "title": profile["signatory_title"] or None,
             },
             "configured": bool(
-                settings.BANK_ACCOUNT_NUMBER and settings.BANK_IFSC
+                profile["bank_account_number"] and profile["bank_ifsc"]
             ),
         }
 
@@ -280,6 +295,12 @@ class ProformaInvoiceService:
                 db,
                 "proforma_invoice",
                 lambda: highest_issued(db, ProformaInvoice.pi_number),
+                taken=lambda number: (
+                    db.query(ProformaInvoice.id)
+                    .filter(ProformaInvoice.pi_number == f"PI-{number:05d}")
+                    .first()
+                    is not None
+                ),
             )
         )
 
@@ -363,6 +384,7 @@ class ProformaInvoiceService:
                 order.advance_percent if order.advance_percent is not None else 30.0,
             ),
             commercial_terms=_pick(request.commercial_terms, order.commercial_terms),
+            payment_terms=_pick(request.payment_terms, order.payment_terms),
             technical_notes=_pick(request.technical_notes, order.technical_notes),
             attachments=_pick(request.attachments, order.attachments),
             generated_at=(
@@ -981,7 +1003,45 @@ def serialize_proforma_invoice(invoice: ProformaInvoice) -> dict:
     def iso(value):
         return value.isoformat() if value else None
 
+    # The tax, worked out once here rather than again in the browser. A
+    # document that recomputes its own GST is a document that can disagree
+    # with the figure the business actually charged.
+    from app.core import gst
+
+    # The seller's state decides whether the sale splits into CGST and SGST
+    # or is charged as one IGST line, so it is read from the same profile
+    # the Company Profile screen edits. Taken from the session the invoice
+    # was loaded in rather than a fresh one: a serializer that opens its own
+    # connection per row is how a list of invoices becomes a list of
+    # queries.
+    seller_state = ""
+
+    try:
+        seller_state = (
+            CompanyProfileService.raw(object_session(invoice)) or {}
+        ).get("company_state_code") or ""
+    except Exception:  # noqa: BLE001 - a missing profile must not break a read
+        seller_state = ""
+
+    buyer_state = (
+        (invoice.billing_address or {}).get("state")
+        or (invoice.shipping_address or {}).get("state")
+        or invoice.state
+        or ""
+    )
+
+    tax_summary = gst.summarise(
+        invoice.items or [],
+        seller_state,
+        buyer_state,
+        default_rate=invoice.gst_percent if invoice.gst_percent is not None else 18.0,
+    )
+
     return {
+        "tax_summary": tax_summary,
+        "place_of_supply": buyer_state,
+        "seller_state_code": gst.state_code(seller_state),
+        "buyer_state_code": gst.state_code(buyer_state),
         "id": invoice.id,
         "pi_number": invoice.pi_number,
         "status": invoice.status,
@@ -1034,6 +1094,7 @@ def serialize_proforma_invoice(invoice: ProformaInvoice) -> dict:
         "advance_expected": advance_expected,
         "balance_expected": round(grand_total - advance_expected, 2),
         "commercial_terms": invoice.commercial_terms or [],
+        "payment_terms": invoice.payment_terms,
         "technical_notes": invoice.technical_notes,
         "attachments": invoice.attachments or [],
         "generated_at": iso(invoice.generated_at),

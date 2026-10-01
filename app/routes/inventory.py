@@ -118,6 +118,56 @@ def get_items(
         "data": items,
     }
 
+@router.get("/items/{item_id}/label")
+def item_label(
+    item_id: str,
+    current_user=Depends(require_permission("inventory.read")),
+    db: Session = Depends(get_db),
+):
+    """The sticker that goes on the box: a barcode, a QR and what they say.
+
+    Served as SVG so it prints crisp at whatever size the sticker is and
+    the screen can show the same markup it prints.
+    """
+
+    from fastapi import HTTPException
+    from fastapi.responses import Response
+
+    from app.services.product_label_service import label_svg
+
+    # Read through the same list the screen reads, so a label can only be
+    # printed for a product the caller is allowed to see at all.
+    item = next(
+        (
+            row for row in InventoryService.get_items(
+                current_user=current_user, db=db
+            )
+            if str(row.get("_id")) == str(item_id)
+        ),
+        None,
+    )
+
+    if item is None:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    attributes = item.get("attributes") or {}
+
+    svg = label_svg(
+        sku=item.get("serial_number") or "",
+        name=item.get("name") or "",
+        hsn=str(attributes.get("hsn_code") or ""),
+    )
+
+    return Response(
+        content=svg,
+        media_type="image/svg+xml",
+        headers={
+            "Content-Disposition":
+                f'inline; filename="{item.get("serial_number") or "label"}.svg"'
+        },
+    )
+
+
 @router.put("/items/{item_id}")
 def update_item(
     item_id: str,

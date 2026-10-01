@@ -20,6 +20,21 @@ router = APIRouter(
 )
 
 
+@router.get("/payment-terms")
+def payment_term_options(current_user=Depends(get_current_user)):
+    """The splits a document can be issued on.
+
+    Served rather than hard-coded into each screen so the proposal, the
+    sales order and this invoice all offer the same list, and adding one
+    does not mean editing three files. Declared above /{invoice_id} so
+    the path is not read as an id.
+    """
+
+    from app.core.payment_terms import options
+
+    return {"success": True, "data": options()}
+
+
 @router.get("")
 def get_proforma_invoices(
     sales_order_id: Optional[int] = None,
@@ -32,10 +47,13 @@ def get_proforma_invoices(
 
 
 @router.get("/company-profile")
-def get_company_profile(current_user=Depends(get_current_user)):
+def get_company_profile(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     """Seller name, address, banking and signatory printed on the invoice."""
 
-    return ProformaInvoiceController.company_profile()
+    return ProformaInvoiceController.company_profile(db)
 
 
 @router.post("")

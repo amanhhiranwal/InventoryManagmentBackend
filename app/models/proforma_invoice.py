@@ -87,6 +87,12 @@ class ProformaInvoice(Base):
     advance_percent = Column(Float, default=30.0, nullable=True)
 
     commercial_terms = Column(JSON, nullable=True)
+
+    #: How this invoice is to be paid, in its own words. Carried from the
+    #: sales order, which carried it from the proposal - so what the client
+    #: was quoted is what the invoice asks for, rather than a default
+    #: sentence that quietly contradicts the offer they accepted.
+    payment_terms = Column(String(500), nullable=True)
     technical_notes = Column(String(2000), nullable=True)
 
     #: Annexures: [{name, size, type}].

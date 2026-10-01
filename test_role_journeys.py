@@ -238,7 +238,7 @@ try:
         "items": [{
             "product": "Interactive Flat Panel 75in",
             "model": "Qonevo IFP 75",
-            "sku": "NX-9K-QIFP75-EX",
+            "sku": "SG-SPX7-LANGO3576",
             "quantity": 5,
             "unit_price": 185000,
             "tax": 18,
@@ -310,7 +310,7 @@ try:
         "items": [{
             "product": "Interactive Flat Panel 75in",
             "model": "Qonevo IFP 75",
-            "sku": "NX-9K-QIFP75-EX",
+            "sku": "SG-SPX7-LANGO3576",
             "qty": 5,
             "rate": 185000,
             "tax_rate": 18,
@@ -414,8 +414,8 @@ try:
                 return float((row.get("attributes") or {}).get("instock") or 0)
         return None
 
-    stock_before_run["NX-9K-QIFP75-EX"] = shelf("NX-9K-QIFP75-EX")
-    opening = stock_before_run["NX-9K-QIFP75-EX"]
+    stock_before_run["SG-SPX7-LANGO3576"] = shelf("SG-SPX7-LANGO3576")
+    opening = stock_before_run["SG-SPX7-LANGO3576"]
 
     for stage, label in (
         ("PROCUREMENT", "taken into procurement"),
@@ -436,15 +436,15 @@ try:
         if stage in ("PROCUREMENT", "READY"):
             check(
                 f"the shelf is untouched at {stage}",
-                shelf("NX-9K-QIFP75-EX") == opening,
-                f"{shelf('NX-9K-QIFP75-EX')} - should still be {opening}",
+                shelf("SG-SPX7-LANGO3576") == opening,
+                f"{shelf('SG-SPX7-LANGO3576')} - should still be {opening}",
             )
 
         if stage == "DISPATCHED":
             check(
                 "dispatch takes the 5 off the shelf",
-                shelf("NX-9K-QIFP75-EX") == opening - 5,
-                f"{shelf('NX-9K-QIFP75-EX')} - expected {opening - 5}",
+                shelf("SG-SPX7-LANGO3576") == opening - 5,
+                f"{shelf('SG-SPX7-LANGO3576')} - expected {opening - 5}",
             )
 
     # Read from the order's own detail rather than the desk queue: by now
@@ -585,7 +585,7 @@ try:
     )
 
     # A line of each kind: plenty, thin, and nothing at all.
-    PLENTY, THIN, NONE_LEFT = "NX-AP-WIFI6", "NX-9K-QIFP65-EX", "NX-ACC-RMT"
+    PLENTY, THIN, NONE_LEFT = "SG-SPX6-LANGO3576", "SG-CPX8-LANGOV100", "SG-STD-55-T"
 
     for serial in (PLENTY, THIN, NONE_LEFT):
         check(f"{serial} is on the shelf to order against", serial in by_serial)
@@ -695,13 +695,13 @@ try:
 
     north, south = catalogue_for("am_north_1"), catalogue_for("am_south_1")
 
-    check("the North salesperson sees the North demo kit", "NX-DEMO-NORTH" in north)
-    check("and not the South one", "NX-DEMO-SOUTH" not in north, str(sorted(north - south)[:5]))
-    check("the South salesperson sees the South demo kit", "NX-DEMO-SOUTH" in south)
-    check("and not the North one", "NX-DEMO-NORTH" not in south)
+    check("the North salesperson sees the North demo kit", "SG-DEMO-NORTH" in north)
+    check("and not the South one", "SG-DEMO-SOUTH" not in north, str(sorted(north - south)[:5]))
+    check("the South salesperson sees the South demo kit", "SG-DEMO-SOUTH" in south)
+    check("and not the North one", "SG-DEMO-NORTH" not in south)
     check(
         "both see the shared catalogue",
-        "NX-9K-QIFP75-EX" in north and "NX-9K-QIFP75-EX" in south,
+        "SG-SPX7-LANGO3576" in north and "SG-SPX7-LANGO3576" in south,
     )
 
     # ============================================ 12. deleting a record
@@ -767,7 +767,7 @@ try:
         "order_date": now.isoformat(),
         "items": [{
             "product": "Interactive Flat Panel 75in",
-            "sku": "NX-9K-QIFP75-EX",
+            "sku": "SG-SPX7-LANGO3576",
             "qty": 1,
             "rate": 185000,
             "tax_rate": 18,
@@ -796,7 +796,7 @@ try:
             "order_date": now.isoformat(),
             "items": [{
                 "product": "Interactive Flat Panel 75in",
-                "sku": "NX-9K-QIFP75-EX",
+                "sku": "SG-SPX7-LANGO3576",
                 "qty": 1,
                 "rate": 185000,
                 "tax_rate": 18,

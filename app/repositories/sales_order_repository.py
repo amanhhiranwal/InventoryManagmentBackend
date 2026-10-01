@@ -100,5 +100,11 @@ class SalesOrderRepository:
                 db,
                 "sales_order",
                 lambda: highest_issued(db, SalesOrder.order_number),
+                taken=lambda number: (
+                    db.query(SalesOrder.id)
+                    .filter(SalesOrder.order_number == f"SO-{number:05d}")
+                    .first()
+                    is not None
+                ),
             )
         )

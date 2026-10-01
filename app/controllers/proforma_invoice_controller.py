@@ -51,8 +51,8 @@ class ProformaInvoiceController:
         }
 
     @staticmethod
-    def company_profile():
-        return {"success": True, "data": ProformaInvoiceService.company_profile()}
+    def company_profile(db: Session | None = None):
+        return {"success": True, "data": ProformaInvoiceService.company_profile(db)}
 
     @staticmethod
     def create(request, current_user: dict, db: Session):
