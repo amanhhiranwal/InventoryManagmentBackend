@@ -130,7 +130,10 @@ class InventoryService:
                 validated_attrs[f_name] = val
 
         # 2. Explicitly preserve standard stock parameters if passed in attributes
-        standard_fields = ["rate", "rate_per_unit", "unit", "instock", "stock", "case_size"]
+        # hsn_code is a standard field rather than a template one: every
+        # product has an HSN or SAC, a GST invoice is required to carry it,
+        # and it must not depend on whoever set up the product type.
+        standard_fields = ["rate", "rate_per_unit", "unit", "instock", "stock", "case_size", "hsn_code"]
         for key in standard_fields:
             if key in attributes:
                 val = attributes[key]
@@ -229,7 +232,10 @@ class InventoryService:
                 validated_attrs[f_name] = val
 
         # 2. Explicitly preserve standard stock parameters if passed in attributes
-        standard_fields = ["rate", "rate_per_unit", "unit", "instock", "stock", "case_size"]
+        # hsn_code is a standard field rather than a template one: every
+        # product has an HSN or SAC, a GST invoice is required to carry it,
+        # and it must not depend on whoever set up the product type.
+        standard_fields = ["rate", "rate_per_unit", "unit", "instock", "stock", "case_size", "hsn_code"]
         for key in standard_fields:
             if key in attributes:
                 val = attributes[key]

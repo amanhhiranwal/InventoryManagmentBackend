@@ -63,6 +63,12 @@ ABOUT_FALLBACK = (
 
 DEFAULT_LOGO = Path(__file__).resolve().parents[1] / "assets" / "brand-logo.jpg"
 
+#: The picture the printed proposal opens with. Bundled rather than
+#: configured, so a proposal looks like the one the business actually
+#: sends without anybody having to set an environment variable first.
+#: COMPANY_COVER_IMAGE still overrides it.
+DEFAULT_COVER = Path(__file__).resolve().parents[1] / "assets" / "proposal-hero.jpg"
+
 
 def _money(value) -> str:
     """Indian grouping, as the printed proposal uses: 1,23,456.00."""
@@ -85,6 +91,110 @@ def _money(value) -> str:
         whole = ",".join(groups) + "," + tail
 
     return ("-" if amount < 0 else "") + f"{whole}.{decimals}"
+
+
+#: The Indian system groups in lakh and crore rather than millions, so the
+#: words have to be built the same way the digits are.
+_ONES = (
+    "", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight",
+    "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen",
+    "Sixteen", "Seventeen", "Eighteen", "Nineteen",
+)
+_TENS = (
+    "", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy",
+    "Eighty", "Ninety",
+)
+
+
+def _under_thousand(number: int) -> str:
+    if number < 20:
+        return _ONES[number]
+
+    if number < 100:
+        return (_TENS[number // 10] + (" " + _ONES[number % 10] if number % 10 else "")).strip()
+
+    return (
+        _ONES[number // 100]
+        + " Hundred"
+        + (" " + _under_thousand(number % 100) if number % 100 else "")
+    )
+
+
+def _words(value) -> str:
+    """The amount as a customer-facing document has to state it.
+
+    A figure in digits can be altered with a pen; the same figure in words
+    cannot, which is why an invoice carries both and why they have to be
+    built from the same number rather than typed separately.
+    """
+
+    try:
+        amount = round(float(value or 0), 2)
+    except (TypeError, ValueError):
+        return "Rupees Zero Only"
+
+    if amount < 0:
+        return "Minus " + _words(-amount)
+
+    rupees = int(amount)
+    paise = int(round((amount - rupees) * 100))
+
+    if rupees == 0:
+        head = "Zero"
+    else:
+        parts: list[str] = []
+
+        for divisor, label in ((10000000, "Crore"), (100000, "Lakh"), (1000, "Thousand")):
+            if rupees >= divisor:
+                parts.append(f"{_words_count(rupees // divisor)} {label}")
+                rupees %= divisor
+
+        if rupees:
+            parts.append(_under_thousand(rupees))
+
+        head = " ".join(parts)
+
+    words = f"Rupees {head}"
+
+    if paise:
+        words += f" and {_under_thousand(paise)} Paise"
+
+    return words + " Only"
+
+
+def _words_count(number: int) -> str:
+    """A crore or lakh count can itself run past a thousand."""
+
+    if number >= 1000:
+        return (
+            f"{_under_thousand(number // 1000)} Thousand"
+            + (f" {_under_thousand(number % 1000)}" if number % 1000 else "")
+        )
+
+    return _under_thousand(number)
+
+
+def _without_repeats(lines) -> list[str]:
+    """Drop a line that only repeats one already printed.
+
+    A name over a designation that reads the same - "Super Admin" over
+    "Super Admin" - makes a reader stop and wonder what they missed. It is
+    the same string twice; one of them goes.
+    """
+
+    seen: set[str] = set()
+    kept: list[str] = []
+
+    for raw in lines:
+        value = str(raw or "").strip()
+
+        if not value or value.lower() in seen:
+            continue
+
+        seen.add(value.lower())
+        kept.append(value)
+
+    return kept
 
 
 def _date(value) -> str:
@@ -372,19 +482,58 @@ class QuotationPDFService:
 
         canvas.saveState()
 
-        # A large navy disc off the top-right corner, clipped by the page,
-        # giving the sweep the printed proposal opens with.
-        canvas.setFillColor(NAVY)
-        canvas.circle(PAGE_W + 38 * mm, PAGE_H - 4 * mm, 92 * mm, stroke=0, fill=1)
+        # The navy sweep off the top-right corner. The cover art carries
+        # its own, so this is only drawn when there is none.
+        if QuotationPDFService._cover_art() is None:
+            canvas.setFillColor(NAVY)
+            canvas.circle(PAGE_W + 38 * mm, PAGE_H - 4 * mm, 92 * mm, stroke=0, fill=1)
 
-        # And a second from the bottom-left, closing the page.
-        canvas.setFillColor(NAVY)
-        canvas.circle(-46 * mm, -30 * mm, 78 * mm, stroke=0, fill=1)
+        # The cover art is the page. In the printed proposal the navy
+        # sweep, the white field the addresses sit on and the photograph
+        # are one picture - so it is drawn edge to edge behind everything
+        # rather than inset in the middle with white around it. It is cut
+        # to very nearly A4 already, so filling the page does not stretch
+        # it noticeably.
+        hero = QuotationPDFService._cover_art()
+
+        if hero:
+            try:
+                from reportlab.lib.utils import ImageReader
+
+                canvas.drawImage(
+                    ImageReader(str(hero)), 0, 0,
+                    width=PAGE_W, height=PAGE_H,
+                    preserveAspectRatio=False, anchor="sw", mask="auto",
+                )
+            except Exception:  # pragma: no cover - a bad image is not fatal
+                hero = None
+
+        # Only drawn when there is no art to carry the corner itself.
+        if not hero:
+            canvas.setFillColor(NAVY)
+            canvas.circle(-46 * mm, -30 * mm, 78 * mm, stroke=0, fill=1)
 
         QuotationPDFService._logo(
             canvas, MARGIN, PAGE_H - 14 * mm, 42 * mm, company["logo_path"]
         )
         canvas.restoreState()
+
+    @staticmethod
+    def _cover_art():
+        """The picture the cover is drawn with, or None."""
+
+        from app.core.config import settings
+
+        configured = (getattr(settings, "COMPANY_COVER_IMAGE", "") or "").strip()
+
+        if configured:
+            path = Path(configured)
+            if not path.is_absolute():
+                path = Path(__file__).resolve().parents[2] / configured
+        else:
+            path = DEFAULT_COVER
+
+        return path if path.exists() else None
 
     @staticmethod
     def _inner_page(company, canvas, doc):
@@ -423,19 +572,19 @@ class QuotationPDFService:
         submitted_to += _address_lines(quotation.billing_address)
 
         if sender:
-            submitted_by = [sender["name"]]
-            if sender["title"]:
-                submitted_by.append(sender["title"])
-            submitted_by.append(company["name"])
-            submitted_by += [
-                line for line in (sender["email"], sender["phone"]) if line
-            ]
+            submitted_by = _without_repeats([
+                sender["name"],
+                sender["title"],
+                company["name"],
+                sender["email"],
+                sender["phone"],
+            ])
         else:
-            submitted_by = [company["signatory"] or company["name"]]
-            if company["signatory"]:
-                if company["signatory_title"]:
-                    submitted_by.append(company["signatory_title"])
-                submitted_by.append(company["name"])
+            submitted_by = _without_repeats([
+                company["signatory"] or company["name"],
+                company["signatory_title"] if company["signatory"] else None,
+                company["name"] if company["signatory"] else None,
+            ])
 
         block = Table(
             [[
@@ -457,58 +606,45 @@ class QuotationPDFService:
             ("TOPPADDING", (0, 0), (-1, -1), 0),
         ]))
 
+        # The reference sits under the title, in the white band the art
+        # leaves at the top. It used to come after the picture, which on a
+        # cover that is one edge-to-edge image meant printing it over the
+        # photograph.
+        reference = Paragraph(
+            f"Reference {quotation.quote_number or quotation.id} &nbsp;|&nbsp; "
+            f"Issued {_date(quotation.quotation_date)} &nbsp;|&nbsp; "
+            f"Valid until {_date(quotation.validation_date)}",
+            s["small"],
+        )
+
+        # Everything sits in the white field the art leaves at the top, so
+        # it starts high and stays tight: the photograph begins a little
+        # over a third of the way down and will not move for us.
         return [
-            Spacer(1, 30 * mm),
+            Spacer(1, 15 * mm),
             Paragraph("PROPOSAL", s["cover_title"]),
             Paragraph(headline, s["cover_sub"]),
+            Spacer(1, 2 * mm),
+            reference,
+            Spacer(1, 4 * mm),
             block,
-            Spacer(1, 10 * mm),
-            *QuotationPDFService._cover_image(company["cover_image"]),
-            Paragraph(
-                f"Reference {quotation.quote_number or quotation.id} &nbsp;|&nbsp; "
-                f"Issued {_date(quotation.quotation_date)} &nbsp;|&nbsp; "
-                f"Valid until {_date(quotation.validation_date)}",
-                s["small"],
-            ),
             NextPageTemplate("inner"),
             PageBreak(),
         ]
 
     @staticmethod
     def _cover_image(cover_image: str | None) -> list:
-        """The picture the printed proposal carries under the addresses.
+        """Room on the cover for the picture drawn behind it.
 
-        Optional: with no COMPANY_COVER_IMAGE set the cover simply runs
-        without one rather than showing a gap or a broken frame.
+        The picture itself is painted across the full width of the page by
+        _cover_page; this only holds the space open so the reference line
+        settles above it rather than on top of it.
         """
 
-        configured = (cover_image or "").strip()
-
-        if not configured:
+        if QuotationPDFService._cover_art() is None:
             return []
 
-        path = Path(configured)
-        if not path.is_absolute():
-            path = Path(__file__).resolve().parents[2] / configured
-
-        if not path.exists():
-            return []
-
-        try:
-            from reportlab.lib.utils import ImageReader
-
-            width, height = ImageReader(str(path)).getSize()
-            draw_w = CONTENT_W
-            draw_h = draw_w * height / width
-
-            # Never so tall that it pushes the reference line off the page.
-            cap = 118 * mm
-            if draw_h > cap:
-                draw_h, draw_w = cap, cap * width / height
-
-            return [Image(str(path), width=draw_w, height=draw_h), Spacer(1, 8 * mm)]
-        except Exception:  # pragma: no cover - a bad image is not fatal
-            return []
+        return [Spacer(1, 26 * mm)]
 
     @staticmethod
     def _about(quotation, company, s) -> list:
@@ -606,8 +742,9 @@ class QuotationPDFService:
     def _offer(quotation, s) -> list:
         header = [
             Paragraph(text, s["cell_head"])
-            for text in ("Sr. No", "Category", "Model", "Description", "Qty",
-                         "Price", "GST", "Amount")
+            # HSN sits beside the description, as a tax invoice has it.
+            for text in ("Sr. No", "Category", "Model", "Description",
+                         "HSN / SAC", "Qty", "Price", "GST", "Amount")
         ]
 
         rows = [header]
@@ -629,6 +766,7 @@ class QuotationPDFService:
                 Paragraph(str(item.get("product") or "-"), s["cell"]),
                 Paragraph(str(item.get("model") or "-"), s["cell"]),
                 Paragraph(str(item.get("sku") or item.get("description") or "-"), s["cell_left"]),
+                Paragraph(str(item.get("hsn") or "-"), s["cell"]),
                 Paragraph(f"{quantity:g}", s["cell"]),
                 Paragraph(f"INR {_money(unit_price)}", s["cell"]),
                 Paragraph(_money(tax_amount), s["cell"]),
@@ -638,15 +776,15 @@ class QuotationPDFService:
         if len(rows) == 1:
             rows.append(
                 [Paragraph("No items on this quotation.", s["cell"])]
-                + [Paragraph("", s["cell"])] * 7
+                + [Paragraph("", s["cell"])] * 8
             )
 
         table = Table(
             rows,
             # Sums to the text area: any wider and the last columns wrap
             # their figures onto a second line.
-            colWidths=[11 * mm, 26 * mm, 22 * mm, 40 * mm, 10 * mm, 23 * mm,
-                       19 * mm, 23 * mm],
+            colWidths=[10 * mm, 24 * mm, 21 * mm, 29 * mm, 17 * mm, 9 * mm,
+                       22 * mm, 18 * mm, 24 * mm],
             repeatRows=1,
         )
         table.setStyle(TableStyle([
@@ -714,7 +852,26 @@ class QuotationPDFService:
             ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ]))
 
-        return [Spacer(1, 5 * mm), table]
+        # The same figure in words, built from the same number. A customer
+        # document carries both because digits can be altered with a pen
+        # and words cannot - and because it is what a reader checks the
+        # total against.
+        in_words = Table(
+            [[Paragraph(
+                f"<b>Amount in words:</b> {_words(quotation.total_payable)}",
+                s["cell_left"],
+            )]],
+            colWidths=[174 * mm],
+        )
+        in_words.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.5, RULE),
+            ("BACKGROUND", (0, 0), (-1, -1), BAND),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ]))
+
+        return [Spacer(1, 5 * mm), table, Spacer(1, 3 * mm), in_words]
 
     @staticmethod
     def payment_terms(quotation) -> list[str]:
@@ -774,12 +931,8 @@ class QuotationPDFService:
         name = (sender and sender["name"]) or company["signatory"]
         title = (sender and sender["title"]) or company["signatory_title"]
 
-        if name:
-            block.append(Paragraph(name, s["sign"]))
-        if title:
-            block.append(Paragraph(title, s["sign"]))
-
-        block.append(Paragraph(company["name"], s["sign"]))
+        for line in _without_repeats([name, title, company["name"]]):
+            block.append(Paragraph(line, s["sign"]))
 
         contact = [
             line

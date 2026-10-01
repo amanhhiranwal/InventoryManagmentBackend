@@ -17,6 +17,8 @@ class SalesOrderItem(BaseModel):
     product: Optional[str] = None
     model: Optional[str] = None
     sku: Optional[str] = None
+    #: Carried from the quotation, which carried it from the product.
+    hsn: Optional[str] = None
     rate: Optional[float] = 0.0
     price: Optional[float] = 0.0
     qty: Optional[float] = 0.0
@@ -64,6 +66,7 @@ class CreateSalesOrderRequest(BaseModel):
     orc_input: Optional[float] = None
 
     freight_charges: Optional[float] = 0.0
+    shifting_charges: Optional[float] = 0.0
     installation_lumpsum: Optional[float] = 0.0
     gst_percent: Optional[float] = 18.0
     advance_received: Optional[float] = 0.0
@@ -126,6 +129,7 @@ class UpdateSalesOrderRequest(BaseModel):
     orc_input: Optional[float] = None
 
     freight_charges: Optional[float] = None
+    shifting_charges: Optional[float] = None
     installation_lumpsum: Optional[float] = None
     gst_percent: Optional[float] = None
     advance_received: Optional[float] = None
