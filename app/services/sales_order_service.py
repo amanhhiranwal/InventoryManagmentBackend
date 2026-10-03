@@ -103,13 +103,71 @@ def _to_uuid(value) -> UUID | None:
         return None
 
 
+#: Catalogue HSN by SKU, read once per process. The catalogue is a few
+#: dozen rows and changes when somebody edits a product, so it is cheap to
+#: hold and refreshed by a restart.
+_HSN_BY_SKU: dict[str, str] | None = None
+
+
+def _hsn_for_sku(sku: str) -> str:
+    """The HSN the catalogue holds against a SKU, or "" if it holds none."""
+
+    global _HSN_BY_SKU
+
+    if _HSN_BY_SKU is None:
+        try:
+            from app.database.mongodb import sync_mongo_db
+
+            _HSN_BY_SKU = {
+                str(row.get("serial_number") or "").upper():
+                    str((row.get("attributes") or {}).get("hsn_code") or "").strip()
+                for row in sync_mongo_db["inventory_items"].find(
+                    {}, {"serial_number": 1, "attributes.hsn_code": 1}
+                )
+            }
+        except Exception:  # noqa: BLE001 - a lookup must never fail a save
+            _HSN_BY_SKU = {}
+
+    return _HSN_BY_SKU.get(str(sku or "").upper(), "")
+
+
 def _items_to_json(items) -> list | None:
+    """Lines as stored, with the two things every document needs settled.
+
+    The quantity is written into both ``qty`` and ``quantity_case``. The
+    older screens write one and the documents read the other, so a line
+    saved from the quotation form printed a quantity of zero on the
+    invoice - and an amount of zero beside it - while the totals, computed
+    from the other key, were right. One line disagreeing with the total
+    under it is worse than either being wrong on its own.
+
+    The HSN is filled from the catalogue when the line arrives without
+    one. It is a property of the product, so a line that omits it has not
+    been classified differently - it has just lost the code on the way,
+    and without it the invoice groups the tax under a dash.
+    """
+
     if items is None:
         return None
-    return [
+
+    rows = [
         item.dict() if hasattr(item, "dict") else dict(item)
         for item in items
     ]
+
+    for row in rows:
+        quantity = _as_float(
+            row.get("qty") or row.get("quantity_case") or row.get("quantity")
+        )
+        row["qty"] = quantity
+        row["quantity_case"] = quantity
+
+        if not str(row.get("hsn") or "").strip():
+            found = _hsn_for_sku(row.get("sku"))
+            if found:
+                row["hsn"] = found
+
+    return rows
 
 
 def _as_float(value, default: float = 0.0) -> float:
