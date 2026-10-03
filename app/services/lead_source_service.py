@@ -1,6 +1,8 @@
+from fastapi import HTTPException
 from sqlalchemy import asc
 from sqlalchemy.orm import Session
 
+from app.models.lead import Lead
 from app.models.lead_source import LeadSource
 from app.schemas.lead_source import CreateLeadSourceRequest
 
@@ -45,3 +47,50 @@ class LeadSourceService:
         db.commit()
         db.refresh(src)
         return src
+
+    @staticmethod
+    def update_lead_source(
+        source_id: str,
+        request: CreateLeadSourceRequest,
+        db: Session,
+    ) -> LeadSource:
+        src = db.query(LeadSource).filter(LeadSource.id == source_id).first()
+
+        if src is None:
+            raise HTTPException(status_code=404, detail="Lead source not found.")
+
+        src.name = request.name
+        src.code = request.code or request.name.lower().replace(" ", "_")
+        src.description = request.description
+
+        db.commit()
+        db.refresh(src)
+        return src
+
+    @staticmethod
+    def delete_lead_source(source_id: str, db: Session) -> None:
+        """Retire a source, unless leads were taken through it.
+
+        Deleting one a lead points at would leave that lead unable to say
+        where it came from, which is the only thing the source is for. The
+        refusal names the count so it is clear what is in the way.
+        """
+
+        src = db.query(LeadSource).filter(LeadSource.id == source_id).first()
+
+        if src is None:
+            raise HTTPException(status_code=404, detail="Lead source not found.")
+
+        in_use = db.query(Lead).filter(Lead.lead_source_id == src.id).count()
+
+        if in_use:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{in_use} lead{'s' if in_use > 1 else ''} came in through "
+                    f"\u201c{src.name}\u201d, so it cannot be removed."
+                ),
+            )
+
+        db.delete(src)
+        db.commit()
