@@ -22,6 +22,7 @@ the manual test script:
         dispatch takes every line off the shelf
     12. a record raised in error can be deleted, and one with work built
         on top of it cannot
+    13. a deleted document does not hand its reference to the next one
 
 Run seed_sales_team.py, seed_fulfilment_roles.py, seed_role_access.py and
 seed_product_catalogue.py first. Everything this creates is removed again,
@@ -74,7 +75,7 @@ def banner(title):
 SIDEBARS = {
     "admin": [
         ("Dashboard", []),
-        ("Sales", ["Leads", "Opportunity", "Quotation", "Sales Order", "Proforma Invoice"]),
+        ("Sales", ["Leads", "Opportunity", "Proposal", "Sales Order", "Proforma Invoice"]),
         ("Users", []),
         ("Inventory", []),
         ("Customers", []),
@@ -83,8 +84,9 @@ SIDEBARS = {
         ("Reports", []),
         ("Masters", [
             "Companies", "Locations", "Customer Type", "Product Type",
-            "Category Group", "Units", "Roles & Access", "Company Profile",
-            "Quotation Approval",
+            "Category Group", "Units", "Lead Source", "States",
+            "Bank Details", "Roles & Access", "Company Profile",
+            "Proposal Approval",
         ]),
         ("Workflows", []),
     ],
@@ -93,7 +95,7 @@ SIDEBARS = {
     # menu, which is why this list is shared.
     "sales": [
         ("Dashboard", []),
-        ("Sales", ["Leads", "Opportunity", "Quotation", "Sales Order", "Proforma Invoice"]),
+        ("Sales", ["Leads", "Opportunity", "Proposal", "Sales Order", "Proforma Invoice"]),
         ("Users", []),
         ("Inventory", []),
         ("Customers", []),
@@ -130,6 +132,39 @@ created = {
 }
 #: serial -> what was on the shelf before this suite touched it.
 stock_before_run: dict[str, float] = {}
+
+
+def set_stock(serial: str, quantity: float) -> None:
+    """Put a known number on the shelf for a fixture SKU.
+
+    Only ever called on a serial whose opening figure has already been
+    recorded in ``stock_before_run``, so the clear-up puts back exactly
+    what was there.
+    """
+
+    item = next(
+        (
+            i for i in rows(api("get", "/inventory/items", token["admin"]))
+            if str(i.get("serial_number") or "").upper() == serial.upper()
+        ),
+        None,
+    )
+
+    if item is None:
+        return
+
+    attributes = dict(item.get("attributes") or {})
+    attributes["instock"] = quantity
+    attributes["stock"] = quantity
+
+    api("put", f"/inventory/items/{item['_id']}", token["admin"], json={
+        "name": item.get("name"),
+        "serial_number": item.get("serial_number"),
+        "product_type_code": item.get("product_type_code"),
+        "category": item.get("category"),
+        "attributes": attributes,
+        "company_id": item.get("company_id"),
+    })
 
 
 def shape(sidebar) -> list:
@@ -237,7 +272,7 @@ try:
         "items": [{
             "product": "Interactive Flat Panel 75in",
             "model": "Qonevo IFP 75",
-            "sku": "NX-9K-QIFP75-EX",
+            "sku": "SG-SPX7-LANGO3576",
             "quantity": 5,
             "unit_price": 185000,
             "tax": 18,
@@ -309,7 +344,7 @@ try:
         "items": [{
             "product": "Interactive Flat Panel 75in",
             "model": "Qonevo IFP 75",
-            "sku": "NX-9K-QIFP75-EX",
+            "sku": "SG-SPX7-LANGO3576",
             "qty": 5,
             "rate": 185000,
             "tax_rate": 18,
@@ -413,8 +448,8 @@ try:
                 return float((row.get("attributes") or {}).get("instock") or 0)
         return None
 
-    stock_before_run["NX-9K-QIFP75-EX"] = shelf("NX-9K-QIFP75-EX")
-    opening = stock_before_run["NX-9K-QIFP75-EX"]
+    stock_before_run["SG-SPX7-LANGO3576"] = shelf("SG-SPX7-LANGO3576")
+    opening = stock_before_run["SG-SPX7-LANGO3576"]
 
     for stage, label in (
         ("PROCUREMENT", "taken into procurement"),
@@ -435,15 +470,15 @@ try:
         if stage in ("PROCUREMENT", "READY"):
             check(
                 f"the shelf is untouched at {stage}",
-                shelf("NX-9K-QIFP75-EX") == opening,
-                f"{shelf('NX-9K-QIFP75-EX')} - should still be {opening}",
+                shelf("SG-SPX7-LANGO3576") == opening,
+                f"{shelf('SG-SPX7-LANGO3576')} - should still be {opening}",
             )
 
         if stage == "DISPATCHED":
             check(
                 "dispatch takes the 5 off the shelf",
-                shelf("NX-9K-QIFP75-EX") == opening - 5,
-                f"{shelf('NX-9K-QIFP75-EX')} - expected {opening - 5}",
+                shelf("SG-SPX7-LANGO3576") == opening - 5,
+                f"{shelf('SG-SPX7-LANGO3576')} - expected {opening - 5}",
             )
 
     # Read from the order's own detail rather than the desk queue: by now
@@ -584,11 +619,25 @@ try:
     )
 
     # A line of each kind: plenty, thin, and nothing at all.
-    PLENTY, THIN, NONE_LEFT = "NX-AP-WIFI6", "NX-9K-QIFP65-EX", "NX-ACC-RMT"
+    PLENTY, THIN, NONE_LEFT = "SG-SPX6-LANGO3576", "SG-CPX8-LANGOV100", "SG-STD-TOUCH"
 
     for serial in (PLENTY, THIN, NONE_LEFT):
         check(f"{serial} is on the shelf to order against", serial in by_serial)
         stock_before_run[serial] = shelf(serial)
+
+    # Set the shelf to what each role in this section needs, rather than
+    # hoping the catalogue still happens to hold it. These three stand for
+    # plenty, thin and nothing, and the whole section is about the desk's
+    # shortfall warning - so when a repricing run or somebody's picking
+    # changed the counts, the assertions quietly stopped testing anything.
+    # Whatever was there is put back by the clear-up, which already records
+    # the opening figures above.
+    #: serial -> what this section puts on the shelf, and therefore what
+    #: the assertions below count against.
+    FIXTURE = {PLENTY: 40.0, THIN: 3.0, NONE_LEFT: 0.0}
+
+    for serial, quantity in FIXTURE.items():
+        set_stock(serial, quantity)
 
     r = api("post", "/orders", owner, json={
         "customer_name": f"Short Order {TAG}",
@@ -596,9 +645,29 @@ try:
         "state": "Delhi",
         "order_date": now.isoformat(),
         "items": [
-            {"product": "Wi-Fi 6 Access Point", "sku": PLENTY, "qty": 4, "rate": 14500, "tax_rate": 18},
-            {"product": "Interactive Flat Panel 65in", "sku": THIN, "qty": 5, "rate": 142000, "tax_rate": 18},
-            {"product": "Universal Remote Control", "sku": NONE_LEFT, "qty": 2, "rate": 950, "tax_rate": 18},
+            # Name, SKU, rate and HSN all off the same catalogue line. They
+            # had drifted apart when the SKUs were repointed to the Synergy
+            # catalogue and the names left behind, so an order read
+            # "Wi-Fi 6 Access Point" against the SKU of a 65" panel - and
+            # every document raised from it printed that contradiction.
+            {
+                "product": '65" Interactive Flat Panel SPX6 (Lango 3576)',
+                "model": "Lango RK3576, 8GB RAM / 128GB ROM, Android 16",
+                "sku": PLENTY, "hsn": "85285900",
+                "qty": 4, "rate": 68000, "tax_rate": 18,
+            },
+            {
+                "product": '86" Interactive Flat Panel CPX8 (LangoV100)',
+                "model": "Lango V100, 8GB RAM / 128GB ROM, Android 14",
+                "sku": THIN, "hsn": "85285900",
+                "qty": 5, "rate": 88000, "tax_rate": 18,
+            },
+            {
+                "product": "Standee Touch",
+                "model": "Touch standee cabinet",
+                "sku": NONE_LEFT, "hsn": "85285900",
+                "qty": 2, "rate": 60000, "tax_rate": 18,
+            },
         ],
     })
     check("a three-line order is raised", r.status_code == 200, f"{r.status_code} {r.text[:200]}")
@@ -607,6 +676,21 @@ try:
     created["orders"].append(short_order["id"])
 
     api("put", f"/orders/{short_order['id']}/status", owner, json={"status": "CONFIRMED"})
+
+    # Accounts will not pass an order with nothing recorded against it, so
+    # this one is invoiced and paid like any other before it reaches the
+    # warehouse. The money is section 5's subject; here it is only setup.
+    short_invoice = api("post", "/proforma-invoices", owner, json={
+        "sales_order_id": short_order["id"],
+        "status": "DRAFT",
+        "advance_percent": 30,
+    }).json()["data"]
+    created["invoices"].append(short_invoice["id"])
+
+    api("put", f"/proforma-invoices/{short_invoice['id']}", owner, json={
+        "amount_paid": round(float(short_invoice["grand_total"]) * 0.3, 2),
+    })
+
     api("put", f"/fulfilment/orders/{short_order['id']}/decide", token["accounts"], json={
         "approve": True, "remarks": "Paid up front.",
     })
@@ -620,12 +704,12 @@ try:
 
     check("the desk reads all three lines", len(lines) == 3, str(sorted(lines)))
     check(
-        f"{PLENTY}: 4 of {stock_before_run[PLENTY]:.0f} is covered",
+        f"{PLENTY}: 4 of {FIXTURE[PLENTY]:.0f} is covered",
         bool(lines.get(PLENTY) and not lines[PLENTY]["short"]),
         str(lines.get(PLENTY)),
     )
     check(
-        f"{THIN}: 5 wanted against {stock_before_run[THIN]:.0f} is flagged short",
+        f"{THIN}: 5 wanted against {FIXTURE[THIN]:.0f} is flagged short",
         bool(lines.get(THIN) and lines[THIN]["short"]),
         str(lines.get(THIN)),
     )
@@ -654,8 +738,8 @@ try:
     )
     check(
         f"{PLENTY} falls by the 4 that went",
-        shelf(PLENTY) == stock_before_run[PLENTY] - 4,
-        f"{shelf(PLENTY)} from {stock_before_run[PLENTY]}",
+        shelf(PLENTY) == FIXTURE[PLENTY] - 4,
+        f"{shelf(PLENTY)} from {FIXTURE[PLENTY]}",
     )
     check(
         f"{THIN} is emptied rather than going negative",
@@ -679,13 +763,13 @@ try:
 
     north, south = catalogue_for("am_north_1"), catalogue_for("am_south_1")
 
-    check("the North salesperson sees the North demo kit", "NX-DEMO-NORTH" in north)
-    check("and not the South one", "NX-DEMO-SOUTH" not in north, str(sorted(north - south)[:5]))
-    check("the South salesperson sees the South demo kit", "NX-DEMO-SOUTH" in south)
-    check("and not the North one", "NX-DEMO-NORTH" not in south)
+    check("the North salesperson sees the North demo kit", "SG-DEMO-NORTH" in north)
+    check("and not the South one", "SG-DEMO-SOUTH" not in north, str(sorted(north - south)[:5]))
+    check("the South salesperson sees the South demo kit", "SG-DEMO-SOUTH" in south)
+    check("and not the North one", "SG-DEMO-NORTH" not in south)
     check(
         "both see the shared catalogue",
-        "NX-9K-QIFP75-EX" in north and "NX-9K-QIFP75-EX" in south,
+        "SG-SPX7-LANGO3576" in north and "SG-SPX7-LANGO3576" in south,
     )
 
     # ============================================ 12. deleting a record
@@ -751,7 +835,7 @@ try:
         "order_date": now.isoformat(),
         "items": [{
             "product": "Interactive Flat Panel 75in",
-            "sku": "NX-9K-QIFP75-EX",
+            "sku": "SG-SPX7-LANGO3576",
             "qty": 1,
             "rate": 185000,
             "tax_rate": 18,
@@ -769,12 +853,60 @@ try:
             f"got {blocked.status_code} {blocked.text[:140]}",
         )
 
+    # ================================ 13. a reference is never handed out twice
+    banner("13. A deleted document does not hand its number on")
+
+    def raise_throwaway(label):
+        raised = api("post", "/orders", owner, json={
+            "customer_name": f"{label} {TAG}",
+            "company_name": "Synergy North Agro",
+            "state": "Delhi",
+            "order_date": now.isoformat(),
+            "items": [{
+                "product": "Interactive Flat Panel 75in",
+                "sku": "SG-SPX7-LANGO3576",
+                "qty": 1,
+                "rate": 185000,
+                "tax_rate": 18,
+            }],
+        })
+
+        return raised.json()["data"]
+
+    from sqlalchemy import text as _sql
+
+    from app.database.postgres import SessionLocal as _Session
+
+    first = raise_throwaway("Numbering A")
+    check("an order takes the next number", bool(first.get("order_number")), str(first.get("order_number")))
+
+    # Remove it the way a real deletion would, then raise another. The
+    # next number used to be worked out as "the highest row plus one", so
+    # this second order took the first one's reference - and every stock
+    # movement, email and notification naming it meant two different
+    # orders.
+    scrub = _Session()
+    scrub.execute(_sql("delete from sales_order_activity where sales_order_id = :id"), {"id": first["id"]})
+    scrub.execute(_sql("delete from notifications where module = 'sales_order' and entity_id = :id"), {"id": first["id"]})
+    scrub.execute(_sql("delete from sales_order where id = :id"), {"id": first["id"]})
+    scrub.commit()
+    scrub.close()
+
+    second = raise_throwaway("Numbering B")
+    created["orders"].append(second["id"])
+
+    check(
+        "the next one does not reuse it",
+        second.get("order_number") != first.get("order_number"),
+        f"both came out as {first.get('order_number')}",
+    )
+
 except Exception as exc:  # noqa: BLE001 - the report below still has to print
     failed.append(f"{section}: the run stopped - {exc}")
     print(f"\n  STOPPED  {exc}")
 
 finally:
-    banner("12. Clearing up, and putting the stock back")
+    banner("14. Clearing up, and putting the stock back")
 
     try:
         admin = token.get("admin") or login(ADMIN_EMAIL, ADMIN_PASSWORD)

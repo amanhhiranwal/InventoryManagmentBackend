@@ -35,6 +35,7 @@ class CreateProformaInvoiceRequest(BaseModel):
     advance_percent: Optional[float] = None
 
     commercial_terms: Optional[List[str]] = None
+    payment_terms: Optional[str] = None
     technical_notes: Optional[str] = None
     attachments: Optional[List[Dict[str, Any]]] = None
 
@@ -56,6 +57,7 @@ class UpdateProformaInvoiceRequest(BaseModel):
     advance_percent: Optional[float] = None
 
     commercial_terms: Optional[List[str]] = None
+    payment_terms: Optional[str] = None
     technical_notes: Optional[str] = None
     attachments: Optional[List[Dict[str, Any]]] = None
 

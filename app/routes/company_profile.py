@@ -33,6 +33,20 @@ class CompanyProfileRequest(BaseModel):
     signatory_name: str | None = None
     signatory_title: str | None = None
 
+    # The seller's state, which decides CGST+SGST against IGST, and the
+    # account a customer remits to. Both are printed on documents money
+    # moves against, so they belong on a screen a super admin can correct
+    # rather than in a .env file only the deployment can reach.
+    company_state_name: str | None = None
+    company_state_code: str | None = None
+    bank_account_name: str | None = None
+    bank_name: str | None = None
+    bank_account_number: str | None = None
+    bank_branch: str | None = None
+    bank_ifsc: str | None = None
+    bank_swift: str | None = None
+    upi_vpa: str | None = None
+
 
 @router.get("")
 def get_profile(
@@ -155,5 +169,60 @@ def get_cover_image(db: Session = Depends(get_db)):
 
     if path is None or not path.exists():
         raise HTTPException(status_code=404, detail="No cover image set.")
+
+    return FileResponse(str(path))
+
+
+@router.post("/upi-qr")
+def upload_upi_qr(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user=Depends(require_super_admin),
+):
+    """The UPI code printed on the proforma invoice.
+
+    An image rather than a code generated from the VPA: a customer scans
+    this to pay, and a QR we draw ourselves from a mistyped VPA would scan
+    cleanly and send the money nowhere. The bank's own image is the one
+    worth printing.
+    """
+
+    CompanyProfileService.save({"upi_qr_path": _store_image(file, "upi-qr")}, db)
+
+    return {
+        "success": True,
+        "message": "UPI QR uploaded.",
+        "data": CompanyProfileService.as_lists(db),
+    }
+
+
+@router.delete("/upi-qr")
+def remove_upi_qr(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_super_admin),
+):
+    CompanyProfileService.save({"upi_qr_path": ""}, db)
+
+    return {
+        "success": True,
+        "message": "UPI QR removed.",
+        "data": CompanyProfileService.as_lists(db),
+    }
+
+
+@router.get("/upi-qr/image")
+def get_upi_qr_image(db: Session = Depends(get_db)):
+    """The UPI code, for the invoice to show. Open, like the logo."""
+
+    from fastapi.responses import FileResponse
+
+    configured = CompanyProfileService.raw(db).get("upi_qr_path") or ""
+    path = Path(configured) if configured else None
+
+    if path and not path.is_absolute():
+        path = Path(__file__).resolve().parents[2] / configured
+
+    if path is None or not path.exists():
+        raise HTTPException(status_code=404, detail="No UPI QR set.")
 
     return FileResponse(str(path))

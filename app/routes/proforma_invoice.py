@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.controllers.proforma_invoice_controller import ProformaInvoiceController
+from app.services.proforma_invoice_service import ProformaInvoiceService
 from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.schemas.proforma_invoice import (
@@ -20,6 +21,21 @@ router = APIRouter(
 )
 
 
+@router.get("/payment-terms")
+def payment_term_options(current_user=Depends(get_current_user)):
+    """The splits a document can be issued on.
+
+    Served rather than hard-coded into each screen so the proposal, the
+    sales order and this invoice all offer the same list, and adding one
+    does not mean editing three files. Declared above /{invoice_id} so
+    the path is not read as an id.
+    """
+
+    from app.core.payment_terms import options
+
+    return {"success": True, "data": options()}
+
+
 @router.get("")
 def get_proforma_invoices(
     sales_order_id: Optional[int] = None,
@@ -32,10 +48,31 @@ def get_proforma_invoices(
 
 
 @router.get("/company-profile")
-def get_company_profile(current_user=Depends(get_current_user)):
+def get_company_profile(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     """Seller name, address, banking and signatory printed on the invoice."""
 
-    return ProformaInvoiceController.company_profile()
+    return ProformaInvoiceController.company_profile(db)
+
+
+@router.get("/next-number")
+def next_pi_number(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """The reference a new invoice would take.
+
+    A preview, not a reservation: it reads the counter without moving it,
+    so opening a form never burns a number. Declared above /{invoice_id}
+    so the path is not read as an id.
+    """
+
+    return {
+        "success": True,
+        "data": {"pi_number": ProformaInvoiceService.preview_pi_number(db)},
+    }
 
 
 @router.post("")

@@ -26,7 +26,12 @@ Group column was showing something that exists nowhere in Masters.
 Safe to run again: a product already on the shelf is left exactly as it is,
 stock included, so this can never undo a day's picking.
 
-    docker exec -w /app backend_app python seed_product_catalogue.py
+RETIRED. seed_synergy_catalogue.py replaces it - the real catalogue, at
+the rates and HSN codes on the stock dashboard. This script now refuses to
+run, because restoring the invented NX- lines would leave quotations
+pricing against products nobody sells.
+
+    docker exec -w /app backend_app python seed_synergy_catalogue.py
 """
 
 import sys
@@ -115,6 +120,25 @@ DEMO_KITS = [
 
 
 def main() -> int:
+    # RETIRED. Superseded by seed_synergy_catalogue.py, which puts up the
+    # products we actually sell with the rates and HSN codes written on the
+    # Noida 65 stock dashboard. Running this would put the twenty-six
+    # invented NX- lines back on the shelf, and every quotation raised off
+    # one would price against a product that does not exist.
+    #
+    # Left in the tree rather than deleted because the product types, units
+    # and category-group realignment below are still the only written record
+    # of how those masters are meant to line up.
+    if "--i-know-this-is-retired" not in sys.argv:
+        print(
+            "  seed_product_catalogue.py is retired.\n"
+            "  Use: docker exec -w /app backend_app python "
+            "seed_synergy_catalogue.py\n"
+            "  It seeds the real catalogue; this one would restore the "
+            "withdrawn NX- demo products."
+        )
+        return 1
+
     admin = login(ADMIN_EMAIL, ADMIN_PASSWORD)
 
     units(admin)

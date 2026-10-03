@@ -103,13 +103,71 @@ def _to_uuid(value) -> UUID | None:
         return None
 
 
+#: Catalogue HSN by SKU, read once per process. The catalogue is a few
+#: dozen rows and changes when somebody edits a product, so it is cheap to
+#: hold and refreshed by a restart.
+_HSN_BY_SKU: dict[str, str] | None = None
+
+
+def _hsn_for_sku(sku: str) -> str:
+    """The HSN the catalogue holds against a SKU, or "" if it holds none."""
+
+    global _HSN_BY_SKU
+
+    if _HSN_BY_SKU is None:
+        try:
+            from app.database.mongodb import sync_mongo_db
+
+            _HSN_BY_SKU = {
+                str(row.get("serial_number") or "").upper():
+                    str((row.get("attributes") or {}).get("hsn_code") or "").strip()
+                for row in sync_mongo_db["inventory_items"].find(
+                    {}, {"serial_number": 1, "attributes.hsn_code": 1}
+                )
+            }
+        except Exception:  # noqa: BLE001 - a lookup must never fail a save
+            _HSN_BY_SKU = {}
+
+    return _HSN_BY_SKU.get(str(sku or "").upper(), "")
+
+
 def _items_to_json(items) -> list | None:
+    """Lines as stored, with the two things every document needs settled.
+
+    The quantity is written into both ``qty`` and ``quantity_case``. The
+    older screens write one and the documents read the other, so a line
+    saved from the quotation form printed a quantity of zero on the
+    invoice - and an amount of zero beside it - while the totals, computed
+    from the other key, were right. One line disagreeing with the total
+    under it is worse than either being wrong on its own.
+
+    The HSN is filled from the catalogue when the line arrives without
+    one. It is a property of the product, so a line that omits it has not
+    been classified differently - it has just lost the code on the way,
+    and without it the invoice groups the tax under a dash.
+    """
+
     if items is None:
         return None
-    return [
+
+    rows = [
         item.dict() if hasattr(item, "dict") else dict(item)
         for item in items
     ]
+
+    for row in rows:
+        quantity = _as_float(
+            row.get("qty") or row.get("quantity_case") or row.get("quantity")
+        )
+        row["qty"] = quantity
+        row["quantity_case"] = quantity
+
+        if not str(row.get("hsn") or "").strip():
+            found = _hsn_for_sku(row.get("sku"))
+            if found:
+                row["hsn"] = found
+
+    return rows
 
 
 def _as_float(value, default: float = 0.0) -> float:
@@ -152,6 +210,7 @@ def compute_order_totals(
     orc_input: float | None = None,
     freight_charges: float = 0.0,
     installation_lumpsum: float = 0.0,
+    shifting_charges: float = 0.0,
     gst_percent: float = 18.0,
     advance_received: float = 0.0,
 ) -> dict:
@@ -167,6 +226,17 @@ def compute_order_totals(
         gst          = taxable * gst%
         grand total  = taxable + gst
         outstanding  = grand total - advance received
+
+    And what the order is actually worth to us, which is a different
+    question from what the customer pays:
+
+        revenue      = grand total - freight - installation
+                                   - shifting - gst
+
+    Delivery and installation are passed straight through, the GST goes to
+    the government, and shifting is a cost we carry. The ORC is already out
+    of the grand total - it comes off the taxable amount above - so taking
+    it off again here would count the same commission twice.
     """
 
     rows = _items_to_json(items) or []
@@ -214,6 +284,7 @@ def compute_order_totals(
 
     freight_charges = _as_float(freight_charges)
     installation_lumpsum = _as_float(installation_lumpsum)
+    shifting_charges = _as_float(shifting_charges)
 
     # The order is where the margin given away actually lands: the
     # discount and the ORC both come off, then delivery and installation
@@ -231,6 +302,16 @@ def compute_order_totals(
     gst_amount = taxable_amount * gst_percent / 100.0
     grand_total = taxable_amount + gst_amount
 
+    # What the order leaves us once everything that was never ours has
+    # been taken back out.
+    total_revenue = (
+        grand_total
+        - freight_charges
+        - installation_lumpsum
+        - shifting_charges
+        - gst_amount
+    )
+
     # An advance cannot exceed the order, and the balance never goes negative.
     advance_received = max(0.0, min(_as_float(advance_received), grand_total))
 
@@ -245,10 +326,12 @@ def compute_order_totals(
         "orc_input": orc_input,
         "freight_charges": round(freight_charges, 2),
         "installation_lumpsum": round(installation_lumpsum, 2),
+        "shifting_charges": round(shifting_charges, 2),
         "taxable_amount": round(taxable_amount, 2),
         "gst_percent": round(gst_percent, 2),
         "gst_amount": round(gst_amount, 2),
         "grand_total": round(grand_total, 2),
+        "total_revenue": round(total_revenue, 2),
         "advance_received": round(advance_received, 2),
         "outstanding_balance": round(grand_total - advance_received, 2),
     }
@@ -381,6 +464,7 @@ class SalesOrderService:
                 else 30.0
             ),
             commercial_terms=request.commercial_terms,
+            payment_terms=request.payment_terms,
             technical_notes=request.technical_notes,
             attachments=request.attachments,
             creator_id=_to_uuid(current_user.get("user_id")),
@@ -394,6 +478,9 @@ class SalesOrderService:
                 freight_charges=getattr(request, "freight_charges", 0.0) or 0.0,
                 installation_lumpsum=(
                     getattr(request, "installation_lumpsum", 0.0) or 0.0
+                ),
+                shifting_charges=(
+                    getattr(request, "shifting_charges", 0.0) or 0.0
                 ),
                 gst_percent=(
                     getattr(request, "gst_percent", None)
@@ -462,6 +549,7 @@ class SalesOrderService:
             "remarks",
             "advance_percent",
             "commercial_terms",
+            "payment_terms",
             "technical_notes",
             "attachments",
         ]
@@ -488,7 +576,7 @@ class SalesOrderService:
         money_fields = (
             "items", "discount_mode", "discount_input", "orc_mode",
             "orc_input", "freight_charges", "installation_lumpsum",
-            "gst_percent", "advance_received",
+            "shifting_charges", "gst_percent", "advance_received",
         )
 
         if any(getattr(request, field, None) is not None for field in money_fields):
@@ -506,6 +594,7 @@ class SalesOrderService:
                 installation_lumpsum=pick(
                     "installation_lumpsum", order.installation_lumpsum
                 ),
+                shifting_charges=pick("shifting_charges", order.shifting_charges),
                 gst_percent=pick("gst_percent", order.gst_percent or 18.0),
                 advance_received=pick(
                     "advance_received", order.advance_received
@@ -817,6 +906,8 @@ def serialize_sales_order(order: SalesOrder) -> dict:
         "discount_input": order.discount_input,
         "freight_charges": order.freight_charges or 0.0,
         "installation_lumpsum": order.installation_lumpsum or 0.0,
+        "shifting_charges": order.shifting_charges or 0.0,
+        "total_revenue": order.total_revenue or 0.0,
         "gst_percent": order.gst_percent if order.gst_percent is not None else 18.0,
         "advance_received": order.advance_received or 0.0,
         "outstanding_balance": order.outstanding_balance or 0.0,
@@ -858,6 +949,7 @@ def serialize_sales_order(order: SalesOrder) -> dict:
             2,
         ),
         "commercial_terms": order.commercial_terms or [],
+        "payment_terms": order.payment_terms,
         "technical_notes": order.technical_notes,
         "attachments": order.attachments or [],
         "creator_id": str(order.creator_id) if order.creator_id else None,

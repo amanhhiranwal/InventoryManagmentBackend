@@ -2,6 +2,7 @@ from app.models.app_setting import AppSetting
 from app.models.approval import SalesApproval
 from app.models.company import Company
 from app.models.customer_type import CustomerType
+from app.models.document_counter import DocumentCounter
 from app.models.lead import Lead
 from app.models.lead_source import LeadSource
 from app.models.location import Location

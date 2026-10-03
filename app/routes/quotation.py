@@ -6,6 +6,7 @@ from app.controllers.quotation_controller import QuotationController
 from app.core.config import settings
 from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
+from app.middleware.permission_middleware import require_permission
 from app.schemas.quotation import (
     CreateQuotationRequest,
     LogQuotationActivityRequest,
@@ -14,6 +15,17 @@ from app.schemas.quotation import (
     UpdateQuotationStatusRequest,
 )
 
+# Creating, amending and withdrawing a record are guarded. Reading is scoped by the reporting line
+# elsewhere; this is the coarser question of whether the caller works this
+# part of the pipeline at all. Without it the accounts clerk and the
+# warehouse - who hold no sales permissions and see no sales menu - could
+# still raise a proposal or an order straight at the API.
+#
+# Status moves are deliberately not guarded here. Who may move a record
+# from one stage to the next is a narrower question, already answered by
+# the approval chain and the fulfilment desks - and answered better, since
+# they know which desk the record is sitting with. Logging an activity is
+# likewise open to anyone who can see the record.
 router = APIRouter(
     prefix="/quotations",
     tags=["Quotations"],
@@ -138,7 +150,7 @@ def get_quotation(
 def create_quotation(
     request: CreateQuotationRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_permission("quotation.write")),
 ):
     return QuotationController.create(request, current_user, db)
 
@@ -180,7 +192,7 @@ def update_quotation(
     quotation_id: int,
     request: UpdateQuotationRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_permission("quotation.write")),
 ):
     return QuotationController.update(quotation_id, request, current_user, db)
 
@@ -228,7 +240,7 @@ def send_quotation(
     quotation_id: int,
     request: SendQuotationRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_permission("quotation.write")),
 ):
     """Email the quotation to the client and move it to SENT."""
 
@@ -239,7 +251,7 @@ def send_quotation(
 def delete_quotation(
     quotation_id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_permission("quotation.write")),
 ):
     """Remove a quotation, once nothing downstream depends on it."""
 
@@ -249,5 +261,5 @@ def delete_quotation(
 
     return {
         "success": True,
-        "message": "Quotation deleted successfully.",
+        "message": "Proposal deleted successfully.",
     }

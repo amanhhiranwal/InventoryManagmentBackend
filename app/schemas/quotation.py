@@ -10,6 +10,10 @@ class QuotationItem(BaseModel):
     product: Optional[str] = None
     model: Optional[str] = None
     sku: Optional[str] = None
+    #: HSN for goods, SAC for a service. Carried from the product so every
+    #: line of the document a client receives can show the one a GST
+    #: invoice is required to carry.
+    hsn: Optional[str] = None
     quantity: Optional[float] = 1
     unit_price: Optional[float] = 0.0
     discount: Optional[float] = 0.0

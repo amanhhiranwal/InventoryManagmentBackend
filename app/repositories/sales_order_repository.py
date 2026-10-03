@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 
+from app.core.references import highest_issued, next_number, peek_next
 from app.models.sales_order import SalesOrder
 
 
@@ -68,15 +69,42 @@ class SalesOrderRepository:
         return query.order_by(SalesOrder.id.desc()).all()
 
     @staticmethod
-    def next_order_number(db: Session) -> str:
-        """Generate the next SO-XXXXX reference."""
+    def preview_order_number(db: Session) -> str:
+        """The reference the next order would take, without taking it.
 
-        last = (
-            db.query(SalesOrder)
-            .order_by(SalesOrder.id.desc())
-            .first()
+        Shown on the New Sales Order form, which used to read "Assigned on
+        save" and leave the user wondering what they were about to raise.
+        It is a preview: whoever saves first gets it.
+        """
+
+        return "SO-{:05d}".format(
+            peek_next(
+                db,
+                "sales_order",
+                lambda: highest_issued(db, SalesOrder.order_number),
+            )
         )
 
-        next_id = (last.id + 1) if last else 1
+    @staticmethod
+    def next_order_number(db: Session) -> str:
+        """Allocate the next SO-XXXXX reference.
 
-        return f"SO-{next_id:05d}"
+        Taken from a counter that only moves forward. It used to be the
+        highest row plus one, which handed a deleted order's number to the
+        next one raised - SO-00036 had been seven different orders, and
+        every stock movement they made is filed under that one name.
+        """
+
+        return "SO-{:05d}".format(
+            next_number(
+                db,
+                "sales_order",
+                lambda: highest_issued(db, SalesOrder.order_number),
+                taken=lambda number: (
+                    db.query(SalesOrder.id)
+                    .filter(SalesOrder.order_number == f"SO-{number:05d}")
+                    .first()
+                    is not None
+                ),
+            )
+        )

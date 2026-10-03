@@ -47,3 +47,9 @@ node_modules/
 
 data/
 .ruff_cache/
+
+# Built by docs/status.py. The script is the source; a rendered copy
+# committed beside it is the stale-figures problem the script was written
+# to stop.
+docs/Synergy-CRM-Status.html
+docs/Synergy-CRM-Status.pdf

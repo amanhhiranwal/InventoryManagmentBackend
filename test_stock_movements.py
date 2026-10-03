@@ -56,6 +56,7 @@ def banner(title):
 
 token = {}
 created_orders = []
+created_invoices = []
 created_items = []
 
 try:
@@ -164,6 +165,21 @@ try:
         return api("get", f"/orders/{order['id']}", admin).json()["data"]["status"]
 
     api("put", f"/orders/{order['id']}/status", token["am_north_1"], json={"status": "CONFIRMED"})
+
+    # The money is not this suite's subject, but accounts will not pass an
+    # order with nothing recorded against it - so raise the invoice and pay
+    # the advance, the same way a real order reaches the warehouse.
+    invoice = api("post", "/proforma-invoices", token["am_north_1"], json={
+        "sales_order_id": order["id"],
+        "status": "DRAFT",
+        "advance_percent": 30,
+    }).json()["data"]
+    created_invoices.append(invoice["id"])
+
+    api("put", f"/proforma-invoices/{invoice['id']}", token["am_north_1"], json={
+        "amount_paid": round(float(invoice["grand_total"]) * 0.3, 2),
+    })
+
     api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
         "approve": True, "remarks": "Paid.",
     })
@@ -256,6 +272,11 @@ finally:
                 session.rollback()
                 print("   could not clear:", str(exc).split("\n")[0][:90])
 
+        if created_invoices:
+            run("delete from notifications where module = 'proforma_invoice' and entity_id = any(:ids)", ids=created_invoices)
+            run("delete from sales_proforma_invoice_activity where proforma_invoice_id = any(:ids)", ids=created_invoices)
+            run("delete from sales_proforma_invoice where id = any(:ids)", ids=created_invoices)
+
         if created_orders:
             run("delete from notifications where module = 'sales_order' and entity_id = any(:ids)", ids=created_orders)
             run("delete from sales_order_activity where sales_order_id = any(:ids)", ids=created_orders)
@@ -266,6 +287,7 @@ finally:
 
         print(
             f"   removed {len(created_orders)} orders, "
+            f"{len(created_invoices)} invoices, "
             f"{len(created_items)} products and their movements"
         )
     except Exception as exc:  # noqa: BLE001

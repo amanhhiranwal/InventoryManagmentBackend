@@ -79,6 +79,10 @@ class SalesOrder(Base):
     discount_amount = Column(Float, default=0.0, nullable=True)
     gst_amount = Column(Float, default=0.0, nullable=True)
     grand_total = Column(Float, default=0.0, nullable=True)
+    #: What the order leaves us: the grand total less the pass-through
+    #: charges, the shifting cost and the GST. Stored rather than derived
+    #: on read so a report can sum it without replaying the arithmetic.
+    total_revenue = Column(Float, default=0.0, nullable=True)
 
     # Summary charges. The New Sales Order form showed inputs for these but
     # they were never bound to anything, so nothing entered was kept or
@@ -86,6 +90,10 @@ class SalesOrder(Base):
     orc_amount = Column(Float, default=0.0, nullable=True)
     orc_percent = Column(Float, default=0.0, nullable=True)
     freight_charges = Column(Float, default=0.0, nullable=True)
+    #: What it costs us to shift the goods. A cost we carry, not a charge
+    #: the customer is billed, so it never reaches the taxable amount -
+    #: it only comes off what the order actually earns.
+    shifting_charges = Column(Float, default=0.0, nullable=True)
     installation_lumpsum = Column(Float, default=0.0, nullable=True)
     taxable_amount = Column(Float, default=0.0, nullable=True)
     gst_percent = Column(Float, default=18.0, nullable=True)
@@ -117,6 +125,12 @@ class SalesOrder(Base):
 
     #: Commercial conditions carried onto the order, one string per bullet.
     commercial_terms = Column(JSON, nullable=True)
+
+    #: How the order is to be paid, in its own words. Held apart from the
+    #: conditions above because it is the one clause accounts read on its
+    #: own - it decides what the proforma invoice asks for - and a bullet
+    #: in a list is a poor place to look for it.
+    payment_terms = Column(String(500), nullable=True)
 
     #: Free text describing the agreed scope of work on site.
     technical_notes = Column(String(2000), nullable=True)

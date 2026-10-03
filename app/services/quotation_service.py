@@ -11,11 +11,13 @@ from app.core.workflow_status import (
     assert_transition,
     normalize_quotation_status,
 )
+from app.models.approval import ApprovalDocument
 from app.models.opportunity_activity import OpportunityActivity
 from app.models.quotation import Quotation
 from app.models.quotation_activity import QuotationActivity
 from app.repositories.opportunity_repository import OpportunityRepository
 from app.repositories.quotation_repository import QuotationRepository
+from app.services.approval_service import ApprovalService
 from app.services.email_service import EmailService
 from app.services.lead_service import get_visible_creator_user_ids
 from app.services.quotation_pdf_service import QuotationPDFService
@@ -319,12 +321,12 @@ def _to_uuid(value) -> UUID | None:
 
 #: Headline written onto the activity entry when a quotation reaches a status.
 QUOTATION_STATUS_ACTIONS: dict[str, str] = {
-    QuotationStatus.DRAFT: "Quotation Drafted",
+    QuotationStatus.DRAFT: "Proposal Drafted",
     QuotationStatus.PENDING_APPROVAL: "Sent For Approval",
     QuotationStatus.SENT: "Sent To Client",
     QuotationStatus.ACCEPTED: "Accepted By Client",
     QuotationStatus.REJECTED: "Rejected By Client",
-    QuotationStatus.EXPIRED: "Quotation Expired",
+    QuotationStatus.EXPIRED: "Proposal Expired",
 }
 
 
@@ -348,7 +350,7 @@ class QuotationService:
         quotation = QuotationRepository.get_by_id(db, quotation_id)
 
         if quotation is None:
-            raise HTTPException(status_code=404, detail="Quotation not found")
+            raise HTTPException(status_code=404, detail="Proposal not found")
 
         return quotation
 
@@ -687,7 +689,7 @@ class QuotationService:
                 quotation.status,
                 "Quotation Drafted",
             ),
-            description=f"Quotation {quotation.quote_number} created.",
+            description=f"Proposal {quotation.quote_number} created.",
             to_status=quotation.status,
             user_id=str(creator_id),
         )
@@ -738,7 +740,7 @@ class QuotationService:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Quotation {quotation.quote_number} has already been "
+                    f"Proposal {quotation.quote_number} has already been "
                     f"{quotation.status.lower()} and can no longer be edited. "
                     "Raise a revision instead."
                 ),
@@ -865,6 +867,27 @@ class QuotationService:
 
         previous_status = quotation.status
 
+        if (
+            target == QuotationStatus.PENDING_APPROVAL
+            and previous_status != target
+            and ApprovalService.open_for(
+                ApprovalDocument.QUOTATION, quotation.id, db
+            )
+            is None
+        ):
+            # Setting the status by hand parked the quotation where nobody
+            # was looking: it said Pending Approval, and no approver had
+            # been asked for anything, so it waited for ever. The status is
+            # the chain's to set - see ApprovalService._hold_document.
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Nothing has been sent for approval on this quotation. "
+                    "Open it and use Send For Approval, which works out who "
+                    "has to sign for the discount and asks them."
+                ),
+            )
+
         quotation.status = target
 
         if target == QuotationStatus.REJECTED:
@@ -916,7 +939,7 @@ class QuotationService:
                 "mime_type": "application/pdf",
             }]
         except Exception as exc:  # pragma: no cover - defensive
-            print("Quotation PDF could not be built:", exc)
+            print("Proposal PDF could not be built:", exc)
             return []
 
     @staticmethod
@@ -935,6 +958,27 @@ class QuotationService:
         quotation = QuotationService.get_by_id(quotation_id, db)
         QuotationService.assert_can_modify(quotation, current_user, db)
 
+        # Nothing goes to a client on a discount nobody has signed for yet.
+        # The chain exists precisely so a price leaves the building only
+        # once somebody with the authority has agreed to it, and an email
+        # cannot be recalled. A test send to oneself is still allowed.
+        if not getattr(request, "test_only", False):
+            pending = ApprovalService.open_for(
+                ApprovalDocument.QUOTATION, quotation.id, db
+            )
+
+            if pending is not None:
+                waiting_on = pending.steps[pending.current_step]["role"]
+
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"{quotation.quote_number} is waiting on the "
+                        f"{waiting_on} to approve its discount. It can be "
+                        "sent to the client once that is cleared."
+                    ),
+                )
+
         recipients = [address.strip() for address in (request.to or []) if address.strip()]
 
         if not recipients:
@@ -947,7 +991,7 @@ class QuotationService:
         bcc = [address.strip() for address in (request.bcc or []) if address.strip()]
 
         subject = request.subject or (
-            f"Commercial & Technical Quotation [{quotation.quote_number}]"
+            f"Commercial & Technical Proposal [{quotation.quote_number}]"
             f" - {quotation.opportunity_name or quotation.organization_name or ''}".strip()
         )
 
@@ -1069,6 +1113,22 @@ class QuotationService:
         lines += [
             f"  - Total Value: {format_inr(quotation.total_payable)}"
             f"{_gst_clause(quotation)}",
+            "",
+            "Payment Terms:",
+        ]
+
+        # The same split the PDF prints, from the same figures, so changing
+        # the advance on the proposal changes the covering email with it.
+        # Written out rather than restated here: two copies of one rule is
+        # how the letter and the document start disagreeing.
+        from app.services.quotation_pdf_service import QuotationPDFService
+
+        for term in QuotationPDFService.payment_terms(quotation):
+            lines.append(f"  - {term}")
+
+        lines += [
+            f"  - This offer is valid until "
+            f"{quotation.validation_date.strftime('%d %b %Y') if quotation.validation_date else 'the date stated on the proposal'}.",
             "",
             "Kindly review the attached quotation and let us know if you "
             "require any adjustments or technical clarifications.",

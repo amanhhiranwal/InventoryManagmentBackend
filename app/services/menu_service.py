@@ -11,6 +11,11 @@ from app.schemas.menu import CreateMenuItemRequest, UpdateMenuItemRequest
 RENAMED_DEFAULT_TITLES = {
   "Oppurtunity": "Opportunity",
   "Sales Orders": "Sales Order",
+  # The document is called a proposal on every screen the design covers.
+  # The record, its route and its QT- reference are unchanged; only what
+  # a person reads has.
+  "Quotation": "Proposal",
+  "Quotation Approval": "Proposal Approval",
 }
 
 #: Renames that would be ambiguous on the title alone, so the path decides.
@@ -70,7 +75,7 @@ DEFAULT_MENUS_DATA = [
     "children": [
       {"title": "Leads", "icon": "LuUser", "path": "/leads", "permission_key": "lead.read", "order_index": 1},
       {"title": "Opportunity", "icon": "LuStar", "path": "/sales/opportunities", "permission_key": "opportunity.read", "order_index": 2},
-      {"title": "Quotation", "icon": "LuQuoteOpen", "path": "/sales/quotations", "permission_key": "quotation.read", "order_index": 3},
+      {"title": "Proposal", "icon": "LuQuoteOpen", "path": "/sales/quotations", "permission_key": "quotation.read", "order_index": 3},
       {"title": "Sales Order", "icon": "LuFileText", "path": "/sales/orders", "permission_key": "order.read", "order_index": 4},
       # Raised against a confirmed sales order, so whoever can see orders can
       # see their invoices - no separate permission to grant.
@@ -140,12 +145,25 @@ DEFAULT_MENUS_DATA = [
       {"title": "Product Type", "icon": "LuBoxes", "path": "/product-types", "permission_key": "product_type.read", "order_index": 4},
       {"title": "Category Group", "icon": "LuLayers", "path": "/category-groups", "permission_key": "category_group.read", "order_index": 5},
       {"title": "Units", "icon": "LuList", "path": "/units", "permission_key": "unit.read", "order_index": 6},
-      {"title": "Roles & Access", "icon": "LuShieldCheck", "path": "/rbac", "permission_key": "role.read", "order_index": 7},
+      # Where enquiries come from. The table and its API have existed since
+      # the beginning with no screen, so a new channel meant an insert by
+      # hand. Filed under location.read, beside the other lists a
+      # salesperson picks from on a form.
+      {"title": "Lead Source", "icon": "LuRadio", "path": "/lead-sources", "permission_key": "location.read", "order_index": 7},
+      # The states we trade in, and the GST code each carries. That code
+      # decides whether a sale is taxed as CGST + SGST or as IGST, so it is
+      # a tax setting kept where somebody can correct it.
+      {"title": "States", "icon": "LuMap", "path": "/states", "permission_key": "location.read", "order_index": 8},
+      # Where customers remit, and the registration the tax is worked out
+      # against. Its own entry rather than a panel on Company Profile:
+      # nobody looks for an account number under a page about proposals.
+      {"title": "Bank Details", "icon": "LuLandmark", "path": "/bank-details", "permission_key": "company.read", "order_index": 9},
+      {"title": "Roles & Access", "icon": "LuShieldCheck", "path": "/rbac", "permission_key": "role.read", "order_index": 10},
       # Who the proposals and emails come from. Super admin only, like the
       # rest of Masters - the page refuses anyone else.
-      {"title": "Company Profile", "icon": "LuBuilding2", "path": "/company-profile", "permission_key": "company.read", "order_index": 8},
+      {"title": "Company Profile", "icon": "LuBuilding2", "path": "/company-profile", "permission_key": "company.read", "order_index": 11},
       # Who signs off how much discount. Super admin only, like the rest.
-      {"title": "Quotation Approval", "icon": "LuPercent", "path": "/quotation-approval", "permission_key": "company.read", "order_index": 9},
+      {"title": "Proposal Approval", "icon": "LuPercent", "path": "/quotation-approval", "permission_key": "company.read", "order_index": 12},
     ]
   },
   {
