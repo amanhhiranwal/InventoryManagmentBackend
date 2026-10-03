@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
+from app.middleware.permission_middleware import require_super_admin
 from app.schemas.lead_source import CreateLeadSourceRequest
 from app.services.lead_source_service import LeadSourceService
 
@@ -49,3 +50,35 @@ def create_lead_source(
             "description": src.description,
         }
     }
+
+
+@router.put("/{source_id}")
+def update_lead_source(
+    source_id: str,
+    request: CreateLeadSourceRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_super_admin),
+):
+    src = LeadSourceService.update_lead_source(source_id, request, db)
+
+    return {
+        "success": True,
+        "message": "Lead source updated.",
+        "data": {
+            "id": str(src.id),
+            "name": src.name,
+            "code": src.code,
+            "description": src.description,
+        },
+    }
+
+
+@router.delete("/{source_id}")
+def delete_lead_source(
+    source_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_super_admin),
+):
+    LeadSourceService.delete_lead_source(source_id, db)
+
+    return {"success": True, "message": "Lead source removed."}

@@ -25,13 +25,27 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 
-def next_number(db: Session, series: str, issued_so_far: Callable[[], int]) -> int:
+def next_number(
+    db: Session,
+    series: str,
+    issued_so_far: Callable[[], int],
+    taken: Callable[[int], bool] | None = None,
+) -> int:
     """The next number in ``series``, reserved for this transaction.
 
     ``issued_so_far`` is only called the first time a series is used, to
     start the counter above whatever the database already contains. It is
     a callable rather than a value so an established counter never pays
     for the scan.
+
+    ``taken`` says whether a number is already printed on a document. It
+    is what lets a counter that has fallen behind catch up: the counter
+    only moves forward, so it cannot drift past the data, but it can sit
+    behind it - a number issued outside the counter, a database restored
+    from a partial copy - and then every allocation collides with a
+    unique index and the user is told the resource already exists. One
+    indexed lookup confirms the number is free; only a clash pays for the
+    scan that lifts the counter clear.
     """
 
     row = db.execute(
@@ -43,6 +57,22 @@ def next_number(db: Session, series: str, issued_so_far: Callable[[], int]) -> i
     ).first()
 
     if row is not None:
+        allocated = int(row[0])
+
+        if taken is None or not taken(allocated):
+            return allocated
+
+        # Behind the data. Lift the counter clear of everything issued and
+        # take the next one. Still forward-only: the counter is raised, never
+        # lowered, so nothing already handed out can come round again.
+        row = db.execute(
+            text(
+                "UPDATE document_counter SET seq = GREATEST(seq, :floor) + 1 "
+                "WHERE name = :name RETURNING seq"
+            ),
+            {"name": series, "floor": max(allocated, issued_so_far())},
+        ).first()
+
         return int(row[0])
 
     # First use. On a database that already holds documents, start above

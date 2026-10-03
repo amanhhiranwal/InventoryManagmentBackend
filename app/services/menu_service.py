@@ -145,12 +145,25 @@ DEFAULT_MENUS_DATA = [
       {"title": "Product Type", "icon": "LuBoxes", "path": "/product-types", "permission_key": "product_type.read", "order_index": 4},
       {"title": "Category Group", "icon": "LuLayers", "path": "/category-groups", "permission_key": "category_group.read", "order_index": 5},
       {"title": "Units", "icon": "LuList", "path": "/units", "permission_key": "unit.read", "order_index": 6},
-      {"title": "Roles & Access", "icon": "LuShieldCheck", "path": "/rbac", "permission_key": "role.read", "order_index": 7},
+      # Where enquiries come from. The table and its API have existed since
+      # the beginning with no screen, so a new channel meant an insert by
+      # hand. Filed under location.read, beside the other lists a
+      # salesperson picks from on a form.
+      {"title": "Lead Source", "icon": "LuRadio", "path": "/lead-sources", "permission_key": "location.read", "order_index": 7},
+      # The states we trade in, and the GST code each carries. That code
+      # decides whether a sale is taxed as CGST + SGST or as IGST, so it is
+      # a tax setting kept where somebody can correct it.
+      {"title": "States", "icon": "LuMap", "path": "/states", "permission_key": "location.read", "order_index": 8},
+      # Where customers remit, and the registration the tax is worked out
+      # against. Its own entry rather than a panel on Company Profile:
+      # nobody looks for an account number under a page about proposals.
+      {"title": "Bank Details", "icon": "LuLandmark", "path": "/bank-details", "permission_key": "company.read", "order_index": 9},
+      {"title": "Roles & Access", "icon": "LuShieldCheck", "path": "/rbac", "permission_key": "role.read", "order_index": 10},
       # Who the proposals and emails come from. Super admin only, like the
       # rest of Masters - the page refuses anyone else.
-      {"title": "Company Profile", "icon": "LuBuilding2", "path": "/company-profile", "permission_key": "company.read", "order_index": 8},
+      {"title": "Company Profile", "icon": "LuBuilding2", "path": "/company-profile", "permission_key": "company.read", "order_index": 11},
       # Who signs off how much discount. Super admin only, like the rest.
-      {"title": "Proposal Approval", "icon": "LuPercent", "path": "/quotation-approval", "permission_key": "company.read", "order_index": 9},
+      {"title": "Proposal Approval", "icon": "LuPercent", "path": "/quotation-approval", "permission_key": "company.read", "order_index": 12},
     ]
   },
   {

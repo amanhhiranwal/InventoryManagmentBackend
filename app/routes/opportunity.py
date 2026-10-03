@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.controllers.opportunity_controller import OpportunityController
 from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
+from app.middleware.permission_middleware import require_permission
 from app.services.opportunity_service import OpportunityService
 from app.schemas.opportunity import (
     CreateOpportunityRequest,
@@ -12,6 +13,17 @@ from app.schemas.opportunity import (
     UpdateOpportunityStatusRequest,
 )
 
+# Creating, amending and withdrawing a record are guarded. Reading is scoped by the reporting line
+# elsewhere; this is the coarser question of whether the caller works this
+# part of the pipeline at all. Without it the accounts clerk and the
+# warehouse - who hold no sales permissions and see no sales menu - could
+# still raise a proposal or an order straight at the API.
+#
+# Status moves are deliberately not guarded here. Who may move a record
+# from one stage to the next is a narrower question, already answered by
+# the approval chain and the fulfilment desks - and answered better, since
+# they know which desk the record is sitting with. Logging an activity is
+# likewise open to anyone who can see the record.
 router = APIRouter(
     prefix="/opportunities",
     tags=["Opportunities"],
@@ -39,7 +51,7 @@ def get_opportunity(
 def create_opportunity(
     request: CreateOpportunityRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_permission("opportunity.write")),
 ):
     return OpportunityController.create(request, current_user, db)
 
@@ -82,7 +94,7 @@ def update_opportunity(
     opportunity_id: int,
     request: UpdateOpportunityRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_permission("opportunity.write")),
 ):
     return OpportunityController.update(
         opportunity_id,
@@ -111,7 +123,7 @@ def update_opportunity_status(
 def delete_opportunity(
     opportunity_id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_permission("opportunity.write")),
 ):
     """Remove an opportunity, once nothing downstream depends on it."""
 

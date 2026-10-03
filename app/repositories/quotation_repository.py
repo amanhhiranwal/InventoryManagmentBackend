@@ -56,6 +56,12 @@ class QuotationRepository:
                 db,
                 "quotation",
                 lambda: highest_issued(db, Quotation.quote_number, offset=3000),
+                taken=lambda number: (
+                    db.query(Quotation.id)
+                    .filter(Quotation.quote_number == f"QT-{3000 + number}")
+                    .first()
+                    is not None
+                ),
             )
         )
 
