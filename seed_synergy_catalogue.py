@@ -92,10 +92,11 @@ RATE_BY_MODEL = {
 
 #: type code, name, SKU, rate, unit, stock, case size, HSN
 #:
-#: A rate of 0 means the sheet carries no price for that line. They are
-#: seeded rather than left out - they are real stock, and a catalogue that
-#: silently omits them hides the gap - but a figure nobody wrote down is
-#: not invented here. Priced on the Product List before they are quoted.
+#: Every line is priced. The seven the stock dashboard named without a
+#: figure - the three cameras, the array mic, the panel stand and the two
+#: non-assembled OPS - were carried at zero until the rates came through,
+#: rather than being guessed at: an invented figure on a customer's
+#: quotation is worse than a visible blank.
 EXTRAS = [
     # OPS compute modules, by processor, memory and generation. 85291029,
     # as written on the dashboard.
@@ -109,8 +110,8 @@ EXTRAS = [
     ("COMPUTE", "OPS i7 8GB/256GB 11th Gen",     "SG-OPS-I7-8-256-G11",  30000, "Nos",  0, 1, "85291029"),
     ("COMPUTE", "OPS i7 8GB/512GB 10th Gen",     "SG-OPS-I7-8-512-G10",  35000, "Nos",  0, 1, "85291029"),
     ("COMPUTE", "OPS i7 8GB/512GB 11th Gen",     "SG-OPS-I7-8-512-G11",  40000, "Nos",  0, 1, "85291029"),
-    ("COMPUTE", "OPS i5 Non Assembled",          "SG-OPS-I5-NA",             0, "Nos", 11, 1, "85291029"),
-    ("COMPUTE", "OPS i7 Non Assembled",          "SG-OPS-I7-NA",             0, "Nos", 15, 1, "85291029"),
+    ("COMPUTE", "OPS i5 Non Assembled",          "SG-OPS-I5-NA",         30000, "Nos", 11, 1, "85291029"),
+    ("COMPUTE", "OPS i7 Non Assembled",          "SG-OPS-I7-NA",         30000, "Nos", 15, 1, "85291029"),
 
     # Standees. One price for touch and one for non-touch, as the sheet
     # prices them - by the panel inside, not by the cabinet size.
@@ -118,13 +119,13 @@ EXTRAS = [
     ("INFRA", "Standee Non-Touch", "SG-STD-NONTOUCH", 57000, "Nos", 6, 1, "85285900"),
 
     # Cameras and microphones. Named on the sheet, none of them priced.
-    ("AUDIO", "UHD All in One USB Video Bar 12V 5A",        "SG-CAM-UHDBAR",  0, "Nos", 4, 1, "85258900"),
-    ("AUDIO", "Camera 360 Degree",                           "SG-CAM-360",     0, "Nos", 4, 1, "85258900"),
-    ("AUDIO", "4K Business Webcam HF0V-120 Degree",          "SG-CAM-4KHF0V",  0, "Nos", 6, 1, "85258900"),
-    ("AUDIO", "Cascading Omnidirectional Digital Array Mic", "SG-MIC-CASCADE", 0, "Nos", 1, 1, "85184000"),
+    ("AUDIO", "UHD All in One USB Video Bar 12V 5A",        "SG-CAM-UHDBAR",   1949, "Nos", 4, 1, "85258900"),
+    ("AUDIO", "Camera 360 Degree",                           "SG-CAM-360",      2500, "Nos", 4, 1, "85258900"),
+    ("AUDIO", "4K Business Webcam HF0V-120 Degree",          "SG-CAM-4KHF0V",   3000, "Nos", 6, 1, "85258900"),
+    ("AUDIO", "Cascading Omnidirectional Digital Array Mic", "SG-MIC-CASCADE", 50000, "Nos", 1, 1, "85184000"),
 
     # The mounting hardware the challan bills alongside a panel.
-    ("INFRA", "Panel Stand", "SG-STAND-PANEL", 0, "Nos", 0, 1, "84733099"),
+    ("INFRA", "Panel Stand", "SG-STAND-PANEL", 11000, "Nos", 0, 1, "84733099"),
 ]
 
 #: Demo lines retired by --replace. Named rather than "everything else",
