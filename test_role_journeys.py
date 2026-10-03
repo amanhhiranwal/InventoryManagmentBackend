@@ -84,7 +84,8 @@ SIDEBARS = {
         ("Reports", []),
         ("Masters", [
             "Companies", "Locations", "Customer Type", "Product Type",
-            "Category Group", "Units", "Roles & Access", "Company Profile",
+            "Category Group", "Units", "Lead Source", "States",
+            "Bank Details", "Roles & Access", "Company Profile",
             "Proposal Approval",
         ]),
         ("Workflows", []),
@@ -131,6 +132,39 @@ created = {
 }
 #: serial -> what was on the shelf before this suite touched it.
 stock_before_run: dict[str, float] = {}
+
+
+def set_stock(serial: str, quantity: float) -> None:
+    """Put a known number on the shelf for a fixture SKU.
+
+    Only ever called on a serial whose opening figure has already been
+    recorded in ``stock_before_run``, so the clear-up puts back exactly
+    what was there.
+    """
+
+    item = next(
+        (
+            i for i in rows(api("get", "/inventory/items", token["admin"]))
+            if str(i.get("serial_number") or "").upper() == serial.upper()
+        ),
+        None,
+    )
+
+    if item is None:
+        return
+
+    attributes = dict(item.get("attributes") or {})
+    attributes["instock"] = quantity
+    attributes["stock"] = quantity
+
+    api("put", f"/inventory/items/{item['_id']}", token["admin"], json={
+        "name": item.get("name"),
+        "serial_number": item.get("serial_number"),
+        "product_type_code": item.get("product_type_code"),
+        "category": item.get("category"),
+        "attributes": attributes,
+        "company_id": item.get("company_id"),
+    })
 
 
 def shape(sidebar) -> list:
@@ -585,11 +619,25 @@ try:
     )
 
     # A line of each kind: plenty, thin, and nothing at all.
-    PLENTY, THIN, NONE_LEFT = "SG-SPX6-LANGO3576", "SG-CPX8-LANGOV100", "SG-STD-55-T"
+    PLENTY, THIN, NONE_LEFT = "SG-SPX6-LANGO3576", "SG-CPX8-LANGOV100", "SG-STD-TOUCH"
 
     for serial in (PLENTY, THIN, NONE_LEFT):
         check(f"{serial} is on the shelf to order against", serial in by_serial)
         stock_before_run[serial] = shelf(serial)
+
+    # Set the shelf to what each role in this section needs, rather than
+    # hoping the catalogue still happens to hold it. These three stand for
+    # plenty, thin and nothing, and the whole section is about the desk's
+    # shortfall warning - so when a repricing run or somebody's picking
+    # changed the counts, the assertions quietly stopped testing anything.
+    # Whatever was there is put back by the clear-up, which already records
+    # the opening figures above.
+    #: serial -> what this section puts on the shelf, and therefore what
+    #: the assertions below count against.
+    FIXTURE = {PLENTY: 40.0, THIN: 3.0, NONE_LEFT: 0.0}
+
+    for serial, quantity in FIXTURE.items():
+        set_stock(serial, quantity)
 
     r = api("post", "/orders", owner, json={
         "customer_name": f"Short Order {TAG}",
@@ -597,9 +645,29 @@ try:
         "state": "Delhi",
         "order_date": now.isoformat(),
         "items": [
-            {"product": "Wi-Fi 6 Access Point", "sku": PLENTY, "qty": 4, "rate": 14500, "tax_rate": 18},
-            {"product": "Interactive Flat Panel 65in", "sku": THIN, "qty": 5, "rate": 142000, "tax_rate": 18},
-            {"product": "Universal Remote Control", "sku": NONE_LEFT, "qty": 2, "rate": 950, "tax_rate": 18},
+            # Name, SKU, rate and HSN all off the same catalogue line. They
+            # had drifted apart when the SKUs were repointed to the Synergy
+            # catalogue and the names left behind, so an order read
+            # "Wi-Fi 6 Access Point" against the SKU of a 65" panel - and
+            # every document raised from it printed that contradiction.
+            {
+                "product": '65" Interactive Flat Panel SPX6 (Lango 3576)',
+                "model": "Lango RK3576, 8GB RAM / 128GB ROM, Android 16",
+                "sku": PLENTY, "hsn": "85285900",
+                "qty": 4, "rate": 68000, "tax_rate": 18,
+            },
+            {
+                "product": '86" Interactive Flat Panel CPX8 (LangoV100)',
+                "model": "Lango V100, 8GB RAM / 128GB ROM, Android 14",
+                "sku": THIN, "hsn": "85285900",
+                "qty": 5, "rate": 88000, "tax_rate": 18,
+            },
+            {
+                "product": "Standee Touch",
+                "model": "Touch standee cabinet",
+                "sku": NONE_LEFT, "hsn": "85285900",
+                "qty": 2, "rate": 60000, "tax_rate": 18,
+            },
         ],
     })
     check("a three-line order is raised", r.status_code == 200, f"{r.status_code} {r.text[:200]}")
@@ -636,12 +704,12 @@ try:
 
     check("the desk reads all three lines", len(lines) == 3, str(sorted(lines)))
     check(
-        f"{PLENTY}: 4 of {stock_before_run[PLENTY]:.0f} is covered",
+        f"{PLENTY}: 4 of {FIXTURE[PLENTY]:.0f} is covered",
         bool(lines.get(PLENTY) and not lines[PLENTY]["short"]),
         str(lines.get(PLENTY)),
     )
     check(
-        f"{THIN}: 5 wanted against {stock_before_run[THIN]:.0f} is flagged short",
+        f"{THIN}: 5 wanted against {FIXTURE[THIN]:.0f} is flagged short",
         bool(lines.get(THIN) and lines[THIN]["short"]),
         str(lines.get(THIN)),
     )
@@ -670,8 +738,8 @@ try:
     )
     check(
         f"{PLENTY} falls by the 4 that went",
-        shelf(PLENTY) == stock_before_run[PLENTY] - 4,
-        f"{shelf(PLENTY)} from {stock_before_run[PLENTY]}",
+        shelf(PLENTY) == FIXTURE[PLENTY] - 4,
+        f"{shelf(PLENTY)} from {FIXTURE[PLENTY]}",
     )
     check(
         f"{THIN} is emptied rather than going negative",

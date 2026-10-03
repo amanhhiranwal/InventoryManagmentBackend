@@ -336,7 +336,24 @@ try:
             )
 
     # An order for something the shelf cannot cover is flagged.
-    short_order = raise_order("Short Order", sku="SG-OPS-I5-8-256-G12", qty=4)
+    #
+    # The quantity is worked out from what is actually in hand rather than
+    # fixed at four. This SKU had thirty on the shelf by the time the
+    # catalogue was repriced, so a four-unit order was comfortably covered
+    # and the assertion had quietly stopped testing the shortfall warning
+    # at all. One more than there is, is short however the shelf moves.
+    SHORT_SKU = "SG-OPS-I5-8-256-G12"
+
+    in_hand = next(
+        (
+            float((i.get("attributes") or {}).get("instock") or 0)
+            for i in rows(api("get", "/inventory/items", token["inventory"]))
+            if str(i.get("serial_number") or "").upper() == SHORT_SKU
+        ),
+        0.0,
+    )
+
+    short_order = raise_order("Short Order", sku=SHORT_SKU, qty=int(in_hand) + 1)
     api("put", f"/fulfilment/orders/{short_order['id']}/decide", token["accounts"], json={
         "approve": True, "remarks": "Paid.",
     })
