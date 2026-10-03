@@ -33,13 +33,19 @@ from seed_sales_team import (
 
 #: Everything a sales person needs to do their own job: their pipeline, the
 #: catalogue to quote from, their team, and the numbers.
+#:
+#: The three ``.write`` entries are what separate somebody who works the
+#: pipeline from somebody who merely has an account. Only ``lead`` had
+#: create and update permissions before, so every other write route in the
+#: pipeline fell back to "any signed-in user" - the accounts clerk and the
+#: warehouse could both raise a proposal.
 SALES_FLOOR = [
     "dashboard.read",
     "sales.menu",
     "lead.read", "lead.create", "lead.update",
-    "opportunity.read",
-    "quotation.read",
-    "order.read",
+    "opportunity.read", "opportunity.write",
+    "quotation.read", "quotation.write",
+    "order.read", "order.write",
     "customer.read",
     "inventory.menu", "inventory.read", "inventory.create",
     "user.read",
