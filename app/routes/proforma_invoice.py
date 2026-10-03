@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.controllers.proforma_invoice_controller import ProformaInvoiceController
+from app.services.proforma_invoice_service import ProformaInvoiceService
 from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.schemas.proforma_invoice import (
@@ -54,6 +55,24 @@ def get_company_profile(
     """Seller name, address, banking and signatory printed on the invoice."""
 
     return ProformaInvoiceController.company_profile(db)
+
+
+@router.get("/next-number")
+def next_pi_number(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """The reference a new invoice would take.
+
+    A preview, not a reservation: it reads the counter without moving it,
+    so opening a form never burns a number. Declared above /{invoice_id}
+    so the path is not read as an id.
+    """
+
+    return {
+        "success": True,
+        "data": {"pi_number": ProformaInvoiceService.preview_pi_number(db)},
+    }
 
 
 @router.post("")

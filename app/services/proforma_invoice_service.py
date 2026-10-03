@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session, object_session
 
 from app.core.config import settings
 from app.services.company_profile_service import CompanyProfileService
-from app.core.references import highest_issued, next_number
+from app.core.payment_terms import wording_for
+from app.core.references import highest_issued, next_number, peek_next
 from app.core.workflow_status import (
     PROFORMA_INVOICE_TRANSITIONS,
     ProformaInvoiceStatus,
@@ -218,6 +219,7 @@ class ProformaInvoiceService:
             "legal_name": profile["company_legal_name"] or None,
             "address_lines": profile["company_address_lines"],
             "gstin": profile["company_gstin"] or None,
+            "email": profile["company_email"] or None,
             "state_name": profile["company_state_name"] or None,
             "state_code": profile["company_state_code"] or None,
             "bank": {
@@ -305,6 +307,25 @@ class ProformaInvoiceService:
         )
 
     @staticmethod
+    def preview_pi_number(db: Session) -> str:
+        """What the next invoice would be numbered, without taking it.
+
+        For the form to show a reference before anything is saved. It reads
+        the counter rather than incrementing it, so opening a form never
+        burns a number and two people opening one at the same moment both
+        see the same figure - which is why this is a preview and not a
+        promise. The number is only theirs once the record is written.
+        """
+
+        return "PI-{:05d}".format(
+            peek_next(
+                db,
+                "proforma_invoice",
+                lambda: highest_issued(db, ProformaInvoice.pi_number),
+            )
+        )
+
+    @staticmethod
     def create(request, current_user: dict, db: Session) -> ProformaInvoice:
         order = SalesOrderService.get_by_id(request.sales_order_id, db)
 
@@ -351,6 +372,11 @@ class ProformaInvoiceService:
         first_name = current_user.get("first_name", "")
         last_name = current_user.get("last_name", "")
 
+        advance_percent = _pick(
+            request.advance_percent,
+            order.advance_percent if order.advance_percent is not None else 30.0,
+        )
+
         invoice = ProformaInvoice(
             pi_number=ProformaInvoiceService.next_pi_number(db),
             sales_order_id=order.id,
@@ -379,12 +405,19 @@ class ProformaInvoiceService:
                 order.gst_percent if order.gst_percent is not None else 18.0,
             ),
             amount_paid=request.amount_paid or 0.0,
-            advance_percent=_pick(
-                request.advance_percent,
-                order.advance_percent if order.advance_percent is not None else 30.0,
-            ),
+            advance_percent=advance_percent,
             commercial_terms=_pick(request.commercial_terms, order.commercial_terms),
-            payment_terms=_pick(request.payment_terms, order.payment_terms),
+            #: Never blank. A proposal carries the split as a percentage and
+            #: only renders the sentence when it prints, so an order raised
+            #: from one can reach here with the number and no wording - and
+            #: the invoice would then state no terms at all, on the one
+            #: document whose purpose is to be paid against. Derived from the
+            #: percentage the invoice is actually using, so the sentence and
+            #: the figures cannot describe different deals.
+            payment_terms=(
+                _pick(request.payment_terms, order.payment_terms)
+                or wording_for(advance_percent)
+            ),
             technical_notes=_pick(request.technical_notes, order.technical_notes),
             attachments=_pick(request.attachments, order.attachments),
             generated_at=(
