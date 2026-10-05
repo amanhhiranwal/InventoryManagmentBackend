@@ -124,17 +124,17 @@ PRODUCT_CATALOGUE = [
     (
         '75" Interactive Flat Panel SPX7 (LangoV100)',
         "Lango V100, 8GB RAM / 128GB ROM, Android 14",
-        "SG-SPX7-LANGOV100", "84714190", 75000,
+        "SG-IFP-75-SPX-V100", "84714190", 75000,
     ),
     (
         '86" Interactive Flat Panel CPX8 (LangoV100)',
         "Lango V100, 8GB RAM / 128GB ROM, Android 14, with camera and array mic",
-        "SG-CPX8-LANGOV100", "85285900", 88000,
+        "SG-IFP-86-SPX-V100", "85285900", 88000,
     ),
     (
         "OPS i7 8GB/512GB 11th Gen",
         "Intel i7, 8GB RAM / 512GB SSD, DOS",
-        "SG-OPS-I7-8-512-G11", "85291029", 40000,
+        "SG-OPS-I7-13G", "85291029", 40000,
     ),
     (
         "Standee Touch",

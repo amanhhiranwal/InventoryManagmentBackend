@@ -302,7 +302,7 @@ try:
         "company_name": "Synergy North Agro",
         "state": "Delhi",
         "order_date": datetime.now(timezone.utc).isoformat(),
-        "items": [{"product": "Panel", "sku": "SG-SPX7-LANGOV100", "hsn": "84714190",
+        "items": [{"product": "Panel", "sku": "SG-IFP-75-SPX-V100", "hsn": "84714190",
                    "qty": 2, "rate": 75000, "tax_rate": 18}],
     })
 
@@ -444,9 +444,9 @@ try:
         "customer_type_id": customer_types["End Customer"],
         "quotation_date": datetime.now(timezone.utc).isoformat(),
         "items": [
-            {"product": "Panel A", "sku": "SG-SPX6-LANGO3576", "hsn": "85285900",
+            {"product": "Panel A", "sku": "SG-IFP-65-SPX-EDLA", "hsn": "85285900",
              "qty": 1, "rate": 68000, "discount": 0, "tax_rate": 18},
-            {"product": "Panel B", "sku": "SG-CPX6-YS3576", "hsn": "85285900",
+            {"product": "Panel B", "sku": "SG-IFP-65-CPX-EDLA", "hsn": "85285900",
              "qty": 1, "rate": 70000, "discount": 10, "tax_rate": 18},
         ],
     }).json()["data"]
@@ -477,7 +477,7 @@ try:
         "customer_type_id": customer_types["End Customer"],
         "quotation_date": datetime.now(timezone.utc).isoformat(),
         "items": [
-            {"product": "Panel", "sku": "SG-SPX6-LANGO3576", "hsn": "85285900",
+            {"product": "Panel", "sku": "SG-IFP-65-SPX-EDLA", "hsn": "85285900",
              "qty": 10, "rate": 68000, "discount": 0, "tax_rate": 18},
             {"product": "Camera", "sku": "SG-CAM-360", "hsn": "85258900",
              "qty": 1, "rate": 2500, "discount": 25, "tax_rate": 18},

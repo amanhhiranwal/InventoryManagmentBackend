@@ -35,20 +35,20 @@ TAG = uuid.uuid4().hex[:6]
 PANEL = {
     "product": "Interactive Flat Panel",
     "model": '75" Interactive Flat Panel SPX7 (LangoV100)',
-    "sku": "SG-SPX7-LANGOV100",
+    "sku": "SG-IFP-75-SPX-V100",
     "hsn": "84714190",
     "qty": 4,
-    "rate": 75000.0,
+    "rate": 82000.0,
     "tax_rate": 18,
 }
 
 OPS = {
     "product": "OPS Module",
     "model": "OPS i7 8GB/512GB 11th Gen",
-    "sku": "SG-OPS-I7-8-512-G11",
+    "sku": "SG-OPS-I7-13G",
     "hsn": "85291029",
     "qty": 2,
-    "rate": 40000.0,
+    "rate": 36000.0,
     "tax_rate": 18,
 }
 

@@ -195,9 +195,9 @@ def main() -> int:
 #: match the SKUs the demo quotations and orders carry, because that is how
 #: the two sides are keyed.
 STOCK = [
-    ('75" Interactive Flat Panel SPX7 (LangoV100)', "SG-SPX7-LANGOV100", 12),
-    ('86" Interactive Flat Panel CPX8 (LangoV100)', "SG-CPX8-LANGOV100", 3),
-    ("OPS i7 8GB/512GB 11th Gen", "SG-OPS-I7-8-512-G11", 0),
+    ('75" Interactive Flat Panel SPX7 (LangoV100)', "SG-IFP-75-SPX-V100", 12),
+    ('86" Interactive Flat Panel CPX8 (LangoV100)', "SG-IFP-86-SPX-V100", 3),
+    ("OPS i7 8GB/512GB 11th Gen", "SG-OPS-I7-13G", 0),
 ]
 
 PRODUCT_TYPE = {
