@@ -77,6 +77,27 @@ class ApprovalService:
         )
 
     @staticmethod
+    def is_approved(document_type: str, document_id: int, db: Session) -> bool:
+        """Whether this document has a signature on it.
+
+        Asked before a proposal is emailed. "Nothing is pending" is not the
+        same question: a draft nobody ever sent up has nothing pending
+        either, and under the rule that every proposal carries the CEO's
+        signature that one must not go out.
+        """
+
+        return (
+            db.query(SalesApproval.id)
+            .filter(
+                SalesApproval.document_type == document_type,
+                SalesApproval.document_id == document_id,
+                SalesApproval.status == ApprovalStatus.APPROVED,
+            )
+            .first()
+            is not None
+        )
+
+    @staticmethod
     def latest_for(document_type: str, document_id: int, db: Session) -> SalesApproval | None:
         return (
             db.query(SalesApproval)
@@ -87,6 +108,88 @@ class ApprovalService:
             .order_by(SalesApproval.id.desc())
             .first()
         )
+
+    @staticmethod
+    def _price_type_for_document(
+        document_type: str,
+        document_id: int,
+        db: Session,
+    ) -> str | None:
+        """ECP or DTP, from the customer type on the document itself.
+
+        Returns None when the document cannot be read, in which case the
+        caller's own value stands - a lookup that fails must not stop a
+        proposal going up for approval.
+        """
+
+        from app.core.approvals import price_type_for
+        from app.models.quotation import Quotation
+        from app.models.sales_order import SalesOrder
+
+        model = {
+            ApprovalDocument.QUOTATION: Quotation,
+            ApprovalDocument.SALES_ORDER: SalesOrder,
+        }.get(document_type)
+
+        if model is None:
+            return None
+
+        try:
+            row = db.query(model).filter(model.id == document_id).first()
+        except Exception:  # noqa: BLE001 - never block on a lookup
+            return None
+
+        if row is None:
+            return None
+
+        return price_type_for(getattr(row, "customer_type", None))
+
+    @staticmethod
+    def _deepest_discount(document_type: str, document_id: int, db: Session) -> float | None:
+        """The largest discount given anywhere on the document.
+
+        The bands say who owns how much discount, and a 25% cut on one
+        line is a 25% discount however small that line is. The form was
+        sending the blended figure - the discount as a share of the whole
+        subtotal - so 10% off one of two panels arrived as 5.07%, and a
+        deep cut on a cheap accessory could land in a band below the one
+        that owns it, or skip the chain altogether.
+
+        Returns None when the document cannot be read, in which case the
+        caller's own figure stands.
+        """
+
+        from app.models.quotation import Quotation
+        from app.models.sales_order import SalesOrder
+
+        model = {
+            ApprovalDocument.QUOTATION: Quotation,
+            ApprovalDocument.SALES_ORDER: SalesOrder,
+        }.get(document_type)
+
+        if model is None:
+            return None
+
+        try:
+            row = db.query(model).filter(model.id == document_id).first()
+        except Exception:  # noqa: BLE001 - never block on a lookup
+            return None
+
+        if row is None:
+            return None
+
+        deepest = 0.0
+
+        for line in (row.items or []):
+            if not isinstance(line, dict):
+                continue
+
+            try:
+                deepest = max(deepest, float(line.get("discount") or 0))
+            except (TypeError, ValueError):
+                continue
+
+        return deepest
 
     @staticmethod
     def request(
@@ -106,17 +209,37 @@ class ApprovalService:
     ) -> SalesApproval | None:
         """Send a document up for approval.
 
-        Returns None when nothing needs approving - an undiscounted end
-        customer price is the salesperson's to issue.
+        Returns None when nothing needs approving. A proposal always needs
+        it, so None only comes back for a sales order raised off one the
+        CEO has already signed.
         """
 
         if document_type not in ApprovalDocument.ALL:
             raise HTTPException(status_code=400, detail="Unknown document type.")
 
+        # Which price list this is written against follows from who is
+        # buying, so it is read off the document rather than taken from
+        # the form. It used to be a dropdown beside the discount, which let
+        # a dealer be sent up for approval at end customer price simply by
+        # leaving the picker alone.
+        derived = ApprovalService._price_type_for_document(
+            document_type, document_id, db
+        )
+
+        price_type = derived or price_type
+
         if price_type not in PriceType.ALL:
             raise HTTPException(status_code=400, detail="Unknown price type.")
 
-        chain = approval_chain(price_type, discount_percent, db)
+        # And the discount the chain is built from is the deepest one on
+        # the document, not the blended share the form worked out. Whoever
+        # owns a 25% cut owns it whether it is on every line or one.
+        deepest = ApprovalService._deepest_discount(document_type, document_id, db)
+
+        if deepest is not None:
+            discount_percent = max(float(discount_percent or 0), deepest)
+
+        chain = approval_chain(price_type, discount_percent, db, document_type)
 
         if not chain:
             return None
@@ -614,7 +737,12 @@ class ApprovalService:
                 paragraphs = [
                     f"{approval.requested_by_name} has raised {label.lower()} "
                     f"{reference} and it is now with you to approve.",
-                    describe_chain(approval.price_type, approval.discount_percent, db),
+                    describe_chain(
+                        approval.price_type,
+                        approval.discount_percent,
+                        db,
+                        approval.document_type,
+                    ),
                 ]
                 note = None
                 signed_by = approval.requested_by_name
@@ -639,7 +767,12 @@ class ApprovalService:
                 heading = f"{label} {reference} now needs your approval"
                 paragraphs = [
                     f"{actor} has approved this, and it has come up to you.",
-                    describe_chain(approval.price_type, approval.discount_percent, db),
+                    describe_chain(
+                        approval.price_type,
+                        approval.discount_percent,
+                        db,
+                        approval.document_type,
+                    ),
                 ]
                 note = None
                 signed_by = actor
@@ -797,5 +930,10 @@ def serialize_approval(approval: SalesApproval, db=None) -> dict:
         "requested_at": approval.requested_at.isoformat() if approval.requested_at else None,
         "decided_at": approval.decided_at.isoformat() if approval.decided_at else None,
         "remarks": approval.remarks,
-        "reason": describe_chain(approval.price_type, approval.discount_percent, db),
+        "reason": describe_chain(
+                        approval.price_type,
+                        approval.discount_percent,
+                        db,
+                        approval.document_type,
+                    ),
     }
