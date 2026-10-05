@@ -103,32 +103,58 @@ def _to_uuid(value) -> UUID | None:
         return None
 
 
-#: Catalogue HSN by SKU, read once per process. The catalogue is a few
-#: dozen rows and changes when somebody edits a product, so it is cheap to
-#: hold and refreshed by a restart.
-_HSN_BY_SKU: dict[str, str] | None = None
+#: SKU -> {"hsn": ..., "dtp": ...}, read once per process. The catalogue
+#: is a few dozen rows and changes when somebody edits a product, so it is
+#: cheap to hold and refreshed by a restart.
+_CATALOGUE_BY_SKU: dict[str, dict] | None = None
+
+
+def _catalogue() -> dict[str, dict]:
+    global _CATALOGUE_BY_SKU
+
+    if _CATALOGUE_BY_SKU is None:
+        try:
+            from app.database.mongodb import sync_mongo_db
+
+            _CATALOGUE_BY_SKU = {
+                str(row.get("serial_number") or "").upper(): {
+                    "hsn": str(
+                        (row.get("attributes") or {}).get("hsn_code") or ""
+                    ).strip(),
+                    "dtp": _as_float(
+                        (row.get("attributes") or {}).get("dtp_rate")
+                    ),
+                }
+                for row in sync_mongo_db["inventory_items"].find(
+                    {},
+                    {
+                        "serial_number": 1,
+                        "attributes.hsn_code": 1,
+                        "attributes.dtp_rate": 1,
+                    },
+                )
+            }
+        except Exception:  # noqa: BLE001 - a lookup must never fail a save
+            _CATALOGUE_BY_SKU = {}
+
+    return _CATALOGUE_BY_SKU
 
 
 def _hsn_for_sku(sku: str) -> str:
     """The HSN the catalogue holds against a SKU, or "" if it holds none."""
 
-    global _HSN_BY_SKU
+    return _catalogue().get(str(sku or "").upper(), {}).get("hsn", "")
 
-    if _HSN_BY_SKU is None:
-        try:
-            from app.database.mongodb import sync_mongo_db
 
-            _HSN_BY_SKU = {
-                str(row.get("serial_number") or "").upper():
-                    str((row.get("attributes") or {}).get("hsn_code") or "").strip()
-                for row in sync_mongo_db["inventory_items"].find(
-                    {}, {"serial_number": 1, "attributes.hsn_code": 1}
-                )
-            }
-        except Exception:  # noqa: BLE001 - a lookup must never fail a save
-            _HSN_BY_SKU = {}
+def dtp_rate_for_sku(sku: str) -> float:
+    """The fixed transfer price for a SKU, or 0 when none is set.
 
-    return _HSN_BY_SKU.get(str(sku or "").upper(), "")
+    Zero means the product has no dealer price yet, not that it is free.
+    A document written at DTP keeps the end customer rate in that case and
+    says so, rather than quietly quoting nothing.
+    """
+
+    return _catalogue().get(str(sku or "").upper(), {}).get("dtp", 0.0)
 
 
 def _items_to_json(items) -> list | None:

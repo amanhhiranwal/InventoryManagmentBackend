@@ -229,7 +229,27 @@ def serialize_quotation(quotation: Quotation) -> dict:
     if quotation is None:
         return {}
 
+    # Whether this proposal has been signed. The status cannot answer it:
+    # an approved proposal goes back to Draft to be sent, so Draft means
+    # both "never sent up" and "signed and ready", and the Email Draft
+    # button needs to tell those apart. Read from the session the row was
+    # loaded in rather than opening another.
+    approved = False
+
+    try:
+        from sqlalchemy.orm import object_session
+
+        session = object_session(quotation)
+
+        if session is not None:
+            approved = ApprovalService.is_approved(
+                ApprovalDocument.QUOTATION, quotation.id, session
+            )
+    except Exception:  # noqa: BLE001 - a read must not fail on this
+        approved = False
+
     return {
+        "is_approved": approved,
         "id": quotation.id,
         "quote_number": quotation.quote_number,
         "company_id": str(quotation.company_id) if quotation.company_id else None,
@@ -328,6 +348,43 @@ QUOTATION_STATUS_ACTIONS: dict[str, str] = {
     QuotationStatus.REJECTED: "Rejected By Client",
     QuotationStatus.EXPIRED: "Proposal Expired",
 }
+
+
+def _customer_type_name(
+    db,
+    given: str | None,
+    type_id,
+    opportunity,
+) -> str | None:
+    """The customer type as a name, from whichever the caller supplied.
+
+    Which price list a proposal is written against follows from this, so
+    it has to be populated rather than left to whatever the form happened
+    to send. The form sends the id, inherited from the opportunity; the
+    name is the field the approval chain reads, and it was never filled,
+    so every proposal in the database looked like an end customer.
+    """
+
+    if (given or "").strip():
+        return given.strip()
+
+    resolved = type_id or (opportunity.customer_type_id if opportunity else None)
+
+    if not resolved:
+        return None
+
+    try:
+        from app.models.customer_type import CustomerType
+
+        row = (
+            db.query(CustomerType)
+            .filter(CustomerType.id == resolved)
+            .first()
+        )
+
+        return row.name if row else None
+    except Exception:  # noqa: BLE001 - never block a save on a lookup
+        return None
 
 
 class QuotationService:
@@ -644,7 +701,12 @@ class QuotationService:
             designation=carried("designation"),
             email=carried("email"),
             mobile_number=carried("mobile_number"),
-            customer_type=request.customer_type,
+            customer_type=_customer_type_name(
+                db,
+                request.customer_type,
+                request.customer_type_id,
+                opportunity,
+            ),
 
             quotation_date=quotation_date,
             validation_date=validation_date,
@@ -759,6 +821,20 @@ class QuotationService:
             value = getattr(request, field, None)
             if value is not None:
                 setattr(quotation, field, value)
+
+        # Kept in step with the id. The form sends the id and the approval
+        # chain reads the name, so an edit that changed one and not the
+        # other would leave a dealer's proposal still priced as an end
+        # customer's.
+        resolved = _customer_type_name(
+            db,
+            None if request.customer_type_id is not None else quotation.customer_type,
+            quotation.customer_type_id,
+            None,
+        )
+
+        if resolved:
+            quotation.customer_type = resolved
 
         if request.assigned_to_id is not None:
             quotation.assigned_to_id = (
@@ -958,10 +1034,13 @@ class QuotationService:
         quotation = QuotationService.get_by_id(quotation_id, db)
         QuotationService.assert_can_modify(quotation, current_user, db)
 
-        # Nothing goes to a client on a discount nobody has signed for yet.
-        # The chain exists precisely so a price leaves the building only
-        # once somebody with the authority has agreed to it, and an email
-        # cannot be recalled. A test send to oneself is still allowed.
+        # No price reaches a client unsigned. Every proposal carries the
+        # CEO's signature, whatever the discount and whether there is one,
+        # so the question here is not only "is an approval still open" but
+        # "has one been granted at all" - a draft nobody ever sent up would
+        # otherwise sail past a guard that only looked for a pending one.
+        # An email cannot be recalled. A test send to oneself is still
+        # allowed, so the letter can be checked before it goes.
         if not getattr(request, "test_only", False):
             pending = ApprovalService.open_for(
                 ApprovalDocument.QUOTATION, quotation.id, db
@@ -974,8 +1053,20 @@ class QuotationService:
                     status_code=409,
                     detail=(
                         f"{quotation.quote_number} is waiting on the "
-                        f"{waiting_on} to approve its discount. It can be "
-                        "sent to the client once that is cleared."
+                        f"{waiting_on} to approve it. It can be sent to the "
+                        "client once that is cleared."
+                    ),
+                )
+
+            if not ApprovalService.is_approved(
+                ApprovalDocument.QUOTATION, quotation.id, db
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"{quotation.quote_number} has not been approved yet. "
+                        "Send it for approval first - every proposal is "
+                        "signed by the CEO before it goes to a client."
                     ),
                 )
 
