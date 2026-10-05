@@ -133,11 +133,20 @@ class InventoryService:
         # hsn_code is a standard field rather than a template one: every
         # product has an HSN or SAC, a GST invoice is required to carry it,
         # and it must not depend on whoever set up the product type.
-        standard_fields = ["rate", "rate_per_unit", "unit", "instock", "stock", "case_size", "hsn_code"]
+        #
+        # dtp_rate is standard for the same reason. "rate" is the end
+        # customer price; this is the fixed transfer price a dealer, a
+        # distributor or an OEM is bought through at. Which of the two a
+        # document uses follows from the customer type, so a product that
+        # can be sold through the channel needs both on the same record.
+        standard_fields = [
+            "rate", "rate_per_unit", "dtp_rate", "unit",
+            "instock", "stock", "case_size", "hsn_code",
+        ]
         for key in standard_fields:
             if key in attributes:
                 val = attributes[key]
-                if key in ["rate", "rate_per_unit", "instock", "stock", "case_size"]:
+                if key in ["rate", "rate_per_unit", "dtp_rate", "instock", "stock", "case_size"]:
                     try:
                         val = float(val)
                     except (ValueError, TypeError):
@@ -235,11 +244,20 @@ class InventoryService:
         # hsn_code is a standard field rather than a template one: every
         # product has an HSN or SAC, a GST invoice is required to carry it,
         # and it must not depend on whoever set up the product type.
-        standard_fields = ["rate", "rate_per_unit", "unit", "instock", "stock", "case_size", "hsn_code"]
+        #
+        # dtp_rate is standard for the same reason. "rate" is the end
+        # customer price; this is the fixed transfer price a dealer, a
+        # distributor or an OEM is bought through at. Which of the two a
+        # document uses follows from the customer type, so a product that
+        # can be sold through the channel needs both on the same record.
+        standard_fields = [
+            "rate", "rate_per_unit", "dtp_rate", "unit",
+            "instock", "stock", "case_size", "hsn_code",
+        ]
         for key in standard_fields:
             if key in attributes:
                 val = attributes[key]
-                if key in ["rate", "rate_per_unit", "instock", "stock", "case_size"]:
+                if key in ["rate", "rate_per_unit", "dtp_rate", "instock", "stock", "case_size"]:
                     try:
                         val = float(val)
                     except (ValueError, TypeError):
