@@ -84,8 +84,20 @@ try:
     # ------------------------------------------------------- a quotation
     banner("2. An Area Manager raises a discounted quotation")
 
-    def make_quotation(label):
+    customer_types = {
+        row["name"]: row["id"]
+        for row in rows(api("get", "/customer-types/", admin))
+    }
+
+    def make_quotation(label, customer_type=None):
+        payload_type = (
+            {"customer_type_id": customer_types[customer_type]}
+            if customer_type
+            else {}
+        )
+
         r = api("post", "/quotations/", token["am_north_1"], json={
+            **payload_type,
             "organization_name": f"{label} {TAG}",
             "contact_name": "Approval Test",
             "email": f"approval.{TAG}@mailinator.com",
@@ -226,14 +238,91 @@ try:
     check("the quotation is back to draft", back["status"] == "DRAFT", back["status"])
 
     # -------------------------------------------------- no approval path
-    banner("6. No discount, no approval")
+    banner("6. No discount still means the CEO, on a proposal")
 
+    # No price reaches a client unsigned. The discount bands say who owns
+    # how much; the CEO's signature is a separate requirement on top, so an
+    # undiscounted proposal raises an approval with the CEO on it and
+    # nobody else. A sales order raised off one already signed does not go
+    # round again - that case is checked below.
     clean = make_quotation("No Discount")
     r = request(clean["id"], 0)
-    check("an undiscounted quotation raises nothing", r.status_code == 200 and r.json()["data"] is None, f"{r.status_code} {r.text[:150]}")
 
-    untouched = api("get", f"/quotations/{clean['id']}", token["am_north_1"]).json()["data"]
-    check("and is left as a draft", untouched["status"] == "DRAFT", untouched["status"])
+    check(
+        "an undiscounted proposal still goes up",
+        r.status_code == 200 and r.json()["data"] is not None,
+        f"{r.status_code} {r.text[:150]}",
+    )
+
+    raised = r.json().get("data")
+
+    if raised:
+        created_approvals.append(raised["id"])
+
+    check(
+        "and it waits on the CEO alone",
+        raised and [s["role"] for s in raised["steps"]] == ["CEO"],
+        str(raised and [s["role"] for s in raised["steps"]]),
+    )
+
+    pending = api("get", f"/quotations/{clean['id']}", token["am_north_1"]).json()["data"]
+    check(
+        "the proposal is marked as waiting",
+        pending["status"] == "PENDING_APPROVAL",
+        pending["status"],
+    )
+
+    check(
+        "and is not yet approved, so it cannot be emailed",
+        pending.get("is_approved") is False,
+        str(pending.get("is_approved")),
+    )
+
+    r = api("put", f"/approvals/{raised['id']}/decide", token["avp"], json={"approve": True})
+    check(
+        "an AVP cannot sign in the CEO's place",
+        r.status_code == 403,
+        f"got {r.status_code}",
+    )
+
+    r = api("put", f"/approvals/{raised['id']}/decide", token["ceo"], json={"approve": True})
+    check("the CEO signs it", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
+
+    signed = api("get", f"/quotations/{clean['id']}", token["am_north_1"]).json()["data"]
+    check(
+        "and now it reads as approved",
+        signed.get("is_approved") is True,
+        str(signed.get("is_approved")),
+    )
+
+    # The same question for an order: the bands alone decide, because the
+    # proposal behind it already carries the signature.
+    r = api("post", "/orders", token["am_north_1"], json={
+        "customer_name": f"No Discount Order {TAG}",
+        "company_name": "Synergy North Agro",
+        "state": "Delhi",
+        "order_date": datetime.now(timezone.utc).isoformat(),
+        "items": [{"product": "Panel", "sku": "SG-SPX7-LANGOV100", "hsn": "84714190",
+                   "qty": 2, "rate": 75000, "tax_rate": 18}],
+    })
+
+    if r.status_code < 400:
+        order = r.json()["data"]
+        created_orders.append(order["id"])
+
+        r = api("post", "/approvals", token["am_north_1"], json={
+            "document_type": "SALES_ORDER",
+            "document_id": order["id"],
+            "document_number": order["order_number"],
+            "price_type": "ECP",
+            "discount_percent": 0,
+        })
+
+        check(
+            "an undiscounted sales order still needs nobody",
+            r.status_code == 200 and r.json()["data"] is None,
+            f"{r.status_code} {r.text[:150]}",
+        )
 
     # ------------------------------------------------------ dealer price
     banner("7. Dealer price is the CEO's alone")
@@ -256,6 +345,164 @@ try:
     check("the CEO can", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
 
     # ------------------------------------------------------- other zones
+    # ======================================= which price list, and why
+    banner("7b. The price list follows the customer, not a dropdown")
+
+    # It used to be a Price Type picker beside the discount, which asked
+    # the salesperson a question the customer record already answers - and
+    # let a dealer be quoted at end customer price by leaving it alone.
+    # The server now reads it off the document, so what the form sends is
+    # beside the point.
+    for customer_type, expected, label in (
+        ("End Customer", "ECP", "an end customer is quoted ECP"),
+        ("Dealer", "DP", "a dealer is bought through at DTP"),
+        ("Distributor", "DP", "so is a distributor"),
+        ("OEM", "DP", "and an OEM"),
+    ):
+        if customer_type not in customer_types:
+            check(f"{label} - the customer type exists", False, customer_type)
+            continue
+
+        quote = make_quotation(f"{customer_type} Price", customer_type)
+
+        check(
+            f"the proposal carries the customer type ({customer_type})",
+            quote.get("customer_type") == customer_type,
+            str(quote.get("customer_type")),
+        )
+
+        # Deliberately lying about the price type: the server must ignore it.
+        r = request(quote["id"], 0, price_type="ECP")
+
+        raised = r.json().get("data") if r.status_code == 200 else None
+
+        if raised:
+            created_approvals.append(raised["id"])
+
+        check(
+            label,
+            raised and raised["price_type"] == expected,
+            f"{r.status_code} got {raised and raised.get('price_type')}",
+        )
+
+    # ====================================== nothing goes out unsigned
+    banner("7c. A proposal cannot be emailed before it is signed")
+
+    # The old guard only asked "is an approval still open", which a draft
+    # nobody ever sent up also answers no to. Under the rule that every
+    # proposal carries the CEO's signature, that one must not go out
+    # either - so the question is whether one has been granted.
+    unsigned = make_quotation("Unsigned Send", "End Customer")
+
+    r = api("post", f"/quotations/{unsigned['id']}/send", token["am_north_1"], json={
+        "to": [f"client.{TAG}@mailinator.com"],
+        "subject": "Proposal",
+        "body": "Please find attached.",
+    })
+    check(
+        "a proposal nobody signed is refused",
+        r.status_code == 409,
+        f"{r.status_code} {r.text[:150]}",
+    )
+
+    r = request(unsigned["id"], 0)
+    waiting = r.json().get("data")
+
+    if waiting:
+        created_approvals.append(waiting["id"])
+
+    r = api("post", f"/quotations/{unsigned['id']}/send", token["am_north_1"], json={
+        "to": [f"client.{TAG}@mailinator.com"],
+        "subject": "Proposal",
+        "body": "Please find attached.",
+    })
+    check(
+        "and one still with the CEO is refused too",
+        r.status_code == 409,
+        f"{r.status_code} {r.text[:150]}",
+    )
+
+    api("put", f"/approvals/{waiting['id']}/decide", token["ceo"], json={"approve": True})
+
+    after = api("get", f"/quotations/{unsigned['id']}", token["am_north_1"]).json()["data"]
+    check(
+        "once the CEO signs, the proposal reads as approved",
+        after.get("is_approved") is True,
+        str(after.get("is_approved")),
+    )
+
+    # ============================= the discount the chain is built on
+    banner("7d. The deepest cut decides, not the blended share")
+
+    # The form was sending the discount as a share of the whole subtotal.
+    # 10% off one of two panels arrived as 5.07%, and a deep cut on a cheap
+    # line arrived as almost nothing - so the band that owned it never saw
+    # it. The server works the figure out from the saved lines and ignores
+    # what it was told.
+    blended = api("post", "/quotations/", token["am_north_1"], json={
+        "organization_name": f"Blended {TAG}",
+        "customer_type_id": customer_types["End Customer"],
+        "quotation_date": datetime.now(timezone.utc).isoformat(),
+        "items": [
+            {"product": "Panel A", "sku": "SG-SPX6-LANGO3576", "hsn": "85285900",
+             "qty": 1, "rate": 68000, "discount": 0, "tax_rate": 18},
+            {"product": "Panel B", "sku": "SG-CPX6-YS3576", "hsn": "85285900",
+             "qty": 1, "rate": 70000, "discount": 10, "tax_rate": 18},
+        ],
+    }).json()["data"]
+    created_quotations.append(blended["id"])
+
+    r = api("post", "/approvals", token["am_north_1"], json={
+        "document_type": "QUOTATION",
+        "document_id": blended["id"],
+        "document_number": blended["quote_number"],
+        "price_type": "ECP",
+        "discount_percent": 5.07,
+    })
+    raised = r.json().get("data")
+
+    if raised:
+        created_approvals.append(raised["id"])
+
+    check(
+        "10% on one line is recorded as 10%, not the 5.07% it was sent as",
+        raised and abs(float(raised["discount_percent"]) - 10.0) < 0.01,
+        str(raised and raised.get("discount_percent")),
+    )
+
+    # The one that matters: a deep cut on a cheap line used to skip the
+    # chain because it rounded to nothing against the whole deal.
+    deep = api("post", "/quotations/", token["am_north_1"], json={
+        "organization_name": f"Deep Cut {TAG}",
+        "customer_type_id": customer_types["End Customer"],
+        "quotation_date": datetime.now(timezone.utc).isoformat(),
+        "items": [
+            {"product": "Panel", "sku": "SG-SPX6-LANGO3576", "hsn": "85285900",
+             "qty": 10, "rate": 68000, "discount": 0, "tax_rate": 18},
+            {"product": "Camera", "sku": "SG-CAM-360", "hsn": "85258900",
+             "qty": 1, "rate": 2500, "discount": 25, "tax_rate": 18},
+        ],
+    }).json()["data"]
+    created_quotations.append(deep["id"])
+
+    r = api("post", "/approvals", token["am_north_1"], json={
+        "document_type": "QUOTATION",
+        "document_id": deep["id"],
+        "document_number": deep["quote_number"],
+        "price_type": "ECP",
+        "discount_percent": 0.09,
+    })
+    raised = r.json().get("data")
+
+    if raised:
+        created_approvals.append(raised["id"])
+
+    check(
+        "25% on a cheap line reaches the founder, not nobody",
+        raised and [s["role"] for s in raised["steps"]] == ["AVP", "CEO", "Founder"],
+        str(raised and [s["role"] for s in raised["steps"]]),
+    )
+
     banner("8. Another zone's deal is not yours to approve")
 
     other = api("post", "/quotations/", token["am_south_1"], json={
