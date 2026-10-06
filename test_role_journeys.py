@@ -272,7 +272,7 @@ try:
         "items": [{
             "product": "Interactive Flat Panel 75in",
             "model": "Qonevo IFP 75",
-            "sku": "SG-SPX7-LANGO3576",
+            "sku": "SG-IFP-75-SPX-3576",
             "quantity": 5,
             "unit_price": 185000,
             "tax": 18,
@@ -344,7 +344,7 @@ try:
         "items": [{
             "product": "Interactive Flat Panel 75in",
             "model": "Qonevo IFP 75",
-            "sku": "SG-SPX7-LANGO3576",
+            "sku": "SG-IFP-75-SPX-3576",
             "qty": 5,
             "rate": 185000,
             "tax_rate": 18,
@@ -448,8 +448,8 @@ try:
                 return float((row.get("attributes") or {}).get("instock") or 0)
         return None
 
-    stock_before_run["SG-SPX7-LANGO3576"] = shelf("SG-SPX7-LANGO3576")
-    opening = stock_before_run["SG-SPX7-LANGO3576"]
+    stock_before_run["SG-IFP-75-SPX-3576"] = shelf("SG-IFP-75-SPX-3576")
+    opening = stock_before_run["SG-IFP-75-SPX-3576"]
 
     for stage, label in (
         ("PROCUREMENT", "taken into procurement"),
@@ -470,14 +470,14 @@ try:
         if stage in ("PROCUREMENT", "READY"):
             check(
                 f"the shelf is untouched at {stage}",
-                shelf("SG-SPX7-LANGO3576") == opening,
+                shelf("SG-IFP-75-SPX-3576") == opening,
                 f"{shelf('SG-SPX7-LANGO3576')} - should still be {opening}",
             )
 
         if stage == "DISPATCHED":
             check(
                 "dispatch takes the 5 off the shelf",
-                shelf("SG-SPX7-LANGO3576") == opening - 5,
+                shelf("SG-IFP-75-SPX-3576") == opening - 5,
                 f"{shelf('SG-SPX7-LANGO3576')} - expected {opening - 5}",
             )
 
@@ -619,7 +619,7 @@ try:
     )
 
     # A line of each kind: plenty, thin, and nothing at all.
-    PLENTY, THIN, NONE_LEFT = "SG-SPX6-LANGO3576", "SG-CPX8-LANGOV100", "SG-STD-TOUCH"
+    PLENTY, THIN, NONE_LEFT = "SG-IFP-65-SPX-EDLA", "SG-IFP-86-SPX-V100", "SG-STD-TOUCH"
 
     for serial in (PLENTY, THIN, NONE_LEFT):
         check(f"{serial} is on the shelf to order against", serial in by_serial)
@@ -769,7 +769,7 @@ try:
     check("and not the North one", "SG-DEMO-NORTH" not in south)
     check(
         "both see the shared catalogue",
-        "SG-SPX7-LANGO3576" in north and "SG-SPX7-LANGO3576" in south,
+        "SG-IFP-75-SPX-3576" in north and "SG-IFP-75-SPX-3576" in south,
     )
 
     # ============================================ 12. deleting a record
@@ -835,7 +835,7 @@ try:
         "order_date": now.isoformat(),
         "items": [{
             "product": "Interactive Flat Panel 75in",
-            "sku": "SG-SPX7-LANGO3576",
+            "sku": "SG-IFP-75-SPX-3576",
             "qty": 1,
             "rate": 185000,
             "tax_rate": 18,
@@ -864,7 +864,7 @@ try:
             "order_date": now.isoformat(),
             "items": [{
                 "product": "Interactive Flat Panel 75in",
-                "sku": "SG-SPX7-LANGO3576",
+                "sku": "SG-IFP-75-SPX-3576",
                 "qty": 1,
                 "rate": 185000,
                 "tax_rate": 18,

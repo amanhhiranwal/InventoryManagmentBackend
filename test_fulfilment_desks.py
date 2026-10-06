@@ -83,7 +83,7 @@ try:
         if serial not in stock_before_run:
             stock_before_run[serial] = shelf(serial)
 
-    def raise_order(label, sku="SG-SPX7-LANGO3576", qty=2, invoiced=True):
+    def raise_order(label, sku="SG-IFP-75-SPX-3576", qty=2, invoiced=True):
         remember_stock(sku)
 
         created = api("post", "/orders", owner, json={
@@ -318,7 +318,7 @@ try:
                 (
                     float((i.get("attributes") or {}).get("instock") or 0)
                     for i in rows(api("get", "/inventory/items", token["inventory"]))
-                    if str(i.get("serial_number") or "").upper() == "SG-SPX7-LANGO3576"
+                    if str(i.get("serial_number") or "").upper() == "SG-IFP-75-SPX-3576"
                 ),
                 None,
             )
@@ -342,7 +342,7 @@ try:
     # catalogue was repriced, so a four-unit order was comfortably covered
     # and the assertion had quietly stopped testing the shortfall warning
     # at all. One more than there is, is short however the shelf moves.
-    SHORT_SKU = "SG-OPS-I5-8-256-G12"
+    SHORT_SKU = "SG-OPS-I5-12G"
 
     in_hand = next(
         (
@@ -460,7 +460,7 @@ finally:
     try:
         # The shelf first. Dispatching an order really does take stock off
         # it, so a suite that does not put it back leaves the catalogue
-        # quietly wrong - this one had walked SG-SPX7-LANGO3576 down from 12
+        # quietly wrong - this one had walked SG-IFP-75-SPX-3576 down from 12
         # to 10 over a handful of runs.
         for serial, was in stock_before_run.items():
             if was is None:

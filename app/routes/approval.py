@@ -154,20 +154,37 @@ def save_matrix(
 
 @router.get("/preview")
 def preview_chain(
-    price_type: str = PriceType.ECP,
+    price_type: str | None = None,
     discount_percent: float = 0.0,
+    customer_type: str | None = None,
+    document_type: str | None = None,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """Who would have to approve this, without raising anything."""
+    """Who would have to approve this, without raising anything.
 
-    chain = approval_chain(price_type, discount_percent, db)
+    ``customer_type`` is what the form actually knows, and the price list
+    follows from it. ``price_type`` is still accepted for anything asking
+    the question directly.
+    """
+
+    from app.core.approvals import price_type_for
+
+    if customer_type is not None:
+        price_type = price_type_for(customer_type)
+
+    price_type = price_type or PriceType.ECP
+
+    chain = approval_chain(price_type, discount_percent, db, document_type)
 
     return {
         "success": True,
         "data": {
             "chain": chain,
-            "reason": describe_chain(price_type, discount_percent, db),
+            "price_type": price_type,
+            "reason": describe_chain(
+                price_type, discount_percent, db, document_type
+            ),
             "needs_approval": bool(chain),
             "ceilings": {
                 role: discount_ceiling(role, db) for _, role in bands(db)
