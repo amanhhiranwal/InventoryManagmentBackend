@@ -19,6 +19,13 @@ from sqlalchemy.orm import Session
 
 from app.database.dependencies import get_db
 from app.database.mongodb import sync_mongo_db
+from app.core.field_checks import (
+    check_email,
+    check_gstin,
+    check_mobile,
+    check_pan,
+    check_pin,
+)
 from app.middleware.permission_middleware import require_granted, require_permission
 from app.services.lead_service import get_visible_creator_user_ids
 
@@ -301,21 +308,30 @@ def _validated_fields(request: CustomerFields, current_user: dict, db: Session, 
         fields["name"] = name
         fields["customer_name"] = name
 
-    email = _clean(request.email)
-    if email and not _EMAIL.match(email):
-        raise HTTPException(status_code=400, detail=f"'{email}' is not a valid email address.")
+    # Shape-checked on the way in. The form checks these too, but a
+    # browser check is a courtesy: this endpoint is reachable without it,
+    # and a customer whose number has seven digits is one nobody can call
+    # back. On an edit only what was sent is judged - a partial save must
+    # not fail on a field it is not touching.
+    # Required when the customer is being created, optional on an edit:
+    # a partial save sends only the fields it is changing and must not
+    # fail on one it has not touched.
+    email = check_email(request.email, required=not partial)
+    phone = check_mobile(request.phone, field="Mobile number", required=not partial)
 
     for key in [
-        "contact_name", "designation", "phone", "website", "address", "city",
-        "state", "pin_code", "customer_type", "category", "remarks",
+        "contact_name", "designation", "website", "address", "city",
+        "state", "customer_type", "category", "remarks",
         "lead_source",
     ]:
         take(key, _clean(getattr(request, key)))
 
+    take("phone", phone)
     take("email", email)
     take("country", _clean(request.country) or "India")
-    take("gst", _clean(request.gst).upper())
-    take("pan", _clean(request.pan).upper())
+    take("pin_code", check_pin(request.pin_code))
+    take("gst", check_gstin(request.gst))
+    take("pan", check_pan(request.pan))
     take("coi", _clean(request.coi))
 
     if "gst" in fields:
