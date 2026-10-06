@@ -297,13 +297,33 @@ def test_crud_suite():
     status, res = make_request(f"{BASE_URL}/sales/orders/", token=token)
     print(f"-> List Sales Orders Status: {status}")
 
-    # Cleanup test entities
+    # Cleanup test entities.
+    #
+    # Order matters, and used to be wrong: the user this run opened holds
+    # the role it created and is assigned the lead it raised, so deleting
+    # the role first simply failed and left a "Zonal Manager <timestamp>"
+    # role behind. The next suite to assert the exact set of sales roles
+    # then failed on debris rather than on anything it did itself.
+    if lead_id:
+        make_request(f"{BASE_URL}/leads/{lead_id}", method="DELETE", token=token)
+    if user_id:
+        make_request(f"{BASE_URL}/users/{user_id}", method="DELETE", token=token)
     if company_id:
         make_request(f"{BASE_URL}/companies/{company_id}", method="DELETE", token=token)
     if role_id:
         make_request(f"{BASE_URL}/rbac/roles/{role_id}", method="DELETE", token=token)
     if perm_id:
         make_request(f"{BASE_URL}/rbac/permissions/{perm_id}", method="DELETE", token=token)
+
+    for label, path in (
+        ("role", f"/rbac/roles/{role_id}" if role_id else None),
+        ("user", f"/users/{user_id}" if user_id else None),
+    ):
+        if not path:
+            continue
+        status, _ = make_request(f"{BASE_URL}{path}", token=token)
+        if status == 200:
+            print(f"-> WARNING: the test {label} is still there after cleanup")
 
     print("\n==================================================")
     print("   ALL API CRUD TESTS COMPLETED SUCCESSFULLY!")

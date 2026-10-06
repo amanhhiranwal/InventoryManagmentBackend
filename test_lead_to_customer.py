@@ -526,11 +526,73 @@ try:
         f"{r.status_code} {r.text[:120]}",
     )
 
+    # ====================================== what the server will accept
+    banner("10. A browser check is not a rule")
+
+    # These fields are marked required on the form and checked there, but
+    # the API is reachable without the form and the import does not go
+    # through it. A customer whose number has seven digits is one nobody
+    # can call back.
+    for label, payload, expect in (
+        ("a malformed email is refused",
+         {"name": f"Shape {TAG}", "contact_name": "A B",
+          "email": "not-an-email", "phone": "9876543210"}, 400),
+        ("a short mobile number is refused",
+         {"name": f"Shape {TAG}", "contact_name": "A B",
+          "email": "a@b.com", "phone": "98765"}, 400),
+        ("a mobile number that cannot be Indian is refused",
+         {"name": f"Shape {TAG}", "contact_name": "A B",
+          "email": "a@b.com", "phone": "1234567890"}, 400),
+        ("a customer with no email is refused",
+         {"name": f"Shape {TAG}", "contact_name": "A B",
+          "phone": "9876543210"}, 400),
+        ("a customer with no mobile number is refused",
+         {"name": f"Shape {TAG}", "contact_name": "A B",
+          "email": "a@b.com"}, 400),
+        ("a malformed GSTIN is refused",
+         {"name": f"Shape {TAG}", "contact_name": "A B", "email": "a@b.com",
+          "phone": "9876543210", "gst": "NOTAGSTIN"}, 400),
+        ("a malformed PAN is refused",
+         {"name": f"Shape {TAG}", "contact_name": "A B", "email": "a@b.com",
+          "phone": "9876543210", "pan": "XX1"}, 400),
+        ("a malformed PIN code is refused",
+         {"name": f"Shape {TAG}", "contact_name": "A B", "email": "a@b.com",
+          "phone": "9876543210", "pin_code": "12"}, 400),
+    ):
+        r = api("post", "/customers", owner, json=payload)
+
+        check(label, r.status_code == expect, f"got {r.status_code} {r.text[:120]}")
+
+        if r.status_code == 200:
+            created_customers.append(r.json()["data"]["id"])
+
+    # The country code and the separators people type are not the number.
+    r = api("post", "/customers", owner, json={
+        "name": f"Shape Good {TAG}", "contact_name": "A B",
+        "email": f"shape.{TAG}@mailinator.com", "phone": "+91 98765-43210",
+    })
+    check(
+        "a number written with its country code and dashes is accepted",
+        r.status_code == 200,
+        f"{r.status_code} {r.text[:120]}",
+    )
+
+    if r.status_code == 200:
+        created_customers.append(r.json()["data"]["id"])
+
+    # And a lead, which the import also goes through.
+    r = api("post", "/leads", owner, json={
+        "company_name": f"Shape Lead {TAG}", "contact_person": "A B",
+        "email": "still-not-an-email",
+    })
+    check("a lead with a malformed email is refused", r.status_code == 400,
+          f"got {r.status_code}")
+
 except Exception as exc:  # noqa: BLE001
     check("the run completed", False, str(exc)[:200])
 
 finally:
-    print("\n10. Clearing up")
+    print("\n11. Clearing up")
 
     try:
         from sqlalchemy import text
@@ -567,6 +629,28 @@ finally:
 
         session.commit()
 
+        # The customer records live in Mongo, beside the orders in
+        # Postgres. Nothing was clearing them, so each run left its
+        # shape-check customers behind on the Customers list.
+        if created_customers:
+            try:
+                from bson import ObjectId
+
+                from app.database.mongodb import sync_mongo_db as mdb
+
+                ids = []
+
+                for value in created_customers:
+                    try:
+                        ids.append(ObjectId(str(value)))
+                    except Exception:  # noqa: BLE001 - not an id we made
+                        continue
+
+                if ids:
+                    mdb["customers"].delete_many({"_id": {"$in": ids}})
+            except Exception as exc:  # noqa: BLE001
+                print("   could not clear customers:", exc)
+
         left = session.execute(
             text("select count(*) from sales_order where id = any(:ids)"),
             {"ids": created_orders or [0]},
@@ -577,7 +661,8 @@ finally:
             f"{len(created_opportunities)} opportunities, "
             f"{len(created_quotations)} proposals, "
             f"{len(created_orders)} orders, "
-            f"{len(created_invoices)} invoices"
+            f"{len(created_invoices)} invoices, "
+            f"{len(created_customers)} customers"
         )
         print(f"   left behind: {left}")
 
