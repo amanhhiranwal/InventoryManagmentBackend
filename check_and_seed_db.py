@@ -38,7 +38,12 @@ def sync_db_and_seed():
     try:
         print("\n--- 2. Checking / Creating Super Admin User ---")
         super_admin = (
-            db.query(User).filter(User.email == "superadmin@mailinator.com").first()
+            db.query(User)
+            .filter(
+                (User.email == "superadmin@mailinator.com")
+                | (User.employee_id == "EMP-SUPERADMIN")
+            )
+            .first()
         )
         if not super_admin:
             print("Creating superadmin@mailinator.com...")
@@ -66,11 +71,12 @@ def sync_db_and_seed():
             print("Super admin created successfully.")
         else:
             # Ensure password is set to password123
+            super_admin.email = "superadmin@mailinator.com"
             super_admin.password = PasswordService.hash_password("password123")
             super_admin.is_super_admin = True
             super_admin.is_active = True
             db.commit()
-            print("Super admin password updated to 'password123'.")
+            print("Super admin credentials confirmed for 'superadmin@mailinator.com'.")
 
         print("\n--- 3. Seeding Default Master Roles & Permissions ---")
         # The sales hierarchy, top to bottom. Super Admin sits outside it and

@@ -1,18 +1,37 @@
-name: Deploy Backend to Production
+name: CI/CD Pipeline - Backend
 
 on:
   push:
     branches:
       - prod
+      - main
   workflow_dispatch:
 
 concurrency:
-  group: deploy-backend-prod
+  group: deploy-backend-${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
+  test:
+    name: Backend CI (Syntax & Compilation)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify Python Syntax
+        run: |
+          python -m py_compile $(find app -name "*.py")
+          python -m py_compile sync_schema.py check_and_seed_db.py
+
   deploy:
     name: Deploy FastAPI Backend
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to Server via SSH
@@ -25,7 +44,7 @@ jobs:
           script: |
             set -e
             echo "=========================================="
-            echo "==> Deploying Backend to 45.195.159.94..."
+            echo "==> Deploying Backend to ${{ secrets.SERVER_HOST }}..."
             echo "=========================================="
 
             APP_DIR="/var/www/saas"
@@ -39,9 +58,10 @@ jobs:
             cd "$BACKEND_DIR"
             git config --global --add safe.directory "$BACKEND_DIR"
 
-            echo "==> Fetching latest changes from branch prod..."
-            git fetch origin prod
-            git reset --hard origin/prod
+            BRANCH="${{ github.ref_name }}"
+            echo "==> Fetching latest changes from branch $BRANCH..."
+            git fetch origin "$BRANCH"
+            git checkout -B "$BRANCH" "origin/$BRANCH"
 
             # Sync docker-compose.prod.yml if changed
             cp -f "$BACKEND_DIR/deploy/docker-compose.prod.yml" "$APP_DIR/docker-compose.prod.yml" 2>/dev/null || true
@@ -51,6 +71,7 @@ jobs:
             docker compose -f "$APP_DIR/docker-compose.prod.yml" up -d saas_backend
 
             echo "==> Syncing database schemas & seeding..."
+            docker compose -f "$APP_DIR/docker-compose.prod.yml" exec -T saas_backend python sync_schema.py
             docker compose -f "$APP_DIR/docker-compose.prod.yml" exec -T saas_backend python check_and_seed_db.py
             docker compose -f "$APP_DIR/docker-compose.prod.yml" exec -T saas_backend python apply_crm_workflow_schema.py
 
