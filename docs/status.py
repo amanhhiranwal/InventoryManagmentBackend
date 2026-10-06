@@ -27,11 +27,11 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
-PRETTY_DATE = "3 October 2026"
-PREVIOUS_DATE = "29 September 2026"
+PRETTY_DATE = "5 October 2026"
+PREVIOUS_DATE = "3 October 2026"
 
-FRONTEND_SHA = "564f105"
-BACKEND_SHA = "514d4cf"
+FRONTEND_SHA = "a867910"
+BACKEND_SHA = "57d2426"
 
 #: suite -> (title, file, what it proves, checks). The total is summed,
 #: never typed, so the headline figure cannot drift from the rows under it.
@@ -55,10 +55,12 @@ SUITES = [
     (
         "The discount chain",
         "test_approval_chain.py",
-        "Quotations at 10%, 18% and 25% each go to exactly the right people "
-        "in the right order; dealer price goes straight to the CEO; an "
-        "undiscounted quote needs nobody.",
-        60,
+        "Quotations at 10%, 18% and 25% each go to exactly the right "
+        "people in the right order. The price list follows the customer "
+        "type however the form is filled in; every proposal ends at the "
+        "CEO; the deepest cut on a line decides the band; and a proposal "
+        "cannot be emailed before it is signed.",
+        79,
     ),
     (
         "The two desks",
@@ -233,12 +235,13 @@ JOURNEY = [
 ]
 
 DISCOUNT_BANDS = [
-    ("None", "Nobody", "The list price goes out on the salesperson's own authority."),
-    ("Up to 15%", "AVP", "Inside the AVP's band."),
+    ("None", "CEO",
+     "No discount to own, but no price leaves the building unsigned."),
+    ("Up to 15%", "AVP, then CEO", "Inside the AVP's band, plus the standing signature."),
     ("15.01% to 20%", "AVP, then CEO", "Past the AVP's ceiling, so the CEO owns the excess."),
     ("Above 20%", "AVP, then CEO, then Founder", "Past the CEO's ceiling too."),
-    ("Dealer price", "CEO only, whatever the figure",
-     "A transfer price, not a negotiation. Nobody below the CEO may move it."),
+    ("Dealer transfer price", "CEO only, whatever the figure",
+     "A fixed price, not a negotiation. Nobody below the CEO may move it."),
 ]
 
 DESKS = [
@@ -312,10 +315,29 @@ GST_ROWS = [
     ("85291029", "OPS compute modules", "18%"),
     ("85258900", "Cameras and video bars", "18%"),
     ("85184000", "Microphones and array mics", "18%"),
-    ("84733099", "Stands and mounting hardware", "18%"),
+    ("84733099", "Stands, frames and OPS upgrades", "18%"),
+    ("85044090", "UPS and cabinet", "18%"),
+    ("998719", "AMC and extended warranty (a service, so SAC)", "18%"),
 ]
 
 DONE = [
+    (
+        "The price list follows the customer, not a dropdown",
+        "An End Customer is quoted the end customer price; a dealer, "
+        "distributor, OEM or corporate is bought through at the fixed "
+        "transfer price. It was a Price Type picker beside the discount, "
+        "which asked the salesperson a question the customer record "
+        "already answers — and let a dealer be quoted at end customer "
+        "price by leaving it alone. Every product carries both rates now, "
+        "entered on the Product List.",
+    ),
+    (
+        "Every proposal carries the CEO's signature",
+        "Whatever the discount, and whether there is one at all. Email "
+        "Draft stays closed until that signature exists — not merely "
+        "until nothing is pending, which a draft nobody ever sent up also "
+        "satisfied.",
+    ),
     (
         "The tax is worked out properly, and shown",
         "A sale inside Uttar Pradesh is charged as CGST plus SGST; a sale "
@@ -374,6 +396,21 @@ DONE = [
 
 FIXED = [
     (
+        "A deep discount on one line could skip the chain",
+        "The form sent the discount as a share of the whole subtotal, so "
+        "10% off one of two panels arrived as 5.07% — and a 25% cut on a "
+        "₹2,500 accessory arrived as 0.09%, below every band, "
+        "approved by nobody. The deepest cut on any line decides now, and "
+        "the server works it out from the saved lines rather than trusting "
+        "the figure it is sent.",
+    ),
+    (
+        "The invoice signed itself in somebody else's name",
+        "Whoever raised the proforma invoice had their name printed over "
+        "“Authorised Signatory”, which says they authorised the "
+        "price. They did not. The space is blank now, to be signed by hand.",
+    ),
+    (
         "Any signed-in user could raise a proposal",
         "Only <span class='mono'>lead</span> had create and update "
         "permissions. The other sales modules had read and nothing else, so "
@@ -423,6 +460,19 @@ FIXED = [
 
 WAITING = [
     (
+        "Four dealer prices and three end customer prices",
+        "The workbook's own cells are corrupt for four dealer figures, and "
+        "three 86” panels appear only on the dealer sheet. They show as "
+        "“Price not set” in amber until you send the numbers or "
+        "enter them on the Product List.",
+    ),
+    (
+        "80 units of stock with no price row",
+        "CVT 9679 (74 units) and LangoV100 CPX9 (6) are on the Inventory "
+        "sheet and on neither price sheet, so they could not be attached "
+        "to a product.",
+    ),
+    (
         "Staging and production still need the line repair",
         "<span class='mono'>repair_lines.py</span> has run against "
         "development only. The same records exist in the other environments "
@@ -454,6 +504,186 @@ WAITING = [
         "Lead attachments, Add From Excel, the PO document on a sales order, "
         "GST / PAN / certificate of incorporation, and proposal annexures "
         "all need a real file. Hand over one and those steps get tested too.",
+    ),
+]
+
+
+#: The hands-on guide: which screen, what to do, what you should see.
+#: Written for somebody who has the application open in front of them,
+#: which is a different question from section 3's "what happens to a deal".
+USING = [
+    (
+        "Add the customer, with the enquiry attached",
+        "Customers → Add Customer",
+        "Company name, the person you deal with, their state, and the "
+        "<b>customer type</b>. Tick the box to attach the enquiry at the "
+        "same time, so you do not have to raise the lead separately.",
+        "<b>Customer type decides the price list</b> for everything that "
+        "follows. End Customer is quoted the end customer price; a Dealer, "
+        "Distributor, OEM or Corporate is bought through at the fixed "
+        "transfer price. Get it right here and nothing downstream has to "
+        "be corrected.",
+    ),
+    (
+        "Work the lead until you know it is real",
+        "Sales → Leads → open the row",
+        "Log the call, then move the status: <b>Contacted</b> once you "
+        "have spoken to them, <b>Qualified</b> once you believe the budget "
+        "is real. <b>Lost</b> needs a reason.",
+        "Only a Qualified lead can become an opportunity, so this is not a "
+        "formality — it is the gate.",
+    ),
+    (
+        "Turn it into an opportunity",
+        "Sales → Opportunity → New → Select a Lead",
+        "Only qualified leads are offered. Everything already on the lead "
+        "is carried across. Add the products with <b>Add Product</b>, set "
+        "the quantity, and give the deal value and expected close date.",
+        "Unit price and HSN are shown, not typed. The price comes from the "
+        "list your customer type calls for; the <b>discount</b> is your "
+        "lever.",
+    ),
+    (
+        "Raise the proposal",
+        "Sales → Proposal → New",
+        "Pick the opportunity at the top and the whole deal comes across "
+        "— contact, addresses, lines. Adjust quantities, discounts and "
+        "tax. Tick Freight or Installation only if the client is being "
+        "charged for them.",
+        "The Price Type badge tells you which list you are on and why. On "
+        "a dealer proposal the discount column reads <b>Fixed</b> "
+        "— a transfer price is not negotiable below the CEO.",
+    ),
+    (
+        "Send it for approval",
+        "The <b>Send For Approval</b> button in the header",
+        "Save happens automatically. The button names who it is going to. "
+        "Hover it to see why.",
+        "<b>Every proposal goes to the CEO</b>, discount or no discount. A "
+        "discount adds the AVP ahead of them, and past 20% the Founder "
+        "after. The deepest cut on any single line decides, not the "
+        "average across the deal.",
+    ),
+    (
+        "Wait for the signature",
+        "The approver gets a notification and an email",
+        "They open <b>Masters → Proposal Approval</b> or click through "
+        "from the bell. Each approval moves it one step; a rejection sends "
+        "it back to Draft with the reason on it.",
+        "You cannot approve your own, and you cannot jump the queue. If it "
+        "is sitting too long, the chain is shown on the proposal so you "
+        "know whose desk it is on.",
+    ),
+    (
+        "Email it to the client",
+        "The <b>Email Draft</b> button on the proposal",
+        "It is greyed out until the proposal has been signed. Once it is, "
+        "the draft opens with the covering letter and the PDF attached.",
+        "<b>If the button is grey</b>, the amber line under it says why: "
+        "either it has not been sent for approval, or it is still with an "
+        "approver.",
+    ),
+    (
+        "Mark it Accepted when they say yes",
+        "Sales → Proposal → the row menu",
+        "Sent → Accepted. Only an accepted proposal can become an "
+        "order.",
+        "If they say no, mark it Rejected rather than leaving it Sent "
+        "— the pipeline figures read these.",
+    ),
+    (
+        "Convert it to a sales order",
+        "<b>Convert To Sales Order</b> on the proposal",
+        "One button. The lines, the addresses, the split it was accepted "
+        "on and the proposal number all carry over. Add the client's PO "
+        "number if you have it, then approve the order.",
+        "From <b>Confirmed</b> onward the order is no longer yours to "
+        "push. You can watch every stage; you cannot move it.",
+    ),
+    (
+        "Raise the proforma invoice",
+        "Sales → Proforma Invoice → New, or from the order",
+        "Check the addresses and the payment terms, then Generate. The "
+        "invoice number is shown before you save so you can quote it.",
+        "The terms are the ones the client accepted and are read-only "
+        "here. To change them, change the order.",
+    ),
+    (
+        "Record the advance when it arrives",
+        "The proforma invoice → Amount Paid",
+        "Type what actually landed. The figure reaches the order too, so "
+        "the outstanding balance is right in both places.",
+        "Recording it is <b>not</b> the same as verifying it. The order "
+        "does not move until Accounts confirm the money.",
+    ),
+    (
+        "Hand over, and watch",
+        "Nothing to do — the desks take it from here",
+        "Accounts verify the advance; the warehouse takes it through "
+        "Procurement, Ready, Dispatched and Delivered. Each one tells the "
+        "next person it is their turn.",
+        "Stock comes off the shelf at <b>Dispatched</b>, not before.",
+    ),
+    (
+        "Sign off the installation",
+        "The order → mark Installed",
+        "This one is yours again: you are the person on site with the "
+        "client.",
+        "It then goes back to Accounts, who settle the balance and close "
+        "the order as <b>Completed</b>.",
+    ),
+]
+
+#: The things people actually get stuck on, with the answer.
+STUCK = [
+    (
+        "The Email Draft button is grey",
+        "The proposal has not been signed. Every proposal carries the "
+        "CEO's signature before it reaches a client. Use Send For Approval "
+        "— the amber line under the button says whether it has not "
+        "been sent up at all, or is still with an approver.",
+    ),
+    (
+        "I cannot type a unit price",
+        "You are not meant to. The price comes from the list your "
+        "customer type calls for, so the company's price is what goes out. "
+        "Negotiate with the discount instead — that is the figure the "
+        "approval chain actually sees.",
+    ),
+    (
+        "A product says “Price not set” in amber",
+        "The pricing workbook carries no figure for that line on the list "
+        "you are quoting from. It is a gap to be filled on the Product "
+        "List, not a free product. Tell whoever keeps the catalogue.",
+    ),
+    (
+        "The discount column says Fixed",
+        "You are on a dealer proposal. A transfer price is not a "
+        "negotiation — only the CEO can move it, and they do that by "
+        "approving the price itself.",
+    ),
+    (
+        "My discount shows a different number from the one I typed",
+        "The figure beside the approval is the <b>deepest</b> cut on any "
+        "line, not the average across the deal. A 25% cut on one small "
+        "line is a 25% discount and is signed as one.",
+    ),
+    (
+        "I cannot approve something",
+        "You cannot sign your own, and you cannot sign ahead of somebody "
+        "senior who has not yet. An Area Manager and a Zonal Head can "
+        "apply a discount but never approve one.",
+    ),
+    (
+        "The warehouse is not moving my order",
+        "Check whether Accounts have verified the advance. The warehouse "
+        "queue only shows orders that have reached Payment Verified.",
+    ),
+    (
+        "The HSN column shows a dash",
+        "The product has no HSN on the Product List. Every line of a GST "
+        "invoice has to carry one, so it is added to the product rather "
+        "than typed onto the document.",
     ),
 ]
 
@@ -550,6 +780,12 @@ li { margin-bottom: 6px; }
 .flow .box.todo { border-color: #d1d5db; background: #f9fafb; color: #6b7280; }
 
 .cap { font-size: 8.5pt; color: #9ca3af; margin-top: 2px; }
+
+.step .where { font-size: 8.5pt; color: #2563eb; font-weight: 600;
+               margin: 0 0 4px; }
+.step .watch { font-size: 9pt; color: #6b7280; margin: 0;
+               border-left: 2px solid #e5e7eb; padding-left: 8px; }
+.step .watch b { color: #374151; }
 .foot { margin-top: 28px; padding-top: 10px; border-top: 1px solid #e5e7eb;
         font-size: 8.5pt; color: #9ca3af; }
 """
@@ -658,6 +894,32 @@ def gst_table() -> str:
     )
 
 
+def using_steps() -> str:
+    """The hands-on guide: screen, what to do, what to watch for."""
+
+    return "".join(
+        f"<div class='step'><div class='no'>{i}</div><div class='body'>"
+        f"<h4>{esc(title)}</h4>"
+        f"<p class='where'>{where}</p>"
+        f"<p style='margin:0 0 4px'>{what}</p>"
+        f"<p class='watch'>{watch}</p>"
+        "</div></div>"
+        for i, (title, where, what, watch) in enumerate(USING, 1)
+    )
+
+
+def stuck_table() -> str:
+    rows = "".join(
+        f"<tr><td><b>{question}</b></td><td>{answer}</td></tr>"
+        for question, answer in STUCK
+    )
+    return (
+        "<table><thead><tr><th style='width:34%'>If you are stuck on\u2026</th>"
+        "<th>What is going on</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table>"
+    )
+
+
 def items(pairs) -> str:
     return "".join(f"<div class='item'><b>{esc(h)}</b> {b}</div>" for h, b in pairs)
 
@@ -692,19 +954,21 @@ HTML = f"""<!doctype html>
       <span class="d">— the seven roles</span></div>
     <div><span class="n">3</span><span class="t">The journey, step by step</span>
       <span class="d">— customer to completed order</span></div>
-    <div><span class="n">4</span><span class="t">The three rules that keep it honest</span>
+    <div><span class="n">4</span><span class="t">Using it, screen by screen</span>
+      <span class="d">— the guide for the sales floor</span></div>
+    <div><span class="n">5</span><span class="t">The three rules that keep it honest</span>
       <span class="d">— discounts, desks, stock</span></div>
-    <div><span class="n">5</span><span class="t">Every status, and what it means</span></div>
-    <div><span class="n">6</span><span class="t">The data model</span>
+    <div><span class="n">6</span><span class="t">Every status, and what it means</span></div>
+    <div><span class="n">7</span><span class="t">The data model</span>
       <span class="d">— what is stored, and where</span></div>
-    <div><span class="n">7</span><span class="t">How the tax is worked out</span>
+    <div><span class="n">8</span><span class="t">How the tax is worked out</span>
       <span class="d">— CGST, SGST, IGST and the HSN behind them</span></div>
-    <div><span class="n">8</span><span class="t">The catalogue we price against</span></div>
-    <div><span class="n">9</span><span class="t">The proforma invoice</span>
+    <div><span class="n">9</span><span class="t">The catalogue we price against</span></div>
+    <div><span class="n">10</span><span class="t">The proforma invoice</span>
       <span class="d">— what it carries, and why</span></div>
-    <div><span class="n">10</span><span class="t">What we have tested</span>
+    <div><span class="n">11</span><span class="t">What we have tested</span>
       <span class="d">— {TOTAL} checks across {len(SUITES)} suites</span></div>
-    <div><span class="n">11</span><span class="t">Where we are today</span>
+    <div><span class="n">12</span><span class="t">Where we are today</span>
       <span class="d">— done, fixed, and waiting on you</span></div>
   </div>
 </section>
@@ -812,7 +1076,38 @@ HTML = f"""<!doctype html>
 </section>
 
 <section>
-  <h2><span class="n">4</span>The three rules that keep it honest</h2>
+  <h2><span class="n">4</span>Using it, screen by screen</h2>
+  <p class="lede">The guide for the sales floor. Section 3 says what
+  happens to a deal; this says what you do, where, and what you should see
+  when it works.</p>
+
+  {using_steps()}
+
+  <div class="note good">
+    <b>The two things worth remembering</b>
+    <b>Customer type decides the price list</b>, and it is set once on the
+    customer. And <b>every proposal is signed by the CEO</b> before it
+    reaches a client — so Send For Approval is a step on every deal, not
+    only the discounted ones.
+  </div>
+
+  <h3>If it will not let you</h3>
+  <p>Almost everything the system refuses comes down to one of these.
+  None of them is a fault.</p>
+
+  {stuck_table()}
+
+  <div class="note">
+    <b>Who to ask</b>
+    A price that is wrong or missing is the catalogue — whoever keeps the
+    Product List. An approval sitting too long is the person the chain
+    names on the proposal. An order that has stopped moving is whichever
+    desk owns its current stage, which section 5 sets out.
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">5</span>The three rules that keep it honest</h2>
   <p class="lede">Almost every refusal you will meet in the system comes
   from one of these three rules. They are worth knowing by heart.</p>
 
@@ -884,7 +1179,7 @@ HTML = f"""<!doctype html>
 </section>
 
 <section>
-  <h2><span class="n">5</span>Every status, and what it means</h2>
+  <h2><span class="n">6</span>Every status, and what it means</h2>
   <p class="lede">These are the exact words the system stores. The screen
   may print them more prettily, but the value underneath is always one of
   these — and a move that is not listed here is refused with a message
@@ -903,7 +1198,7 @@ HTML = f"""<!doctype html>
 </section>
 
 <section>
-  <h2><span class="n">6</span>The data model</h2>
+  <h2><span class="n">7</span>The data model</h2>
   <p class="lede">What is stored, and where. For a non-technical reader the
   shapes matter more than the field names: <b>one box is one kind of
   thing</b>, and an arrow means “this one points at that one”.</p>
@@ -1032,7 +1327,7 @@ HTML = f"""<!doctype html>
 </section>
 
 <section>
-  <h2><span class="n">7</span>How the tax is worked out</h2>
+  <h2><span class="n">8</span>How the tax is worked out</h2>
   <p class="lede">Nobody chooses this on a form. It follows from two things
   the records already hold: where we are registered, and where the customer
   is billed.</p>
@@ -1077,54 +1372,75 @@ HTML = f"""<!doctype html>
 </section>
 
 <section>
-  <h2><span class="n">8</span>The catalogue we price against</h2>
-  <p class="lede">Built from the Noida 65 stock dashboard, with the rates
-  and codes written on it. Nothing in it is indicative.</p>
+  <h2><span class="n">9</span>The catalogue we price against</h2>
+  <p class="lede">Forty-five products, built from the pricing workbook
+  rather than assembled by hand. Nothing in it is indicative.</p>
 
-  <h3>Panels, priced by the dashboard's own column</h3>
-  <p>SPX carries no camera and CPX does, and the number is the size —
-  6 is 65″, 7 is 75″, 8 is 86″, 9 is 98″ and 11 is
-  110″. The LangoV100 row is the only row priced on the sheet, so it
-  reads as the price list for the column rather than for that board alone:
-  ₹68,000 for SPX6 up to ₹1,50,000 at the top. No camera premium
-  is added on top, because the figure written against CPX already carries it.</p>
+  <h3>Two price lists, one catalogue</h3>
+  <p>Every line carries both: the <b>End Customer Price</b> it is quoted
+  at, and the fixed <b>Dealer Transfer Price</b> the channel is bought
+  through at. Which one a document uses follows from the customer type on
+  it, so nobody picks a price list by hand and a dealer cannot be quoted
+  at end customer price by leaving a dropdown alone.</p>
 
-  <h3>What is in it</h3>
   <table>
-    <thead><tr><th style="width:32%">Group</th><th>Detail</th>
-    <th class="num" style="width:12%">Lines</th></tr></thead>
+    <thead><tr><th style="width:30%">Group</th><th>What is in it</th>
+    <th class="num" style="width:10%">Lines</th></tr></thead>
     <tbody>
       <tr><td><b>Interactive flat panels</b></td>
-          <td>The twelve cells the dashboard shows stock against, out of
-          forty-five possible — seeding the empty thirty-three would be
-          a catalogue of things nobody sells.</td><td class="num">12</td></tr>
-      <tr><td><b>OPS compute modules</b></td>
-          <td>i5 and i7, 256GB and 512GB, by generation, ₹22,000 to
-          ₹40,000, plus two bare units at ₹30,000.</td>
-          <td class="num">12</td></tr>
+          <td>Keyed the way the price sheets key them: size, SPX or CPX,
+          chipset, and the EDLA and NFC variants. Lango V100 at 1.2 GHz,
+          Lango and YS 3576 at 2.4 GHz, and the CVTE 311D2 98” and
+          110”.</td><td class="num">15</td></tr>
+      <tr><td><b>OPS modules and upgrades</b></td>
+          <td>i5 12th Gen and i7 13th Gen, the two non-assembled units,
+          and the RAM and SSD add-ons from ₹4,500 to ₹24,000.</td>
+          <td class="num">9</td></tr>
       <tr><td><b>Standees</b></td>
-          <td>Touch ₹60,000 and non-touch ₹57,000 — priced by
-          the panel inside, not by cabinet size.</td><td class="num">2</td></tr>
-      <tr><td><b>Cameras, mic and stand</b></td>
-          <td>₹1,949, ₹2,500 and ₹3,000 for the cameras,
-          ₹50,000 for the array mic, ₹11,000 for the panel stand.</td>
-          <td class="num">5</td></tr>
+          <td>Touch ₹60,000 and non-touch ₹57,000.</td>
+          <td class="num">2</td></tr>
+      <tr><td><b>Cameras and audio</b></td>
+          <td>The video bar, the 360° camera, the 4K webcam and the
+          cascading array mic.</td><td class="num">4</td></tr>
+      <tr><td><b>Service and AMC</b></td>
+          <td>Two-year extensions taken at purchase, and AMC after the
+          three years are up, by panel size.</td><td class="num">8</td></tr>
+      <tr><td><b>Accessories</b></td>
+          <td>UPS and cabinet, frames for 65”/75” and 86”, and the
+          panel stand.</td><td class="num">5</td></tr>
+      <tr><td><b>Per-company demo units</b></td>
+          <td>One filed under each region, so company scoping can be seen
+          working.</td><td class="num">2</td></tr>
     </tbody>
-    <tfoot><tr><td>Total</td><td></td><td class="num">31</td></tr></tfoot>
+    <tfoot><tr><td>Total</td><td></td><td class="num">45</td></tr></tfoot>
   </table>
 
-  <div class="note good">
-    <b>Everything is priced</b>
-    The seven lines the dashboard named without a figure were carried at
-    zero and shown as <b>Price not set</b> in amber in every picker, rather
-    than guessed at — an invented price on a customer's quotation is
-    worse than a visible blank. The rates are in. The amber warning now
-    means a real gap rather than a known one.
+  <h3>Stock</h3>
+  <p>551 units at Noida 65, from the Inventory sheet: 119 of the 65”
+  SPX EDLA, 120 of the 75” SPX, 119 of the 65” CPX EDLA NFC, 74 of
+  the 75” SPX V100, 40 of the 86” SPX, down to the single array mic.</p>
+
+  <div class="note warn">
+    <b>What the workbook does not answer</b>
+    <b>Four dealer prices are corrupt in the file itself</b> — the cells
+    read “760ß0”, “9S0ß0”, “88888” and
+    “*8&nbsp;&nbsp;8”, left unset rather than guessed at.
+    <b>Three 86” panels have no end customer price</b>, so they cannot
+    be quoted to one yet. And <b>80 units of stock have no price row</b>:
+    CVT 9679 (74) and LangoV100 CPX9 (6) are on the Inventory sheet and on
+    neither price sheet. All of these show as “Price not set” in
+    amber rather than as ₹0.00 — a gap somebody fills beats a
+    figure nobody wrote.
+    <br><br>
+    <b>Four HSN codes were chosen rather than read:</b> 84733099 for the
+    RAM and SSD upgrades, the frames and the stand; SAC 998719 for the AMC
+    lines; 85044090 for the UPS and its cabinet. None appear on a sheet we
+    were given, so correct them on the Product List if they are wrong.
   </div>
 </section>
 
 <section>
-  <h2><span class="n">9</span>The proforma invoice</h2>
+  <h2><span class="n">10</span>The proforma invoice</h2>
   <p class="lede">Rebuilt to carry what a GST document has to carry, set in
   the same visual language as the rest of the application.</p>
 
@@ -1166,7 +1482,11 @@ HTML = f"""<!doctype html>
           scan perfectly and pay nobody.</td></tr>
       <tr><td><b>E. &amp; O.E, <i>for</i> the company, authorised signature</b></td>
           <td>A company signs a document, not a person on their own
-          account.</td></tr>
+          account. The space above the rule is <b>left blank</b> to be
+          signed by hand after printing — a salesperson's name over
+          “Authorised Signatory” says they authorised the price, and
+          only the CEO can. The footer says the document is computer
+          generated and needs no digital signature.</td></tr>
     </tbody>
   </table>
 
@@ -1179,7 +1499,7 @@ HTML = f"""<!doctype html>
 </section>
 
 <section>
-  <h2><span class="n">10</span>What we have tested</h2>
+  <h2><span class="n">11</span>What we have tested</h2>
   <p class="lede">Two kinds of testing. Eight automated suites that run the
   whole business against the real API in a few minutes, and a walkthrough
   done by hand in the browser, screen by screen, as each role.</p>
@@ -1260,7 +1580,7 @@ HTML = f"""<!doctype html>
 </section>
 
 <section>
-  <h2><span class="n">11</span>Where we are today</h2>
+  <h2><span class="n">12</span>Where we are today</h2>
   <p class="lede">{PRETTY_DATE}. Both repositories are pushed —
   frontend <span class="mono">{FRONTEND_SHA}</span>, backend
   <span class="mono">{BACKEND_SHA}</span>.</p>

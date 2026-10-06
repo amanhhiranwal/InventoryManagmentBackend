@@ -270,10 +270,64 @@ class Masters:
         return self._pick(self.lead_sources, name, "lead source")
 
 
+def seed_customers() -> int:
+    """A customer record for every organisation the demo orders are for.
+
+    The Customers page lists these, and it decides what to offer on a row
+    by whether that customer has an order behind them: somebody who has
+    bought is not a lead again, so they get New Sales Order and Duplicate
+    rather than Convert To Lead. Without a record to match, the orders had
+    nobody to belong to and every customer looked new.
+    """
+
+    from app.database.mongodb import sync_mongo_db as mdb
+
+    made = 0
+
+    for customer, org, ctype, state, city, pin, _status, _qty, age in ORDERS:
+        if mdb["customers"].find_one({"name": org}):
+            continue
+
+        mdb["customers"].insert_one({
+            "name": org,
+            "contact_name": customer,
+            "designation": "Procurement",
+            "email": f"{customer.split()[0].lower()}@{org.split()[0].lower()}.example",
+            "phone": f"98450123{age:02d}",
+            "address": f"{age + 12} Industrial Estate",
+            "city": city,
+            "state": state,
+            "pin_code": pin,
+            "country": "India",
+            "gst": f"{gst_state_code(state)}ABCDE{3000 + age}F1Z5",
+            "pan": f"ABCDE{3000 + age}F",
+            "customer_type": ctype,
+            "isRegistered": True,
+            "stage": "Won",
+            "status": "Active",
+            "remarks": f"Demo customer. {SEED_TAG}",
+        })
+        made += 1
+
+    return made
+
+
 def clear_seed(db) -> int:
     """Remove only rows this script created."""
 
     like = f"%{SEED_TAG}%"
+
+    try:
+        from app.database.mongodb import sync_mongo_db as mdb
+
+        removed = mdb["customers"].delete_many(
+            {"remarks": {"$regex": SEED_TAG.replace("[", r"\[").replace("]", r"\]")}}
+        ).deleted_count
+
+        if removed:
+            print(f"  cleared {removed} demo customers")
+    except Exception as exc:  # noqa: BLE001 - never block the rest of the clear
+        print("  could not clear demo customers:", exc)
 
     orders = db.execute(
         text("DELETE FROM sales_order WHERE remarks LIKE :t"), {"t": like}
@@ -577,6 +631,12 @@ def main():
             )
 
         db.commit()
+
+        # ---------------- Customers ----------------
+        # Raised after the orders, because what they are for is to give
+        # those orders somebody to belong to.
+        print("--- Creating customers ---")
+        print(f"  {seed_customers()} customer records for the demo orders")
 
         # ---------------- Summary ----------------
         print("--- Summary ---")

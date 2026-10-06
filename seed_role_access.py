@@ -59,8 +59,11 @@ SALES_FLOOR = [
 ROLES = {
     "CEO": SALES_FLOOR + [
         # The CEO signs off dealer pricing and the deepest discounts, and
-        # brings customers in by the spreadsheet.
+        # brings records in by the spreadsheet. The two imports are
+        # separate ticks: a few hundred enquiries and a few hundred people
+        # who have already bought are different privileges.
         "customer.bulk_upload",
+        "lead.bulk_upload",
     ],
     "AVP": SALES_FLOOR,
     "Zonal Head": SALES_FLOOR,
