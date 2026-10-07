@@ -41,6 +41,44 @@ def get_warranty_terms(
     return {"success": True, "data": [_serialise(t) for t in terms]}
 
 
+@router.get("/rates")
+def get_warranty_rates(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """What each product charges for each term, keyed by SKU.
+
+    The sales screens work the running total out in the browser so a
+    salesperson sees the figure move as they pick. They cannot do that
+    without the rates, and the rates live on the product - so this hands
+    over the small map of them rather than the whole catalogue.
+
+    It is a statement of the price list, not a way to set it: the server
+    prices every saved document from the same source regardless of what
+    the browser believed.
+    """
+
+    try:
+        from app.database.mongodb import sync_mongo_db
+
+        rows = sync_mongo_db["inventory_items"].find(
+            {"attributes.warranty_rates": {"$exists": True, "$ne": {}}},
+            {"serial_number": 1, "attributes.warranty_rates": 1},
+        )
+
+        rates = {
+            str(row.get("serial_number") or "").upper(): (
+                row.get("attributes") or {}
+            ).get("warranty_rates")
+            or {}
+            for row in rows
+        }
+    except Exception:  # noqa: BLE001 - the screen works without it
+        rates = {}
+
+    return {"success": True, "data": {k: v for k, v in rates.items() if k and v}}
+
+
 @router.post("/")
 def create_warranty_term(
     request: CreateWarrantyTermRequest,

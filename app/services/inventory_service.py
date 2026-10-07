@@ -198,7 +198,15 @@ class InventoryService:
         # three - but the price of them is not: five years on a panel and
         # five years on a camera are different undertakings, so the figure
         # belongs on the product rather than beside the name.
-        if "warranty_rates" in attributes:
+        # What cover costs is a commercial decision, not a stock one. The
+        # warehouse maintains products - counts, codes, case sizes - and a
+        # warranty rate sitting on the same form put the price of cover
+        # within reach of anyone who could correct a stock figure. Only a
+        # super admin, who holds Masters, may set it; for anyone else the
+        # field is simply not read.
+        if "warranty_rates" in attributes and (current_user or {}).get(
+            "is_super_admin"
+        ):
             validated_attrs["warranty_rates"] = _clean_warranty_rates(
                 attributes.get("warranty_rates")
             )
@@ -319,10 +327,19 @@ class InventoryService:
         # three - but the price of them is not: five years on a panel and
         # five years on a camera are different undertakings, so the figure
         # belongs on the product rather than beside the name.
-        if "warranty_rates" in attributes:
-            validated_attrs["warranty_rates"] = _clean_warranty_rates(
-                attributes.get("warranty_rates")
-            )
+        # Only a super admin may move what cover costs - see create_item.
+        # Everyone else's save keeps whatever is already stored, rather than
+        # silently clearing it by sending a form that never had the figures.
+        if (current_user or {}).get("is_super_admin"):
+            if "warranty_rates" in attributes:
+                validated_attrs["warranty_rates"] = _clean_warranty_rates(
+                    attributes.get("warranty_rates")
+                )
+        else:
+            kept = (existing.get("attributes") or {}).get("warranty_rates")
+
+            if kept:
+                validated_attrs["warranty_rates"] = kept
 
         # Moving a product to another company is allowed, but only to one the
         # caller is in; leaving the field out keeps it where it is.
