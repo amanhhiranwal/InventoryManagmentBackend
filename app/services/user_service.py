@@ -112,6 +112,7 @@ class UserService:
             password=hashed_password,
             phone_number=request.phone_number,
             employee_id=request.employee_id,
+            location=getattr(request, "location", None),
             is_super_admin=False,
             is_active=True,
             reports_to_id=reports_to,
@@ -277,6 +278,11 @@ class UserService:
         user.last_name = request.last_name
         user.phone_number = request.phone_number
         user.employee_id = request.employee_id
+
+        # Left alone when the form does not send it, so a caller updating
+        # only roles cannot blank where somebody works.
+        if getattr(request, "location", None) is not None:
+            user.location = request.location
         # Only touched when the form sends it, so an edit from a screen that
         # does not show Reports To leaves the manager as it was.
         if "reports_to_id" in request.model_fields_set:

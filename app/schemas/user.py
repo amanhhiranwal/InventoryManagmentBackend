@@ -8,6 +8,7 @@ class CreateUserRequest(BaseModel):
     password: str
     phone_number: str
     employee_id: str
+    location: str | None = None
     role_ids: list[str] = []
     company_ids: list[str] = []
     reports_to_id: str | None = None
@@ -23,6 +24,7 @@ class UpdateUserRequest(BaseModel):
     last_name: str
     phone_number: str
     employee_id: str
+    location: str | None = None
     role_ids: list[str] = []
     company_ids: list[str] = []
     reports_to_id: str | None = None

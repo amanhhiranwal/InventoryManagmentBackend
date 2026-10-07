@@ -31,6 +31,16 @@ class User(BaseModel):
         unique=True,
     )
 
+    #: Where they work, as the staffing sheet records it - a city for most
+    #: people, a state for those covering one. Free text rather than a key
+    #: into the Locations master, because the sheet mixes the two and a
+    #: salesperson's base is a fact about them rather than a place we trade
+    #: in.
+    location: Mapped[str] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
     from sqlalchemy.orm import relationship
 
     roles = relationship(

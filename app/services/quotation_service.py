@@ -1109,17 +1109,12 @@ class QuotationService:
                     ),
                 )
 
-            if not ApprovalService.is_approved(
-                ApprovalDocument.QUOTATION, quotation.id, db
-            ):
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        f"{quotation.quote_number} has not been approved yet. "
-                        "Send it for approval first - every proposal is "
-                        "signed by the CEO before it goes to a client."
-                    ),
-                )
+            # A proposal no longer needs a signature to go out. It is a
+            # price put in front of a customer to see what they say; the
+            # commitment is the sales order, and that is where the
+            # approval now sits. An approval still in flight is honoured
+            # above - somebody sent it up, so let it finish - but one was
+            # never required to begin with.
 
         recipients = [address.strip() for address in (request.to or []) if address.strip()]
 

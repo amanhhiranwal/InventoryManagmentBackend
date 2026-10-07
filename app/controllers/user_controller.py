@@ -37,6 +37,7 @@ class UserController:
             "email": user.email,
             "phone_number": user.phone_number,
             "employee_id": user.employee_id,
+            "location": user.location,
             "role_id": role_ids[0] if role_ids else "",
             "role_ids": role_ids,
             # Named as well as identified, so a picker can show "Priya (Zonal
