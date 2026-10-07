@@ -430,7 +430,12 @@ def convert_lead_to_opportunity(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """Promote a QUALIFIED lead into an Opportunity and mark it CONVERTED."""
+    """Promote a lead into an Opportunity and mark it CONVERTED.
+
+    Any lead that is neither lost nor already converted may be promoted,
+    from whatever status it stands at: raising an opportunity is itself
+    the act of qualifying it.
+    """
 
     return OpportunityController.convert_lead(
         lead_id,

@@ -580,17 +580,12 @@ class OpportunityService:
                 ),
             )
 
-        # Qualification is the gate into the opportunity pipeline: a lead must
-        # pass the qualification checklist before it can be converted.
-        if current_status != LeadStatus.QUALIFIED:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Lead must be {LeadStatus.QUALIFIED} before conversion "
-                    f"(currently {current_status}). Mark it as Contacted and "
-                    f"then Qualified first."
-                ),
-            )
+        # Converting is itself the act of qualifying: somebody who is worth
+        # raising an opportunity for has been qualified by definition, and
+        # requiring the status to be set first - which required logging a
+        # call that may never have happened - only ever added steps between
+        # a salesperson and the deal. A lead that is neither lost nor
+        # already converted may be converted from wherever it stands.
 
         def field(name, fallback=None):
             """Form value when supplied, otherwise the lead's own value."""
@@ -656,8 +651,8 @@ class OpportunityService:
             commit=False,
         )
 
-        # QUALIFIED -> CONVERTED is the only move left, but validate it
-        # against the state machine rather than assigning blindly.
+        # Whatever it was standing at, validate the move against the state
+        # machine rather than assigning blindly.
         assert_transition(
             "lead", LEAD_TRANSITIONS, current_status, LeadStatus.CONVERTED
         )

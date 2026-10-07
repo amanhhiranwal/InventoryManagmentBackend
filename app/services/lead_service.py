@@ -357,6 +357,22 @@ class LeadService:
         lead.stage = request.stage
         if request.status is not None:
             target_status = normalize_lead_status(request.status)
+
+            # CONVERTED is owned by the Lead -> Opportunity conversion
+            # endpoint, which also creates the opportunity. The transition
+            # map allows it so that endpoint can validate against the same
+            # map; setting it here would leave a lead marked converted with
+            # nothing to show for it, which is how it is refused in the
+            # activity log too.
+            if target_status == LeadStatus.CONVERTED:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Use Convert To Opportunity to convert this lead; it "
+                        "cannot be set from the status menu."
+                    ),
+                )
+
             assert_transition(
                 "lead",
                 LEAD_TRANSITIONS,

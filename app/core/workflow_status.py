@@ -27,11 +27,33 @@ class LeadStatus:
     ALL = [NEW, CONTACTED, QUALIFIED, CONVERTED, LOST]
 
 
+#: The order a lead walks, before it is converted or lost.
+LEAD_PIPELINE = [LeadStatus.NEW, LeadStatus.CONTACTED, LeadStatus.QUALIFIED]
+
+
+def _lead_forward_from(status: str) -> set[str]:
+    """Every status ahead of this one, plus the two ways a lead can end.
+
+    A lead does not always walk a step at a time. Somebody who arrives
+    already knowing what they want is qualified on the first call, and
+    making the salesperson mark them Contacted first - and log a note to
+    do it - records a conversation that never happened.
+
+    So any status ahead may be picked, the same rule opportunities follow.
+    Going back is not allowed: the history would stop meaning anything.
+
+    CONVERTED is listed as reachable because the conversion endpoint
+    validates against this map, but neither the progress endpoint nor the
+    activity log will set it: both refuse it by name, because a lead
+    marked converted with no opportunity behind it is a dead end.
+    """
+
+    ahead = LEAD_PIPELINE[LEAD_PIPELINE.index(status) + 1:]
+    return {*ahead, LeadStatus.CONVERTED, LeadStatus.LOST}
+
+
 LEAD_TRANSITIONS: dict[str, set[str]] = {
-    LeadStatus.NEW: {LeadStatus.CONTACTED, LeadStatus.LOST},
-    LeadStatus.CONTACTED: {LeadStatus.QUALIFIED, LeadStatus.LOST},
-    # CONVERTED is reached through the Lead -> Opportunity conversion endpoint.
-    LeadStatus.QUALIFIED: {LeadStatus.CONVERTED, LeadStatus.LOST},
+    **{status: _lead_forward_from(status) for status in LEAD_PIPELINE},
     LeadStatus.CONVERTED: _terminal(),
     LeadStatus.LOST: _terminal(),
 }
