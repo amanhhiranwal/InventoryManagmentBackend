@@ -18,6 +18,10 @@ class QuotationItem(BaseModel):
     unit_price: Optional[float] = 0.0
     discount: Optional[float] = 0.0
     tax: Optional[float] = 18.0
+    #: The warranty term quoted on this line, by name. Only the choice is
+    #: accepted; what it costs is read from Masters when the totals are
+    #: worked out, so a figure sent alongside it is ignored.
+    warranty_term: Optional[str] = None
 
 
 class CreateQuotationRequest(BaseModel):

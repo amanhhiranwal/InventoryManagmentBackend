@@ -164,6 +164,10 @@ DEFAULT_MENUS_DATA = [
       {"title": "Company Profile", "icon": "LuBuilding2", "path": "/company-profile", "permission_key": "company.read", "order_index": 11},
       # Who signs off how much discount. Super admin only, like the rest.
       {"title": "Proposal Approval", "icon": "LuPercent", "path": "/quotation-approval", "permission_key": "company.read", "order_index": 12},
+      # How long the cover runs and what extending to it costs. Filed under
+      # product_type.read, beside the other lists that describe what is
+      # being sold rather than who is buying it.
+      {"title": "Warranty Terms", "icon": "LuShield", "path": "/warranty-terms", "permission_key": "product_type.read", "order_index": 13},
     ]
   },
   {

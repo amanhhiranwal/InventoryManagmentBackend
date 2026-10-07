@@ -28,6 +28,10 @@ class SalesOrderItem(BaseModel):
     tax_rate: Optional[float] = 0.0
     tax_amount: Optional[float] = 0.0
     line_total: Optional[float] = 0.0
+    #: The warranty term quoted on this line, by name. Only the choice is
+    #: accepted; what it costs is read from Masters when the totals are
+    #: worked out, so a figure sent alongside it is ignored.
+    warranty_term: Optional[str] = None
 
 
 class CreateSalesOrderRequest(BaseModel):
