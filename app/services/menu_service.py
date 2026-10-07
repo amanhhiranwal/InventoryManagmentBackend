@@ -168,6 +168,10 @@ DEFAULT_MENUS_DATA = [
       # product_type.read, beside the other lists that describe what is
       # being sold rather than who is buying it.
       {"title": "Warranty Terms", "icon": "LuShield", "path": "/warranty-terms", "permission_key": "product_type.read", "order_index": 13},
+      # Who reports to whom. Workflows charts the roles, which decides
+      # seniority; this charts the people, which decides who approves a
+      # given discount and who can see whose work.
+      {"title": "Reporting Chart", "icon": "LuNetwork", "path": "/hierarchy", "permission_key": "user.read", "order_index": 14},
     ]
   },
   {
