@@ -20,4 +20,5 @@ from app.models.state import State
 from app.models.user import User
 from app.models.user_company import UserCompany
 from app.models.user_role import UserRole
+from app.models.warranty_term import WarrantyTerm
 from app.models.workflow import Workflow

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.fulfilment import desk_for, holds_desk
 from app.core.approvals import price_type_for
+from app.services.warranty_term_service import uplift_from_rates
 from app.core.workflow_status import (
     SALES_ORDER_TRANSITIONS,
     SalesOrderStatus,
@@ -262,9 +263,18 @@ def _opportunity_from_quotation(quotation_id: str | None, db: Session) -> int | 
     return quotation.opportunity_id if quotation else None
 
 
+def _order_warranty_rates(db):
+    """The warranty rates in force, read fresh so a new one applies now."""
+
+    from app.services.warranty_term_service import warranty_rates
+
+    return warranty_rates(db)
+
+
 def compute_order_totals(
     items,
     price_type: str | None = None,
+    warranty_rates: dict | None = None,
     discount_mode: str | None = None,
     discount_input: float | None = None,
     orc_mode: str | None = None,
@@ -335,7 +345,24 @@ def compute_order_totals(
         row["rate"] = price
         row["price"] = price
 
-        line = quantity * price
+        # Extended cover is sold on top of the line, at the rate Masters
+        # holds for the chosen term - never at a figure the form sends.
+        #
+        # Without rates to price against, the figure already on the line is
+        # kept. That is the proforma invoice: it bills what the order
+        # agreed, and must not re-price itself because somebody changed the
+        # rate in Masters afterwards. Those lines were costed by the order,
+        # server side, so the figure is ours rather than the browser's.
+        if warranty_rates is None:
+            warranty_uplift = _as_float(row.get("warranty_uplift"))
+        else:
+            warranty_uplift = uplift_from_rates(
+                warranty_rates, row.get("warranty_term"), price, quantity
+            )
+
+        row["warranty_uplift"] = round(warranty_uplift, 2)
+
+        line = quantity * price + warranty_uplift
 
         subtotal += line
         discount_amount += line * _as_float(row.get("discount")) / 100.0
@@ -554,6 +581,7 @@ class SalesOrderService:
             **compute_order_totals(
                 request.items,
                 price_type=price_type_for(request.customer_type),
+                warranty_rates=_order_warranty_rates(db),
                 discount_mode=getattr(request, "discount_mode", None),
                 discount_input=getattr(request, "discount_input", None),
                 orc_mode=getattr(request, "orc_mode", None),
@@ -670,6 +698,7 @@ class SalesOrderService:
             totals = compute_order_totals(
                 order.items,
                 price_type=price_type_for(order.customer_type),
+                warranty_rates=_order_warranty_rates(db),
                 discount_mode=pick("discount_mode", order.discount_mode),
                 discount_input=pick("discount_input", order.discount_input),
                 orc_mode=pick("orc_mode", order.orc_mode),

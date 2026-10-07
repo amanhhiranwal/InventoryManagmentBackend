@@ -23,6 +23,7 @@ from app.services.email_service import EmailService
 from app.services.lead_service import get_visible_creator_user_ids
 from app.services.quotation_pdf_service import QuotationPDFService
 from app.services.sales_order_service import rate_for_sku
+from app.services.warranty_term_service import uplift_from_rates, warranty_rates as _warranty_rates
 from app.services.notification_service import NotificationService
 
 #: Offer validity shown on the form as "Validation Date (30 days)".
@@ -116,6 +117,7 @@ def _item_dict(item) -> dict:
 def compute_totals(
     items: list,
     price_type: str | None = None,
+    warranty_rates: dict | None = None,
     orc_percent: float = 0.0,
     orc_amount: float = 0.0,
     freight_charges: float = 0.0,
@@ -164,7 +166,22 @@ def compute_totals(
         # document and the totals cannot disagree later.
         item["unit_price"] = unit_price
 
-        line_total = quantity * unit_price
+        # Extended cover is sold on top of the line, at the rate Masters
+        # holds for the chosen term - never at a figure the form sends, for
+        # the same reason the unit price is not taken from it. The standard
+        # term is included in the price and adds nothing.
+        # Without rates to price against the figure on the line is kept,
+        # for the reason set out in compute_order_totals.
+        if warranty_rates is None:
+            warranty_uplift = _as_float(item.get("warranty_uplift"))
+        else:
+            warranty_uplift = uplift_from_rates(
+                warranty_rates, item.get("warranty_term"), unit_price, quantity
+            )
+
+        item["warranty_uplift"] = round(warranty_uplift, 2)
+
+        line_total = quantity * unit_price + warranty_uplift
 
         subtotal += line_total
         discount_amount += line_total * discount_pct / 100.0
@@ -703,6 +720,7 @@ class QuotationService:
         totals = compute_totals(
             items,
             price_type=price_type_for(customer_type),
+            warranty_rates=_warranty_rates(db),
             orc_percent=request.orc_percent,
             orc_amount=request.orc_amount,
             freight_charges=request.freight_charges,
@@ -888,6 +906,7 @@ class QuotationService:
             totals = compute_totals(
                 quotation.items or [],
                 price_type=price_type_for(quotation.customer_type),
+                warranty_rates=_warranty_rates(db),
                 orc_percent=(
                     request.orc_percent
                     if request.orc_percent is not None
