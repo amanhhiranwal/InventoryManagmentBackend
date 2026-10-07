@@ -383,10 +383,11 @@ def _fill_gaps(existing, person, by_name, args, token) -> str:
         "last_name": existing.get("last_name") or person["last"],
         "phone_number": existing.get("phone_number") or person["phone"],
         "employee_id": existing.get("employee_id") or person["employee_id"],
-        "role_ids": [r["id"] for r in (existing.get("roles") or []) if r.get("id")],
-        "company_ids": [
-            c["id"] for c in (existing.get("companies") or []) if c.get("id")
-        ],
+        # The listing returns role_ids and company_ids, not nested
+        # objects. Reading the wrong key here sent an empty list, and a
+        # PUT with an empty role list takes every role off the account.
+        "role_ids": list(existing.get("role_ids") or []),
+        "company_ids": list(existing.get("company_ids") or []),
         "location": wants.get("location", existing.get("location")),
         "reports_to_id": wants.get("reports_to_id", existing.get("reports_to_id")),
     }
