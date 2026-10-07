@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.fulfilment import desk_for, holds_desk
+from app.core.approvals import price_type_for
 from app.core.workflow_status import (
     SALES_ORDER_TRANSITIONS,
     SalesOrderStatus,
@@ -103,9 +104,9 @@ def _to_uuid(value) -> UUID | None:
         return None
 
 
-#: SKU -> {"hsn": ..., "dtp": ...}, read once per process. The catalogue
-#: is a few dozen rows and changes when somebody edits a product, so it is
-#: cheap to hold and refreshed by a restart.
+#: SKU -> {"hsn": ..., "ecp": ..., "dtp": ...}, read once per process. The
+#: catalogue is a few dozen rows and changes when somebody edits a product,
+#: so it is cheap to hold and refreshed by a restart.
 _CATALOGUE_BY_SKU: dict[str, dict] | None = None
 
 
@@ -124,6 +125,14 @@ def _catalogue() -> dict[str, dict]:
                     "dtp": _as_float(
                         (row.get("attributes") or {}).get("dtp_rate")
                     ),
+                    "ecp": _as_float(
+                        (row.get("attributes") or {}).get("rate")
+                        or (row.get("attributes") or {}).get("rate_per_unit")
+                    ),
+                    "warranty_rates": (row.get("attributes") or {}).get(
+                        "warranty_rates"
+                    )
+                    or {},
                 }
                 for row in sync_mongo_db["inventory_items"].find(
                     {},
@@ -131,6 +140,9 @@ def _catalogue() -> dict[str, dict]:
                         "serial_number": 1,
                         "attributes.hsn_code": 1,
                         "attributes.dtp_rate": 1,
+                        "attributes.rate": 1,
+                        "attributes.rate_per_unit": 1,
+                        "attributes.warranty_rates": 1,
                     },
                 )
             }
@@ -155,6 +167,70 @@ def dtp_rate_for_sku(sku: str) -> float:
     """
 
     return _catalogue().get(str(sku or "").upper(), {}).get("dtp", 0.0)
+
+
+def rate_for_sku(sku: str, price_type: str | None = None) -> float | None:
+    """What the price list says this SKU costs, or None if it is not on it.
+
+    The price a document is written at is the company's to decide, not the
+    browser's. A form that posts its own unit price can post any unit
+    price - a panel at one rupee passes every other check, because the
+    totals are recomputed faithfully from a figure that was already a lie.
+
+    None means the SKU is not in the catalogue at all, which is a line
+    somebody typed by hand rather than picked, and those keep what they
+    were sent. Zero means the list genuinely holds no rate.
+    """
+
+    entry = _catalogue().get(str(sku or "").upper())
+
+    if entry is None:
+        return None
+
+    if str(price_type or "").upper() in {"DP", "DTP"}:
+        # A product with no dealer rate yet falls back to the end customer
+        # rate rather than quoting nothing, the same way dtp_rate_for_sku
+        # is read everywhere else.
+        return entry.get("dtp") or entry.get("ecp", 0.0)
+
+    return entry.get("ecp", 0.0)
+
+
+def warranty_uplift_for_sku(
+    sku: str, term_name: str | None, unit_price: float, quantity: float
+) -> float:
+    """What extending to this term costs on this product.
+
+    The lengths are a master, so every document offers the same three. What
+    they cost is not: five years on a panel and five years on a camera are
+    different undertakings, so the rate is held against the product and
+    read from the catalogue the same way the price is.
+
+    A product with no rate for the term adds nothing, which covers both a
+    term that is simply not offered on it and the standard cover that is
+    included in the price. It fails towards not charging rather than
+    charging at a figure nobody set.
+    """
+
+    entry = (
+        _catalogue()
+        .get(str(sku or "").upper(), {})
+        .get("warranty_rates", {})
+        .get(str(term_name or "").strip())
+    )
+
+    if not entry:
+        return 0.0
+
+    rate = _as_float(entry.get("rate"))
+
+    if rate <= 0:
+        return 0.0
+
+    if str(entry.get("mode") or "").upper() == "AMOUNT":
+        return rate * float(quantity or 0.0)
+
+    return float(unit_price or 0.0) * float(quantity or 0.0) * rate / 100.0
 
 
 def _items_to_json(items) -> list | None:
@@ -230,6 +306,7 @@ def _opportunity_from_quotation(quotation_id: str | None, db: Session) -> int | 
 
 def compute_order_totals(
     items,
+    price_type: str | None = None,
     discount_mode: str | None = None,
     discount_input: float | None = None,
     orc_mode: str | None = None,
@@ -248,7 +325,7 @@ def compute_order_totals(
 
         subtotal     = SUM(qty * unit price)
         discount     = SUM(line * discount%), or the summary override
-        taxable      = subtotal - discount + ORC + freight + installation
+        taxable      = subtotal - discount + freight + installation
         gst          = taxable * gst%
         grand total  = taxable + gst
         outstanding  = grand total - advance received
@@ -256,15 +333,28 @@ def compute_order_totals(
     And what the order is actually worth to us, which is a different
     question from what the customer pays:
 
-        revenue      = grand total - freight - installation
+        revenue      = grand total - ORC - freight - installation
                                    - shifting - gst
 
     Delivery and installation are passed straight through, the GST goes to
-    the government, and shifting is a cost we carry. The ORC is already out
-    of the grand total - it comes off the taxable amount above - so taking
-    it off again here would count the same commission twice.
+    the government, and shifting is a cost we carry.
+
+    The ORC and the shifting charge are recorded but do not move what the
+    order is worth. Neither is something the customer is billed for - the
+    ORC is a commission we pay out and shifting is a cost we absorb - so
+    they belong against the margin rather than against the order value.
+    The ORC used to come off the taxable amount, which quietly reduced the
+    GST and the grand total, meaning the customer's own invoice moved when
+    somebody recorded a commission.
+
+    The unit price is read from the catalogue by SKU rather than taken from
+    the request, for the reason set out in compute_totals: recomputing
+    faithfully from a figure the browser chose protects nothing.
     """
 
+    # Settled values are written back into the list the caller holds, not
+    # into a copy: that list is what gets stored, and a line reading
+    # "rate 0" under a total of 147,000 is a document arguing with itself.
     rows = _items_to_json(items) or []
 
     subtotal = 0.0
@@ -278,11 +368,43 @@ def compute_order_totals(
             or 1,
             1.0,
         )
-        price = _as_float(row.get("rate") or row.get("price") or 0)
-        line = quantity * price
+        listed = rate_for_sku(row.get("sku"), price_type)
+        price = (
+            listed
+            if listed is not None
+            else _as_float(row.get("rate") or row.get("price") or 0)
+        )
+
+        # Store the line at the price it was costed at, so the document and
+        # the totals cannot disagree later.
+        row["rate"] = price
+        row["price"] = price
+
+        # Extended cover is sold on top of the line, at the rate the
+        # product holds for the chosen term - never at a figure the form
+        # sends.
+        #
+        # The proforma invoice passes neither a price type nor rates: it
+        # bills what the order agreed and must not re-price itself because
+        # somebody edited the product afterwards, so it keeps the figure
+        # already on the line. That figure was worked out by the order,
+        # server side, so it is ours rather than the browser's.
+        if price_type is None:
+            warranty_uplift = _as_float(row.get("warranty_uplift"))
+        else:
+            warranty_uplift = warranty_uplift_for_sku(
+                row.get("sku"), row.get("warranty_term"), price, quantity
+            )
+
+        row["warranty_uplift"] = round(warranty_uplift, 2)
+
+        line = quantity * price + warranty_uplift
 
         subtotal += line
         discount_amount += line * _as_float(row.get("discount")) / 100.0
+
+    if isinstance(items, list):
+        items[:] = rows
 
     discount_mode = (discount_mode or "AMOUNT").upper()
 
@@ -312,14 +434,13 @@ def compute_order_totals(
     installation_lumpsum = _as_float(installation_lumpsum)
     shifting_charges = _as_float(shifting_charges)
 
-    # The order is where the margin given away actually lands: the
-    # discount and the ORC both come off, then delivery and installation
-    # are added back. The ORC was being added rather than subtracted, which
-    # made every order carrying one look larger than it was.
+    # What the customer is billed: the discount comes off, then delivery
+    # and installation are added back. The ORC and the shifting charge are
+    # deliberately absent - see above - so recording either one cannot move
+    # the customer's invoice.
     taxable_amount = (
         subtotal
         - discount_amount
-        - orc_amount
         + freight_charges
         + installation_lumpsum
     )
@@ -332,6 +453,7 @@ def compute_order_totals(
     # been taken back out.
     total_revenue = (
         grand_total
+        - orc_amount
         - freight_charges
         - installation_lumpsum
         - shifting_charges
@@ -497,6 +619,7 @@ class SalesOrderService:
             creator_name=creator_name,
             **compute_order_totals(
                 request.items,
+                price_type=price_type_for(request.customer_type),
                 discount_mode=getattr(request, "discount_mode", None),
                 discount_input=getattr(request, "discount_input", None),
                 orc_mode=getattr(request, "orc_mode", None),
@@ -612,6 +735,7 @@ class SalesOrderService:
 
             totals = compute_order_totals(
                 order.items,
+                price_type=price_type_for(order.customer_type),
                 discount_mode=pick("discount_mode", order.discount_mode),
                 discount_input=pick("discount_input", order.discount_input),
                 orc_mode=pick("orc_mode", order.orc_mode),

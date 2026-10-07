@@ -27,11 +27,11 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
-PRETTY_DATE = "5 October 2026"
-PREVIOUS_DATE = "3 October 2026"
+PRETTY_DATE = "6 October 2026"
+PREVIOUS_DATE = "5 October 2026"
 
-FRONTEND_SHA = "a867910"
-BACKEND_SHA = "57d2426"
+FRONTEND_SHA = "a0ba248"
+BACKEND_SHA = "89173fb"
 
 #: suite -> (title, file, what it proves, checks). The total is summed,
 #: never typed, so the headline figure cannot drift from the rows under it.
@@ -77,8 +77,9 @@ SUITES = [
         "sell, then the invoice read as a customer reads it: the HSN against "
         "each line, the tax grouped under both codes, CGST and SGST inside "
         "the state and IGST out of it, the terms it is payable on, and who "
-        "may see it.",
-        48,
+        "may see it. Then the shape checks the API applies to a typed "
+        "field, which a browser check is not a substitute for.",
+        58,
     ),
     (
         "After the proforma invoice",
@@ -322,6 +323,43 @@ GST_ROWS = [
 
 DONE = [
     (
+        "A typed field is checked where it cannot be clicked past",
+        "Mobile number, email, PIN, GST and PAN are held to a shape by the "
+        "API, not only by the form. The browser check stopped an honest "
+        "mistake and nothing else: the API is reachable without the form "
+        "and the Excel import never went through it. Every message names "
+        "the field, the value and what is wrong with it, because the "
+        "person reading it is the person who typed it. The same rules now "
+        "run in the browser too, from one shared file, so the form refuses "
+        "what the server would refuse instead of reporting a failed save.",
+    ),
+    (
+        "The leads spreadsheet is imported by the server",
+        "Add From Excel posted one request per row and checked the "
+        "permission only in the page that drew the button. It posts the "
+        "whole file once to a route that enforces the permission, resolves "
+        "the master lists by name and judges each row on its own, so one "
+        "bad cell costs its row rather than the file. Rows that are turned "
+        "away come back by row number with the reason.",
+    ),
+    (
+        "The sales team's own logins, opened from the staffing sheet",
+        "Nine accounts created from the HR sheet with the right role and "
+        "the right manager above each one. Designations are translated to "
+        "the roles the CRM holds, and a reporting line typed with a typo "
+        "is matched to the person it means and reported, rather than "
+        "guessed at or dropped. A name that is nobody at all is left "
+        "unset, because inventing a manager puts a person's approvals in "
+        "front of the wrong desk.",
+    ),
+    (
+        "Whoever sets a password can read it back",
+        "Add New User asked for a colleague's first password behind dots "
+        "with no way to check it, so a mistyped one was discovered by that "
+        "colleague failing to sign in. It carries the same eye toggle the "
+        "sign-in page has.",
+    ),
+    (
         "The price list follows the customer, not a dropdown",
         "An End Customer is quoted the end customer price; a dealer, "
         "distributor, OEM or corporate is bought through at the fixed "
@@ -395,6 +433,35 @@ DONE = [
 ]
 
 FIXED = [
+    (
+        "Mobile Number accepted a nineteen-digit number in silence",
+        "The only check read “if fewer than ten digits”, so it caught a "
+        "number that was too short and let anything longer through — and "
+        "it ran on submit rather than on the field, so the first anyone "
+        "heard of it was a failed save. Three rules disagreed with each "
+        "other as well: leads took nineteen digits, customers took six to "
+        "fourteen, the server wanted ten. They are one rule now, checked "
+        "on both sides against the same values.",
+    ),
+    (
+        "A test run left a role behind, and the next suite blamed itself",
+        "The CRUD suite opened an account, gave it a role it had just "
+        "created and assigned it a lead, then tried to delete the role "
+        "while the account still held it. The delete failed quietly, so "
+        "every run left a role, an account and a lead behind, and the next "
+        "suite to check the exact set of sales roles failed on the litter. "
+        "Cleanup runs in dependency order now and says so if anything is "
+        "still standing when it has finished.",
+    ),
+    (
+        "The AVP briefly held all 45 permissions",
+        "A permissions test grants the AVP role everything, checks what "
+        "that allows and puts it back. Run where its cleanup could not "
+        "finish, it left the role holding all 45 instead of its 17 — more "
+        "than the CEO. Found by the role suite failing on the sidebar, and "
+        "put back by the script that states what each role is granted. "
+        "Worth knowing that this test rewrites a live role while it runs.",
+    ),
     (
         "A deep discount on one line could skip the chain",
         "The form sent the discount as a share of the whole subtotal, so "
@@ -1588,12 +1655,13 @@ HTML = f"""<!doctype html>
   <div class="flow">
     <div class="box done"><b>Flow and roles</b>built and tested</div>
     <div class="box done"><b>Tax and catalogue</b>built and tested</div>
-    <div class="box now"><b>Sign-off</b>we are here</div>
+    <div class="box done"><b>Live site</b>synergy-sync.com</div>
+    <div class="box now"><b>Team on the live system</b>we are here</div>
     <div class="box todo"><b>Email to clients</b>on your word</div>
-    <div class="box todo"><b>Demo outside</b>after credentials change</div>
   </div>
-  <p class="cap">Figure 3 — The two steps after this one are decisions,
-  not build work.</p>
+  <p class="cap">Figure 3 — The site is up. The nine sales logins were
+  opened on the development system; the same import opens them on the
+  live one.</p>
 
   <h3>Finished since the last issue</h3>
   {items(DONE)}
@@ -1607,11 +1675,16 @@ HTML = f"""<!doctype html>
   {items(WAITING)}
 
   <div class="note warn">
-    <b>Before this is shown to anyone outside the team</b>
-    The ten demo accounts share one password on a local development
-    database, and their Mailinator inboxes are readable by anyone who knows
-    the address. Change the password and move to real addresses first, and
-    never send anything confidential to those accounts.
+    <b>Now that the site is public, three things to settle</b>
+    The ten demo accounts share one password and post to Mailinator
+    inboxes, which anyone who knows the address can read — they belong on
+    the development system only, and nothing confidential should ever be
+    addressed to them. <span class="mono">check_and_seed_db.py</span> sets
+    the super admin password to a value committed in this repository, so
+    check that it was never run against the live system and that no account
+    there still holds it. And the passwords the staffing import generates
+    are real credentials: hand them out, have everyone change theirs, then
+    delete the file.
   </div>
 
   <p class="foot">

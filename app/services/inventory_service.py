@@ -6,6 +6,44 @@ from app.database.mongodb import sync_mongo_db
 from app.services.company_scope_service import CompanyScopeService
 
 
+def _clean_warranty_rates(raw) -> dict:
+    """{term name: {"mode": "PERCENT"|"AMOUNT", "rate": float}}, sanitised.
+
+    Whatever the form sends is reduced to the two things that decide a
+    price. A term with no rate is dropped rather than stored as zero: the
+    absence of a figure and a figure of nothing read the same on screen,
+    but only one of them means "not offered on this product".
+    """
+
+    if not isinstance(raw, dict):
+        return {}
+
+    cleaned: dict[str, dict] = {}
+
+    for name, entry in raw.items():
+        label = str(name or "").strip()
+
+        if not label or not isinstance(entry, dict):
+            continue
+
+        try:
+            rate = float(entry.get("rate") or 0)
+        except (TypeError, ValueError):
+            continue
+
+        if rate <= 0:
+            continue
+
+        mode = str(entry.get("mode") or "PERCENT").upper()
+
+        cleaned[label] = {
+            "mode": "AMOUNT" if mode == "AMOUNT" else "PERCENT",
+            "rate": rate,
+        }
+
+    return cleaned
+
+
 class InventoryService:
     """Products, filed under the company that stocks them.
 
@@ -155,6 +193,16 @@ class InventoryService:
                     val = str(val).strip()
                 validated_attrs[key] = val
 
+        # What extending the cover costs, per term, for this product. The
+        # lengths themselves are a master - everything is quoted on the same
+        # three - but the price of them is not: five years on a panel and
+        # five years on a camera are different undertakings, so the figure
+        # belongs on the product rather than beside the name.
+        if "warranty_rates" in attributes:
+            validated_attrs["warranty_rates"] = _clean_warranty_rates(
+                attributes.get("warranty_rates")
+            )
+
         # 3. Insert to collection
         owner_id = CompanyScopeService.resolve_owner(
             current_user or {}, company_id, db
@@ -265,6 +313,16 @@ class InventoryService:
                 else:
                     val = str(val).strip()
                 validated_attrs[key] = val
+
+        # What extending the cover costs, per term, for this product. The
+        # lengths themselves are a master - everything is quoted on the same
+        # three - but the price of them is not: five years on a panel and
+        # five years on a camera are different undertakings, so the figure
+        # belongs on the product rather than beside the name.
+        if "warranty_rates" in attributes:
+            validated_attrs["warranty_rates"] = _clean_warranty_rates(
+                attributes.get("warranty_rates")
+            )
 
         # Moving a product to another company is allowed, but only to one the
         # caller is in; leaving the field out keeps it where it is.

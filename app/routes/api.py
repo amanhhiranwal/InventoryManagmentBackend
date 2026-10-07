@@ -11,6 +11,7 @@ from app.routes.fulfilment import router as fulfilment_router
 from app.routes.inventory import router as inventory_router
 from app.routes.lead import router as lead_router
 from app.routes.lead_source import router as lead_source_router
+from app.routes.warranty_term import router as warranty_term_router
 from app.routes.location import router as location_router
 from app.routes.menu import router as menu_router
 from app.routes.opportunity import router as opportunity_router
@@ -66,4 +67,5 @@ api_router.include_router(unit_router)
 api_router.include_router(customer_router)
 api_router.include_router(menu_router)
 api_router.include_router(lead_source_router)
+api_router.include_router(warranty_term_router)
 api_router.include_router(state_router)

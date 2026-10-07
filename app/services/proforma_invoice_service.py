@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.services.company_profile_service import CompanyProfileService
 from app.core.payment_terms import wording_for
 from app.core.references import highest_issued, next_number, peek_next
+from app.core.approvals import price_type_for
 from app.core.workflow_status import (
     PROFORMA_INVOICE_TRANSITIONS,
     ProformaInvoiceStatus,
@@ -121,6 +122,7 @@ def _totals(invoice: ProformaInvoice, **overrides) -> dict:
 
     totals = compute_order_totals(
         overrides.get("items", invoice.items),
+        price_type=price_type_for(invoice.customer_type),
         discount_mode=invoice.discount_mode,
         discount_input=invoice.discount_input,
         orc_mode=invoice.orc_mode,
