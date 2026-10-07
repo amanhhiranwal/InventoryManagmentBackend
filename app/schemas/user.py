@@ -28,3 +28,7 @@ class UpdateUserRequest(BaseModel):
     role_ids: list[str] = []
     company_ids: list[str] = []
     reports_to_id: str | None = None
+
+
+class SetUserActiveRequest(BaseModel):
+    is_active: bool

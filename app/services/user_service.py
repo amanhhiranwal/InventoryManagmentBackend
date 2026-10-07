@@ -213,6 +213,59 @@ class UserService:
         return UserRepository.update(db, user)
 
     @staticmethod
+    def set_active(user_id: str, is_active: bool, db: Session, current_user=None):
+        """Switch an account on or off.
+
+        Off means off: the password stops working and any token already
+        issued stops working with it, so somebody who has left cannot
+        carry on until their session happens to expire.
+
+        Kept separate from delete, because a person who has left still
+        owns the leads they raised and the approvals they granted, and
+        those have to keep pointing at somebody.
+        """
+
+        from app.models.user import User
+
+        user = db.query(User).filter(User.id == UUID(str(user_id))).first()
+
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        # Locking out the last way in is not a mistake worth allowing.
+        if not is_active and user.is_super_admin:
+            others = (
+                db.query(User)
+                .filter(
+                    User.is_super_admin.is_(True),
+                    User.is_active.is_(True),
+                    User.id != user.id,
+                )
+                .count()
+            )
+
+            if others == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "This is the last active super admin. Give somebody "
+                        "else that role before switching this one off."
+                    ),
+                )
+
+        if current_user and str(current_user.get("user_id")) == str(user.id) and not is_active:
+            raise HTTPException(
+                status_code=400,
+                detail="You cannot switch off your own account.",
+            )
+
+        user.is_active = is_active
+        db.commit()
+        db.refresh(user)
+
+        return user
+
+    @staticmethod
     def delete(user_id: str, db: Session, current_user: dict | None = None) -> None:
         validate_uuid(user_id, "user_id")
         user = UserRepository.get_by_id(db, UUID(user_id))
