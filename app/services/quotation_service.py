@@ -698,6 +698,36 @@ class QuotationService:
                     ),
                 )
 
+            # One live proposal per opportunity. A customer asking for a
+            # changed price wants the proposal changed, not a second one
+            # alongside it - two live proposals for one deal means two
+            # prices in front of the customer and no way to say which is
+            # ours. A proposal that was rejected or expired is finished
+            # with, so a fresh one may follow it.
+            existing = (
+                db.query(Quotation)
+                .filter(
+                    Quotation.opportunity_id == request.opportunity_id,
+                    Quotation.status.notin_(
+                        [
+                            QuotationStatus.REJECTED,
+                            QuotationStatus.EXPIRED,
+                        ]
+                    ),
+                )
+                .first()
+            )
+
+            if existing is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"{existing.quote_number} is already open against "
+                        f"this opportunity. Edit it to change the price "
+                        f"rather than raising a second proposal."
+                    ),
+                )
+
         def carried(field: str, fallback=None):
             """Form value first, then the opportunity it was raised from."""
 
