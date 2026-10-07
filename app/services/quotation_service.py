@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.approvals import price_type_for
 from app.core.workflow_status import (
     QUOTATION_TRANSITIONS,
     OpportunityStatus,
@@ -21,6 +22,7 @@ from app.services.approval_service import ApprovalService
 from app.services.email_service import EmailService
 from app.services.lead_service import get_visible_creator_user_ids
 from app.services.quotation_pdf_service import QuotationPDFService
+from app.services.sales_order_service import rate_for_sku
 from app.services.notification_service import NotificationService
 
 #: Offer validity shown on the form as "Validation Date (30 days)".
@@ -113,6 +115,7 @@ def _item_dict(item) -> dict:
 
 def compute_totals(
     items: list,
+    price_type: str | None = None,
     orc_percent: float = 0.0,
     orc_amount: float = 0.0,
     freight_charges: float = 0.0,
@@ -129,6 +132,13 @@ def compute_totals(
     Kept in one place, and always recomputed on write, so the totals stored
     on the row cannot drift away from the lines they came from.
 
+    The unit price is read from the catalogue by SKU rather than taken from
+    the request. Recomputing the totals faithfully from a figure the browser
+    chose is no protection at all: a form that posts its own unit price can
+    post a panel at one rupee, and every total below it comes out right for
+    the wrong number. A line whose SKU is not in the catalogue was typed by
+    hand rather than picked, and keeps the price it was sent.
+
         subtotal        = SUM(qty * unit_price)
         discount        = SUM(line subtotal * discount%)
         taxable         = subtotal - discount + ORC + freight + installation
@@ -143,8 +153,16 @@ def compute_totals(
         item = _item_dict(raw)
 
         quantity = _as_float(item.get("quantity"), 1.0)
-        unit_price = _as_float(item.get("unit_price"))
         discount_pct = _as_float(item.get("discount"))
+
+        listed = rate_for_sku(item.get("sku"), price_type)
+        unit_price = (
+            listed if listed is not None else _as_float(item.get("unit_price"))
+        )
+
+        # The line is stored at the price it was actually costed at, so the
+        # document and the totals cannot disagree later.
+        item["unit_price"] = unit_price
 
         line_total = quantity * unit_price
 
@@ -673,8 +691,18 @@ class QuotationService:
 
         items = [_item_dict(item) for item in (request.items or [])]
 
+        # Which price list the lines are costed against follows from who is
+        # buying, decided here rather than taken from the form.
+        customer_type = _customer_type_name(
+            db,
+            request.customer_type,
+            request.customer_type_id,
+            opportunity,
+        )
+
         totals = compute_totals(
             items,
+            price_type=price_type_for(customer_type),
             orc_percent=request.orc_percent,
             orc_amount=request.orc_amount,
             freight_charges=request.freight_charges,
@@ -701,12 +729,7 @@ class QuotationService:
             designation=carried("designation"),
             email=carried("email"),
             mobile_number=carried("mobile_number"),
-            customer_type=_customer_type_name(
-                db,
-                request.customer_type,
-                request.customer_type_id,
-                opportunity,
-            ),
+            customer_type=customer_type,
 
             quotation_date=quotation_date,
             validation_date=validation_date,
@@ -864,6 +887,7 @@ class QuotationService:
         if money_changed:
             totals = compute_totals(
                 quotation.items or [],
+                price_type=price_type_for(quotation.customer_type),
                 orc_percent=(
                     request.orc_percent
                     if request.orc_percent is not None
