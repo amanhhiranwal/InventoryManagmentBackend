@@ -1,16 +1,25 @@
 """The discount approval chain, run by the seeded Sales team.
 
-Run seed_sales_team.py first. An Area Manager raises quotations at three
+Approval sits on the sales order. A proposal is a price put in front of a
+customer to see what they say, and needs no signature to go out; the
+order is the commitment, and that is what climbs the chain.
+
+Run seed_sales_team.py first. An Area Manager raises orders at four
 discount levels and checks each goes to the right people:
 
+     0%  ->  nobody
     10%  ->  their own AVP, and nobody else's
     18%  ->  the AVP, then the CEO
     25%  ->  the AVP, the CEO, then the founder
 
-It also checks the dealer price goes straight to the CEO, that an
-undiscounted quotation needs no approval at all, that the document is held
-at Pending Approval while the chain runs and released when it clears, and
-that a rejection hands it back.
+A dealer order goes to the founder whatever the discount, because the
+question there is not how much has been given away but whether we sell
+through the channel at all.
+
+It also checks that a proposal needs no approval and can be emailed
+without one, that the order is held while the chain runs and released
+when it clears, that a rejection hands it back, and that another zone's
+deal is not yours to approve.
 
 Everything it creates is removed again.
 
@@ -64,22 +73,54 @@ try:
     matrix = api("get", "/approvals/matrix", admin).json()["data"]
     bands = {b["role"]: b for b in matrix["bands"]}
 
-    check("the AVP carries the first 15%", bands["AVP"]["to_percent"] == 15.0, str(bands.get("AVP")))
+    check("the AVP carries the first 10%", bands["AVP"]["to_percent"] == 10.0, str(bands.get("AVP")))
     check("the CEO carries up to 20%", bands["CEO"]["to_percent"] == 20.0, str(bands.get("CEO")))
     check("past that it is the founder", bands["Founder"]["to_percent"] is None, str(bands.get("Founder")))
 
-    def preview(discount, price_type="ECP"):
+    def preview(discount, price_type="ECP", document_type="SALES_ORDER"):
         return api(
             "get", "/approvals/preview", token["am_north_1"],
-            params={"price_type": price_type, "discount_percent": discount},
+            params={
+                "price_type": price_type,
+                "discount_percent": discount,
+                "document_type": document_type,
+            },
         ).json()["data"]
 
     check("no discount needs no approval", preview(0)["chain"] == [], str(preview(0)))
-    check("10% stops at the AVP", preview(10)["chain"] == ["AVP"], str(preview(10)["chain"]))
-    check("15% still stops at the AVP", preview(15)["chain"] == ["AVP"], str(preview(15)["chain"]))
-    check("18% reaches the CEO", preview(18)["chain"] == ["AVP", "CEO"], str(preview(18)["chain"]))
-    check("25% reaches the founder", preview(25)["chain"] == ["AVP", "CEO", "Founder"], str(preview(25)["chain"]))
-    check("dealer price goes to the CEO alone", preview(0, "DP")["chain"] == ["CEO"], str(preview(0, "DP")["chain"]))
+    check("5% stops at the AVP", preview(5)["chain"] == ["AVP"], str(preview(5)["chain"]))
+    check("10% still stops at the AVP", preview(10)["chain"] == ["AVP"], str(preview(10)["chain"]))
+    check("12% reaches the CEO", preview(12)["chain"] == ["AVP", "CEO"], str(preview(12)["chain"]))
+    check("20% still stops at the CEO", preview(20)["chain"] == ["AVP", "CEO"], str(preview(20)["chain"]))
+    check(
+        "25% reaches the founder",
+        preview(25)["chain"] == ["AVP", "CEO", "Founder"],
+        str(preview(25)["chain"]),
+    )
+
+    # The dealer question is not how much has been given away.
+    check(
+        "an undiscounted dealer order goes to the founder",
+        preview(0, "DP")["chain"] == ["Founder"],
+        str(preview(0, "DP")["chain"]),
+    )
+    check(
+        "and a discounted one goes to the founder too",
+        preview(30, "DP")["chain"] == ["Founder"],
+        str(preview(30, "DP")["chain"]),
+    )
+
+    # A proposal is not a commitment, so nothing signs it.
+    check(
+        "a proposal needs no approval, whatever the discount",
+        preview(25, "ECP", "QUOTATION")["chain"] == [],
+        str(preview(25, "ECP", "QUOTATION")["chain"]),
+    )
+    check(
+        "and the reason says where the approval went",
+        "sales order" in preview(25, "ECP", "QUOTATION")["reason"].lower(),
+        preview(25, "ECP", "QUOTATION")["reason"],
+    )
 
     # ------------------------------------------------------- a quotation
     banner("2. An Area Manager raises a discounted quotation")
