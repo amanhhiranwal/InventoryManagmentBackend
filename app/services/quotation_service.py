@@ -22,8 +22,10 @@ from app.services.approval_service import ApprovalService
 from app.services.email_service import EmailService
 from app.services.lead_service import get_visible_creator_user_ids
 from app.services.quotation_pdf_service import QuotationPDFService
-from app.services.sales_order_service import rate_for_sku
-from app.services.warranty_term_service import uplift_from_rates, warranty_rates as _warranty_rates
+from app.services.sales_order_service import (
+    rate_for_sku,
+    warranty_uplift_for_sku,
+)
 from app.services.notification_service import NotificationService
 
 #: Offer validity shown on the form as "Validation Date (30 days)".
@@ -117,7 +119,6 @@ def _item_dict(item) -> dict:
 def compute_totals(
     items: list,
     price_type: str | None = None,
-    warranty_rates: dict | None = None,
     orc_percent: float = 0.0,
     orc_amount: float = 0.0,
     freight_charges: float = 0.0,
@@ -151,8 +152,15 @@ def compute_totals(
     subtotal = 0.0
     discount_amount = 0.0
 
+    # Settled values are written back into the list the caller holds, not
+    # into a copy: that list is what gets stored, and a line reading
+    # "unit price 0" under a total of 147,000 is a document arguing with
+    # itself.
+    settled: list[dict] = []
+
     for raw in items or []:
         item = _item_dict(raw)
+        settled.append(item)
 
         quantity = _as_float(item.get("quantity"), 1.0)
         discount_pct = _as_float(item.get("discount"))
@@ -170,14 +178,13 @@ def compute_totals(
         # holds for the chosen term - never at a figure the form sends, for
         # the same reason the unit price is not taken from it. The standard
         # term is included in the price and adds nothing.
-        # Without rates to price against the figure on the line is kept,
-        # for the reason set out in compute_order_totals.
-        if warranty_rates is None:
-            warranty_uplift = _as_float(item.get("warranty_uplift"))
-        else:
-            warranty_uplift = uplift_from_rates(
-                warranty_rates, item.get("warranty_term"), unit_price, quantity
-            )
+        # What the cover costs is held against the product, not beside the
+        # term's name: five years on a panel and five years on a camera are
+        # different undertakings. Priced here from the catalogue, never from
+        # a figure the form sends.
+        warranty_uplift = warranty_uplift_for_sku(
+            item.get("sku"), item.get("warranty_term"), unit_price, quantity
+        )
 
         item["warranty_uplift"] = round(warranty_uplift, 2)
 
@@ -185,6 +192,9 @@ def compute_totals(
 
         subtotal += line_total
         discount_amount += line_total * discount_pct / 100.0
+
+    if isinstance(items, list):
+        items[:] = settled
 
     # A discount typed into the summary overrides the per-line total, in
     # whichever unit it was entered.
@@ -720,7 +730,6 @@ class QuotationService:
         totals = compute_totals(
             items,
             price_type=price_type_for(customer_type),
-            warranty_rates=_warranty_rates(db),
             orc_percent=request.orc_percent,
             orc_amount=request.orc_amount,
             freight_charges=request.freight_charges,
@@ -906,7 +915,6 @@ class QuotationService:
             totals = compute_totals(
                 quotation.items or [],
                 price_type=price_type_for(quotation.customer_type),
-                warranty_rates=_warranty_rates(db),
                 orc_percent=(
                     request.orc_percent
                     if request.orc_percent is not None

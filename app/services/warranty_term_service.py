@@ -8,59 +8,29 @@ from app.schemas.warranty_term import (
     UpdateWarrantyTermRequest,
 )
 
-#: Three years is the cover included in the price, so it costs nothing to
-#: have. The two longer terms are priced as a percentage of the line by
-#: default; whoever owns the commercials sets the real figures in Masters,
-#: and may switch either to a flat amount per unit instead.
+#: The lengths every document offers. What each costs is set per product,
+#: on the product record, because five years on a panel and five years on
+#: a camera are different undertakings.
 DEFAULT_WARRANTY_TERMS = [
     {
         "name": "3 Years",
         "years": 3,
-        "rate_mode": "PERCENT",
-        "rate": 0.0,
         "is_default": True,
         "description": "Standard cover, included in the price.",
     },
     {
         "name": "4 Years",
         "years": 4,
-        "rate_mode": "PERCENT",
-        "rate": 0.0,
         "is_default": False,
-        "description": "One extra year. Set the rate in Masters.",
+        "description": "One extra year. Priced on each product.",
     },
     {
         "name": "5 Years",
         "years": 5,
-        "rate_mode": "PERCENT",
-        "rate": 0.0,
         "is_default": False,
-        "description": "Two extra years. Set the rate in Masters.",
+        "description": "Two extra years. Priced on each product.",
     },
 ]
-
-
-def uplift_for(term: WarrantyTerm | None, unit_price: float, quantity: float) -> float:
-    """What extending to this term adds to a line.
-
-    A percentage applies to the line - price times quantity - because that
-    is how cover is priced against what is being covered. A flat amount is
-    per unit, for the same reason: two panels under extended cover cost
-    twice what one does.
-    """
-
-    if term is None:
-        return 0.0
-
-    rate = float(term.rate or 0.0)
-
-    if rate <= 0:
-        return 0.0
-
-    if str(term.rate_mode or "").upper() == "AMOUNT":
-        return rate * float(quantity or 0.0)
-
-    return float(unit_price or 0.0) * float(quantity or 0.0) * rate / 100.0
 
 
 class WarrantyTermService:
@@ -132,14 +102,9 @@ class WarrantyTermService:
                 status_code=400, detail=f"A warranty term called “{name}” already exists."
             )
 
-        if request.rate < 0:
-            raise HTTPException(status_code=400, detail="A warranty rate cannot be negative.")
-
         term = WarrantyTerm(
             name=name,
             years=request.years,
-            rate_mode=request.rate_mode,
-            rate=request.rate,
             is_default=request.is_default,
             description=request.description,
             is_active=True,
@@ -163,13 +128,6 @@ class WarrantyTermService:
         if not term:
             raise HTTPException(status_code=404, detail="Warranty term not found.")
 
-        if request.rate is not None:
-            if request.rate < 0:
-                raise HTTPException(
-                    status_code=400, detail="A warranty rate cannot be negative."
-                )
-            term.rate = request.rate
-
         if request.name is not None:
             name = request.name.strip()
 
@@ -187,7 +145,7 @@ class WarrantyTermService:
 
             term.name = name
 
-        for field in ("years", "rate_mode", "description", "is_active"):
+        for field in ("years", "description", "is_active"):
             value = getattr(request, field, None)
             if value is not None:
                 setattr(term, field, value)
@@ -226,51 +184,3 @@ class WarrantyTermService:
         db.commit()
 
 
-def warranty_rates(db: Session) -> dict[str, dict]:
-    """Every term by name, for costing lines without a query each.
-
-    Read from the database on each save rather than cached for the life of
-    the process: a rate somebody has just set in Masters must apply to the
-    next proposal, not to the one after the next restart.
-    """
-
-    WarrantyTermService.seed_defaults(db)
-
-    return {
-        term.name: {
-            "rate_mode": term.rate_mode,
-            "rate": float(term.rate or 0.0),
-            "is_default": term.is_default,
-        }
-        for term in db.query(WarrantyTerm).all()
-    }
-
-
-def uplift_from_rates(
-    rates: dict[str, dict] | None,
-    term_name: str | None,
-    unit_price: float,
-    quantity: float,
-) -> float:
-    """What the chosen term adds to a line, given the rates in force.
-
-    A term the master does not hold adds nothing. That covers a document
-    quoting a term somebody has since renamed, and it fails towards not
-    charging for cover rather than towards charging for cover at a rate
-    nobody can point at.
-    """
-
-    entry = (rates or {}).get(str(term_name or "").strip())
-
-    if not entry:
-        return 0.0
-
-    rate = float(entry.get("rate") or 0.0)
-
-    if rate <= 0:
-        return 0.0
-
-    if str(entry.get("rate_mode") or "").upper() == "AMOUNT":
-        return rate * float(quantity or 0.0)
-
-    return float(unit_price or 0.0) * float(quantity or 0.0) * rate / 100.0

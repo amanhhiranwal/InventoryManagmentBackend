@@ -21,8 +21,6 @@ def _serialise(term) -> dict:
         "id": str(term.id),
         "name": term.name,
         "years": term.years,
-        "rate_mode": term.rate_mode,
-        "rate": term.rate,
         "is_default": term.is_default,
         "description": term.description,
         "is_active": term.is_active,
@@ -49,7 +47,7 @@ def create_warranty_term(
     db: Session = Depends(get_db),
     current_user=Depends(require_super_admin),
 ):
-    """What cover costs is a commercial decision, so it is set in Masters."""
+    """The lengths are company-wide; their price is set on each product."""
 
     term = WarrantyTermService.create(request, db)
 

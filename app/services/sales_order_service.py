@@ -5,7 +5,6 @@ from sqlalchemy.orm import Session
 
 from app.core.fulfilment import desk_for, holds_desk
 from app.core.approvals import price_type_for
-from app.services.warranty_term_service import uplift_from_rates
 from app.core.workflow_status import (
     SALES_ORDER_TRANSITIONS,
     SalesOrderStatus,
@@ -130,6 +129,10 @@ def _catalogue() -> dict[str, dict]:
                         (row.get("attributes") or {}).get("rate")
                         or (row.get("attributes") or {}).get("rate_per_unit")
                     ),
+                    "warranty_rates": (row.get("attributes") or {}).get(
+                        "warranty_rates"
+                    )
+                    or {},
                 }
                 for row in sync_mongo_db["inventory_items"].find(
                     {},
@@ -139,6 +142,7 @@ def _catalogue() -> dict[str, dict]:
                         "attributes.dtp_rate": 1,
                         "attributes.rate": 1,
                         "attributes.rate_per_unit": 1,
+                        "attributes.warranty_rates": 1,
                     },
                 )
             }
@@ -190,6 +194,43 @@ def rate_for_sku(sku: str, price_type: str | None = None) -> float | None:
         return entry.get("dtp") or entry.get("ecp", 0.0)
 
     return entry.get("ecp", 0.0)
+
+
+def warranty_uplift_for_sku(
+    sku: str, term_name: str | None, unit_price: float, quantity: float
+) -> float:
+    """What extending to this term costs on this product.
+
+    The lengths are a master, so every document offers the same three. What
+    they cost is not: five years on a panel and five years on a camera are
+    different undertakings, so the rate is held against the product and
+    read from the catalogue the same way the price is.
+
+    A product with no rate for the term adds nothing, which covers both a
+    term that is simply not offered on it and the standard cover that is
+    included in the price. It fails towards not charging rather than
+    charging at a figure nobody set.
+    """
+
+    entry = (
+        _catalogue()
+        .get(str(sku or "").upper(), {})
+        .get("warranty_rates", {})
+        .get(str(term_name or "").strip())
+    )
+
+    if not entry:
+        return 0.0
+
+    rate = _as_float(entry.get("rate"))
+
+    if rate <= 0:
+        return 0.0
+
+    if str(entry.get("mode") or "").upper() == "AMOUNT":
+        return rate * float(quantity or 0.0)
+
+    return float(unit_price or 0.0) * float(quantity or 0.0) * rate / 100.0
 
 
 def _items_to_json(items) -> list | None:
@@ -263,18 +304,9 @@ def _opportunity_from_quotation(quotation_id: str | None, db: Session) -> int | 
     return quotation.opportunity_id if quotation else None
 
 
-def _order_warranty_rates(db):
-    """The warranty rates in force, read fresh so a new one applies now."""
-
-    from app.services.warranty_term_service import warranty_rates
-
-    return warranty_rates(db)
-
-
 def compute_order_totals(
     items,
     price_type: str | None = None,
-    warranty_rates: dict | None = None,
     discount_mode: str | None = None,
     discount_input: float | None = None,
     orc_mode: str | None = None,
@@ -320,6 +352,9 @@ def compute_order_totals(
     faithfully from a figure the browser chose protects nothing.
     """
 
+    # Settled values are written back into the list the caller holds, not
+    # into a copy: that list is what gets stored, and a line reading
+    # "rate 0" under a total of 147,000 is a document arguing with itself.
     rows = _items_to_json(items) or []
 
     subtotal = 0.0
@@ -345,19 +380,20 @@ def compute_order_totals(
         row["rate"] = price
         row["price"] = price
 
-        # Extended cover is sold on top of the line, at the rate Masters
-        # holds for the chosen term - never at a figure the form sends.
+        # Extended cover is sold on top of the line, at the rate the
+        # product holds for the chosen term - never at a figure the form
+        # sends.
         #
-        # Without rates to price against, the figure already on the line is
-        # kept. That is the proforma invoice: it bills what the order
-        # agreed, and must not re-price itself because somebody changed the
-        # rate in Masters afterwards. Those lines were costed by the order,
-        # server side, so the figure is ours rather than the browser's.
-        if warranty_rates is None:
+        # The proforma invoice passes neither a price type nor rates: it
+        # bills what the order agreed and must not re-price itself because
+        # somebody edited the product afterwards, so it keeps the figure
+        # already on the line. That figure was worked out by the order,
+        # server side, so it is ours rather than the browser's.
+        if price_type is None:
             warranty_uplift = _as_float(row.get("warranty_uplift"))
         else:
-            warranty_uplift = uplift_from_rates(
-                warranty_rates, row.get("warranty_term"), price, quantity
+            warranty_uplift = warranty_uplift_for_sku(
+                row.get("sku"), row.get("warranty_term"), price, quantity
             )
 
         row["warranty_uplift"] = round(warranty_uplift, 2)
@@ -366,6 +402,9 @@ def compute_order_totals(
 
         subtotal += line
         discount_amount += line * _as_float(row.get("discount")) / 100.0
+
+    if isinstance(items, list):
+        items[:] = rows
 
     discount_mode = (discount_mode or "AMOUNT").upper()
 
@@ -581,7 +620,6 @@ class SalesOrderService:
             **compute_order_totals(
                 request.items,
                 price_type=price_type_for(request.customer_type),
-                warranty_rates=_order_warranty_rates(db),
                 discount_mode=getattr(request, "discount_mode", None),
                 discount_input=getattr(request, "discount_input", None),
                 orc_mode=getattr(request, "orc_mode", None),
@@ -698,7 +736,6 @@ class SalesOrderService:
             totals = compute_order_totals(
                 order.items,
                 price_type=price_type_for(order.customer_type),
-                warranty_rates=_order_warranty_rates(db),
                 discount_mode=pick("discount_mode", order.discount_mode),
                 discount_input=pick("discount_input", order.discount_input),
                 orc_mode=pick("orc_mode", order.orc_mode),
