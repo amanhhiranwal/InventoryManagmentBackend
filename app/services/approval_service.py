@@ -32,10 +32,30 @@ DOCUMENT_LINKS = {
     ApprovalDocument.SALES_ORDER: "/sales/orders/{id}",
 }
 
-def app_url(path: str) -> str:
-    """A path on the CRM as a full link, for a button in an email."""
+def app_url(path: str, db=None) -> str:
+    """A path on the CRM as a full link, for a button in an email.
 
-    base = (settings.FRONTEND_URL or "").rstrip("/")
+    Read from the company profile first, where a super admin can change
+    it, and only then from the environment. An approval email that points
+    at localhost reaches somebody who cannot act on it, and moving the
+    site should not need a deployment to fix that.
+    """
+
+    base = ""
+
+    if db is not None:
+        try:
+            from app.services.company_profile_service import CompanyProfileService
+
+            base = (CompanyProfileService.raw(db).get("app_base_url") or "").strip()
+        except Exception:  # noqa: BLE001 - a link is not worth failing a send
+            base = ""
+
+    if not base:
+        base = settings.FRONTEND_URL or ""
+
+    base = base.rstrip("/")
+
     return f"{base}{path}" if base else path
 
 
@@ -447,6 +467,93 @@ class ApprovalService:
         )
 
     @staticmethod
+    def decide_by_link(
+        approval_id: int,
+        user_id: str,
+        step: int,
+        approve: bool,
+        db: Session,
+    ) -> SalesApproval:
+        """Decide from the email link, with the link standing in for a login.
+
+        Everything the token claims is checked against the database
+        before anything happens, because the token says what it was
+        issued for and the database says what is actually true now.
+
+        The step matters most. A link is issued for one step; once that
+        step has been decided the approval has moved on, so the link is
+        spent. That is what stops a forwarded mail being a second
+        signature, and what stops the AVP's link being used after it has
+        reached the CEO.
+        """
+
+        approval = (
+            db.query(SalesApproval).filter(SalesApproval.id == approval_id).first()
+        )
+
+        if approval is None:
+            raise HTTPException(status_code=404, detail="That request no longer exists.")
+
+        if approval.status != ApprovalStatus.PENDING:
+            raise HTTPException(
+                status_code=409,
+                detail=f"It has already been {approval.status.lower()}.",
+            )
+
+        if approval.current_step != step:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "That link was for an earlier step, which has already "
+                    "been decided."
+                ),
+            )
+
+        user = db.query(User).filter(User.id == user_id).first()
+
+        if user is None or not user.is_active:
+            raise HTTPException(
+                status_code=403,
+                detail="That account is no longer active.",
+            )
+
+        # The link does not widen who may decide. Whoever it was issued
+        # to still has to be one of the people this step is waiting on.
+        allowed = {
+            str(u.id) for u in ApprovalService.approvers_for_step(approval, db)
+        }
+
+        if str(user.id) not in allowed:
+            raise HTTPException(
+                status_code=403,
+                detail="This step is not waiting on you.",
+            )
+
+        # Deciding in one click is for the people the chain actually
+        # names - the AVP, the CEO, the founder. Somebody who is only on
+        # this step because the reporting line had a gap and it fell back
+        # to the super admins can still decide it, in the CRM, where they
+        # are signed in and can see what they are signing.
+        step_role = approval.steps[approval.current_step]["role"]
+
+        if step_role not in _role_names(user):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"One-click approval is for the {step_role}. Open the "
+                    "CRM to decide this one."
+                ),
+            )
+
+        return ApprovalService.decide(
+            approval_id,
+            approve,
+            "Decided from the approval email.",
+            {"user_id": str(user.id), "is_super_admin": user.is_super_admin},
+            db,
+        )
+
+    @staticmethod
     def decide(
         approval_id: int,
         approve: bool,
@@ -821,13 +928,52 @@ class ApprovalService:
             )
             facts.append(("Approval chain", trail))
 
+            # One-click Approve and Reject, but only when the step is
+            # waiting on exactly one person. A token names who it was
+            # issued to, so a single mail addressed to several approvers
+            # has nobody to issue it to - and guessing would hand one
+            # person's authority to another. Those get the Open link,
+            # which is where they were going anyway.
+            decisions = None
+
+            if event in ("requested", "approved") and approval.status == ApprovalStatus.PENDING:
+                on_point = ApprovalService.approvers_for_step(approval, db)
+
+                # And only to somebody who actually holds the role this
+                # step names. approvers_for_step falls back to every
+                # holder, then to the super admins, so a gap in the
+                # reporting lines cannot freeze a deal - but a fallback
+                # is the wrong thing to hand a one-click signature to.
+                # Those people open the CRM like anybody else.
+                step_role = approval.steps[approval.current_step]["role"]
+
+                if len(on_point) == 1 and step_role in _role_names(on_point[0]):
+                    from app.services.approval_link_service import make_token
+
+                    who = str(on_point[0].id)
+                    step = approval.current_step
+
+                    decisions = (
+                        app_url(
+                            "/api/v1/approvals/decide-by-link?token="
+                            + make_token(approval.id, who, step, "approve"),
+                            db,
+                        ),
+                        app_url(
+                            "/api/v1/approvals/decide-by-link?token="
+                            + make_token(approval.id, who, step, "reject"),
+                            db,
+                        ),
+                    )
+
             letter = EmailLetter(
                 db,
                 heading=heading,
                 greeting=greeting,
                 paragraphs=paragraphs,
                 facts=facts,
-                action=(f"Open {label.lower()} {reference}", app_url(link)) if link else None,
+                decisions=decisions,
+                action=(f"Open {label.lower()} {reference}", app_url(link, db)) if link else None,
                 note=note,
                 sign_off_name=signed_by,
             )

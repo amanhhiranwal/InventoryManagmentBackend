@@ -33,6 +33,9 @@ class CompanyProfileRequest(BaseModel):
     signatory_name: str | None = None
     signatory_title: str | None = None
 
+    #: Where this CRM answers, used for the links in the emails it sends.
+    app_base_url: str | None = None
+
     # The seller's state, which decides CGST+SGST against IGST, and the
     # account a customer remits to. Both are printed on documents money
     # moves against, so they belong on a screen a super admin can correct

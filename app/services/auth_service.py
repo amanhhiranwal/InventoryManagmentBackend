@@ -83,6 +83,22 @@ class AuthService:
                 detail="Invalid credentials",
             )
 
+        # Deactivating somebody has to mean they cannot get in. It marked
+        # the record and nothing else: the password still worked, so a
+        # person who had left the company signed in exactly as before.
+        #
+        # Said plainly rather than as "invalid credentials" - the person
+        # typing is usually a colleague whose account was switched off,
+        # and sending them round the password reset loop helps nobody.
+        if not user.is_active:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "This account has been deactivated. Ask a super admin "
+                    "to switch it back on."
+                ),
+            )
+
         from app.repositories.rbac_repository import RBACRepository
         role_ids = [str(r.id) for r in user.roles]
         

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.models.company import Company
 from app.models.user import User
 from app.repositories.rbac_repository import RBACRepository
+from app.core.field_checks import check_email
 from app.repositories.user_repository import UserRepository
 from app.services.hierarchy_service import HierarchyService
 from app.services.password_service import PasswordService
@@ -112,6 +113,7 @@ class UserService:
             password=hashed_password,
             phone_number=request.phone_number,
             employee_id=request.employee_id,
+            location=getattr(request, "location", None),
             is_super_admin=False,
             is_active=True,
             reports_to_id=reports_to,
@@ -212,6 +214,59 @@ class UserService:
         return UserRepository.update(db, user)
 
     @staticmethod
+    def set_active(user_id: str, is_active: bool, db: Session, current_user=None):
+        """Switch an account on or off.
+
+        Off means off: the password stops working and any token already
+        issued stops working with it, so somebody who has left cannot
+        carry on until their session happens to expire.
+
+        Kept separate from delete, because a person who has left still
+        owns the leads they raised and the approvals they granted, and
+        those have to keep pointing at somebody.
+        """
+
+        from app.models.user import User
+
+        user = db.query(User).filter(User.id == UUID(str(user_id))).first()
+
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        # Locking out the last way in is not a mistake worth allowing.
+        if not is_active and user.is_super_admin:
+            others = (
+                db.query(User)
+                .filter(
+                    User.is_super_admin.is_(True),
+                    User.is_active.is_(True),
+                    User.id != user.id,
+                )
+                .count()
+            )
+
+            if others == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "This is the last active super admin. Give somebody "
+                        "else that role before switching this one off."
+                    ),
+                )
+
+        if current_user and str(current_user.get("user_id")) == str(user.id) and not is_active:
+            raise HTTPException(
+                status_code=400,
+                detail="You cannot switch off your own account.",
+            )
+
+        user.is_active = is_active
+        db.commit()
+        db.refresh(user)
+
+        return user
+
+    @staticmethod
     def delete(user_id: str, db: Session, current_user: dict | None = None) -> None:
         validate_uuid(user_id, "user_id")
         user = UserRepository.get_by_id(db, UUID(user_id))
@@ -253,6 +308,27 @@ class UserService:
                     status_code=400,
                     detail="Employee ID already exists.",
                 )
+
+        # The address somebody signs in with. Held to the same shape as
+        # on the way in, and refused if it already belongs to another
+        # account - two people cannot share a login.
+        new_email = (request.email or "").strip()
+
+        if new_email and new_email.lower() != (user.email or "").lower():
+            check_email(new_email, required=True)
+
+            taken = UserRepository.get_by_email(db, new_email)
+
+            if taken and str(taken.id) != str(user.id):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"{new_email} is already the login for "
+                        f"{taken.first_name} {taken.last_name}."
+                    ),
+                )
+
+            user.email = new_email
         roles_list = []
         for r_id in request.role_ids:
             validate_uuid(r_id, "role_id")
@@ -277,6 +353,11 @@ class UserService:
         user.last_name = request.last_name
         user.phone_number = request.phone_number
         user.employee_id = request.employee_id
+
+        # Left alone when the form does not send it, so a caller updating
+        # only roles cannot blank where somebody works.
+        if getattr(request, "location", None) is not None:
+            user.location = request.location
         # Only touched when the form sends it, so an edit from a screen that
         # does not show Reports To leaves the manager as it was.
         if "reports_to_id" in request.model_fields_set:

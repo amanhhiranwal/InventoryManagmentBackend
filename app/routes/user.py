@@ -6,7 +6,12 @@ from sqlalchemy.orm import Session
 from app.controllers.user_controller import UserController
 from app.database.dependencies import get_db
 from app.middleware.permission_middleware import require_permission
-from app.schemas.user import CreateUserRequest, UpdateUserRequest, UpdateUserRoleRequest
+from app.schemas.user import (
+    CreateUserRequest,
+    SetUserActiveRequest,
+    UpdateUserRequest,
+    UpdateUserRoleRequest,
+)
 
 router = APIRouter(
     prefix="/users",
@@ -42,6 +47,30 @@ def update_user_role(
     current_user=Depends(require_permission("user.update")),
 ):
     return UserController.update_role(user_id, request.role_ids, request.company_ids, db, current_user)
+
+
+@router.put("/{user_id}/status")
+def set_user_active(
+    user_id: str,
+    request: SetUserActiveRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_permission("user.update")),
+):
+    """Switch an account on or off without deleting the person's work."""
+
+    from app.services.user_service import UserService
+
+    user = UserService.set_active(user_id, request.is_active, db, current_user)
+
+    return {
+        "success": True,
+        "message": (
+            "Account switched on."
+            if user.is_active
+            else "Account switched off. They are signed out."
+        ),
+        "data": UserController._to_response_dict(user),
+    }
 
 
 @router.delete("/{user_id}")

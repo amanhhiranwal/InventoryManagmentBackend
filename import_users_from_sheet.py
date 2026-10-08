@@ -51,10 +51,14 @@ LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]", "::1")
 #: What the business calls a job, against what the CRM calls the role.
 DESIGNATIONS = {
     "area manager": "Area Manager",
+    "area manager business": "Area Manager",
     "zonal manager": "Zonal Head",
     "zonal head": "Zonal Head",
+    "regional manager": "Zonal Head",
     "avp": "AVP",
     "ceo": "CEO",
+    "group ceo": "CEO",
+    "founder": "Founder",
     "accounts": "Accounts",
     "inventory": "Inventory",
 }
@@ -150,6 +154,22 @@ def make_password():
     return "".join(secrets.choice(alphabet) for _ in range(PASSWORD_LENGTH))
 
 
+#: The same place written two ways in one sheet. Left as a small, visible
+#: list rather than a clever rule: "Delhi/NCR" and "Delhi-NCR" are the
+#: same desk, and nothing else here is close enough to risk merging.
+LOCATION_ALIASES = {
+    "delhi-ncr": "Delhi/NCR",
+    "delhi ncr": "Delhi/NCR",
+    "delhi/ncr": "Delhi/NCR",
+}
+
+
+def tidy_location(value) -> str:
+    text = str(value or "").strip()
+
+    return LOCATION_ALIASES.get(text.lower(), text)
+
+
 def split_name(full):
     """"Vikas pundir" -> ("Vikas", "Pundir"), one word -> no surname."""
 
@@ -162,11 +182,51 @@ def split_name(full):
     return first.title(), " ".join(rest).title()
 
 
-def read_sheet(path):
-    import xlrd
+class _Sheet:
+    """The two spreadsheet formats behind one small interface.
 
-    sheet = xlrd.open_workbook(path).sheet_by_index(0)
-    headers = [str(sheet.cell(0, c).value).strip().lower() for c in range(sheet.ncols)]
+    .xls is read by xlrd and .xlsx by openpyxl; neither reads the other,
+    and HR sends whichever their machine saved.
+    """
+
+    def __init__(self, rows):
+        self.rows = rows
+        self.nrows = len(rows)
+        self.ncols = max((len(r) for r in rows), default=0)
+
+    def value(self, row, col):
+        line = self.rows[row]
+        return line[col] if col < len(line) else ""
+
+
+def read_sheet(path):
+    if str(path).lower().endswith(".xlsx"):
+        import openpyxl
+
+        ws = openpyxl.load_workbook(path, data_only=True).worksheets[0]
+        rows = [list(r) for r in ws.iter_rows(values_only=True)]
+    else:
+        import xlrd
+
+        book = xlrd.open_workbook(path).sheet_by_index(0)
+        rows = [
+            [book.cell(r, c).value for c in range(book.ncols)]
+            for r in range(book.nrows)
+        ]
+
+    # A sheet that opens with blank or decorative rows starts at the first
+    # row that actually names columns.
+    start = 0
+    for i, row in enumerate(rows[:10]):
+        text = " ".join(str(v or "").lower() for v in row)
+        if "name" in text and ("email" in text or "designation" in text):
+            start = i
+            break
+
+    sheet = _Sheet(rows[start:])
+    headers = [
+        str(sheet.value(0, c) or "").strip().lower() for c in range(sheet.ncols)
+    ]
 
     def column(*names):
         for name in names:
@@ -177,20 +237,33 @@ def read_sheet(path):
     index = {
         "name": column("name", "full name"),
         "designation": column("designation", "role"),
-        "email": column("email address", "email"),
-        "phone": column("phone number", "mobile", "phone"),
-        "employee": column("employee id", "employee code"),
-        "manager": column("reports to", "manager"),
+        "email": column("email address", "email id", "email"),
+        "phone": column("phone number", "mobile", "phone", "contact no.", "contact no"),
+        "employee": column("employee id", "employee code", "emp id"),
+        # L1 is the person's first line manager. L2 and L3 are the rest of
+        # the chain, which the reporting line gives us for free once L1 is
+        # set, so only L1 is read.
+        "manager": column("reports to", "manager", "l1"),
     }
 
-    missing = [key for key, value in index.items() if value is None]
+    #: Optional: not every sheet records where somebody is based.
+    index["location"] = column("location", "base", "city")
+
+    missing = [
+        key for key, value in index.items() if value is None and key != "location"
+    ]
     if missing:
         sys.exit(f"The sheet has no column for: {', '.join(missing)}")
 
     people = []
     for r in range(1, sheet.nrows):
         def cell(key):
-            return str(sheet.cell(r, index[key]).value).strip()
+            at = index.get(key)
+
+            if at is None:
+                return ""
+
+            return str(sheet.value(r, at) or "").strip()
 
         if not cell("name"):
             continue
@@ -201,9 +274,10 @@ def read_sheet(path):
                 "name": cell("name"),
                 "designation": cell("designation"),
                 "email": cell("email").lower(),
-                "phone": phone_digits(sheet.cell(r, index["phone"]).value),
+                "phone": phone_digits(sheet.value(r, index["phone"])),
                 "employee_id": cell("employee"),
-                "manager": cell("manager"),
+                "manager": cell("manager").lstrip("-").strip(),
+                "location": tidy_location(cell("location")),
             }
         )
 
@@ -229,6 +303,21 @@ def match_name(wanted, candidates):
 
     parts = want.split()
 
+    # A name written short. "Leo Nelson" for Leo Nelson Paul, "Mahendra"
+    # for Mahendra Singh Kachhawaha, "Pradeep" for Pradeep Kesari - the
+    # sheet does this constantly, and it is not a typo but an
+    # abbreviation. Every word present, in order, and only one candidate
+    # it can mean: two people called Mahendra would make it ambiguous, and
+    # an ambiguous manager is worse than none.
+    prefixed = [
+        name
+        for name in candidates
+        if name.split()[: len(parts)] == parts and len(name.split()) >= len(parts)
+    ]
+
+    if len(prefixed) == 1:
+        return prefixed[0]
+
     if len(parts) < 2:
         return None
 
@@ -251,6 +340,70 @@ def match_name(wanted, candidates):
             best, score = name, whole
 
     return best if score >= WHOLE_NAME_FLOOR else None
+
+
+def _fill_gaps(existing, person, by_name, args, token) -> str:
+    """Add what the account is missing, and change nothing it already has.
+
+    An account made on an earlier run may predate columns the sheet now
+    carries - where somebody is based, who they report to. Skipping it
+    outright means those never arrive, so the second run finishes what
+    the first started. Anything already set is left exactly as it is.
+    """
+
+    wants: dict[str, object] = {}
+
+    if person.get("location") and not existing.get("location"):
+        wants["location"] = person["location"]
+
+    manager_label = None
+
+    if person["manager"] and not existing.get("reports_to_id"):
+        key = match_name(person["manager"], by_name)
+        manager = by_name.get(key) if key else None
+
+        if manager and not str(manager.get("id", "")).startswith("dry-"):
+            wants["reports_to_id"] = manager["id"]
+            manager_label = manager["_label"]
+
+    if not wants:
+        return ""
+
+    said = []
+    if "location" in wants:
+        said.append(f"location {wants['location']}")
+    if "reports_to_id" in wants:
+        said.append(f"reports to {manager_label}")
+
+    if args.dry_run:
+        return "would set " + " and ".join(said)
+
+    payload = {
+        "first_name": existing.get("first_name") or person["first"],
+        "last_name": existing.get("last_name") or person["last"],
+        "phone_number": existing.get("phone_number") or person["phone"],
+        "employee_id": existing.get("employee_id") or person["employee_id"],
+        # The listing returns role_ids and company_ids, not nested
+        # objects. Reading the wrong key here sent an empty list, and a
+        # PUT with an empty role list takes every role off the account.
+        "role_ids": list(existing.get("role_ids") or []),
+        "company_ids": list(existing.get("company_ids") or []),
+        "location": wants.get("location", existing.get("location")),
+        "reports_to_id": wants.get("reports_to_id", existing.get("reports_to_id")),
+    }
+
+    response = api(
+        "PUT", f"/users/{existing['id']}", token, args.base_url, json=payload
+    )
+
+    if response.status_code >= 400:
+        return f"could not set {' and '.join(said)}"
+
+    existing.update(
+        {k: v for k, v in payload.items() if k in ("location", "reports_to_id")}
+    )
+
+    return "set " + " and ".join(said)
 
 
 def main():
@@ -327,7 +480,19 @@ def main():
         first, last, label = person["first"], person["last"], person["label"]
 
         if person["email"] in by_email:
-            skipped.append((person, "already has a login"))
+            # The account exists, but the sheet may carry things it does
+            # not: where somebody is based, or who they report to. Those
+            # are filled in rather than skipped over - an import that
+            # refuses to finish a half-made account is of no use the
+            # second time it is run. Nothing already set is overwritten.
+            existing = by_email[person["email"]]
+            filled = _fill_gaps(existing, person, by_name, args, token)
+
+            skipped.append(
+                (person, "already has a login" + (f"; {filled}" if filled else ""))
+            )
+
+            by_name[label.lower()] = {**existing, "_label": label}
             continue
 
         role_name = DESIGNATIONS.get(person["designation"].strip().lower())
@@ -370,6 +535,7 @@ def main():
             "employee_id": person["employee_id"],
             "role_ids": [role_id],
             "reports_to_id": manager["id"] if manager else None,
+            "location": person.get("location") or None,
         }
 
         trail = f"  -> {manager['_label']}" if manager else "  -> (no manager)"

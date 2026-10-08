@@ -54,7 +54,19 @@ def sync_db_and_seed():
                 db.commit()
                 db.refresh(role)
 
-            hashed_pw = PasswordService.hash_password("password123")
+            # The first password, for a database that has no super admin
+            # at all. Set SUPERADMIN_PASSWORD in the environment on any
+            # machine that is not a developer's own, or this is a
+            # published credential on a reachable system.
+            first_password = os.getenv("SUPERADMIN_PASSWORD", "password123")
+
+            if first_password == "password123":
+                print(
+                    "  WARNING: creating the super admin with the default "
+                    "password. Set SUPERADMIN_PASSWORD and change it."
+                )
+
+            hashed_pw = PasswordService.hash_password(first_password)
             super_admin = User(
                 first_name="Super",
                 last_name="Admin",
@@ -70,13 +82,24 @@ def sync_db_and_seed():
             db.refresh(super_admin)
             print("Super admin created successfully.")
         else:
-            # Ensure password is set to password123
-            super_admin.email = "superadmin@mailinator.com"
-            super_admin.password = PasswordService.hash_password("password123")
-            super_admin.is_super_admin = True
-            super_admin.is_active = True
-            db.commit()
-            print("Super admin credentials confirmed for 'superadmin@mailinator.com'.")
+            # The password is NOT reset here, and this is the whole point.
+            #
+            # This script runs on every deploy. It used to set the super
+            # admin's password back to "password123" each time - a
+            # credential committed to this repository - so changing it
+            # did not survive the next release, and neither did switching
+            # the account off. On anything reachable from outside that is
+            # a permanent way in that nobody can close.
+            #
+            # The account is left exactly as it is. Only the super admin
+            # flag is reasserted, so an upgrade cannot leave the system
+            # with nobody able to administer it.
+            if not super_admin.is_super_admin:
+                super_admin.is_super_admin = True
+                db.commit()
+                print("Super admin flag restored.")
+            else:
+                print("Super admin already present - left as it is.")
 
         print("\n--- 3. Seeding Default Master Roles & Permissions ---")
         # The sales hierarchy, top to bottom. Super Admin sits outside it and

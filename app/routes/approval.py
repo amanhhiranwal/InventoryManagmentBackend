@@ -1,5 +1,6 @@
 from typing import Optional
 
+from fastapi.responses import HTMLResponse
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -15,7 +16,7 @@ from app.core.approvals import (
 from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.middleware.permission_middleware import require_super_admin
-from app.models.approval import ApprovalDocument
+from app.models.approval import ApprovalDocument, ApprovalStatus
 from app.services.approval_service import ApprovalService, serialize_approval
 from app.services.company_profile_service import CompanyProfileService
 
@@ -303,6 +304,89 @@ def decide(
         ),
         "data": serialize_approval(approval, db),
     }
+
+
+@router.get("/decide-by-link")
+def decide_by_link(
+    token: str,
+    db: Session = Depends(get_db),
+):
+    """Approve or reject straight from the link in the email.
+
+    The only route here that takes no signed-in user: the token is the
+    authority, and it carries exactly one decision on one step of one
+    approval for one person. It does not sign anybody in.
+
+    Always answers with a page rather than JSON, because what opens it is
+    a mail client, and somebody who clicks a spent link deserves a
+    sentence rather than a stack trace.
+    """
+
+    from app.services.approval_link_service import read_token
+
+    claim = read_token(token)
+
+    if claim is None:
+        return _link_page(
+            "That link is no longer valid",
+            "It may have expired, or the decision may already have been "
+            "made. Open the CRM and the request will be in your queue if "
+            "it is still waiting.",
+            ok=False,
+        )
+
+    try:
+        approval = ApprovalService.decide_by_link(
+            claim["approval_id"],
+            claim["user_id"],
+            claim["step"],
+            claim["decision"] == "approve",
+            db,
+        )
+    except HTTPException as refused:
+        return _link_page("That link cannot be used", str(refused.detail), ok=False)
+
+    decided = "approved" if claim["decision"] == "approve" else "rejected"
+    waiting = (
+        approval.steps[approval.current_step]["role"]
+        if approval.status == ApprovalStatus.PENDING and approval.steps
+        else None
+    )
+
+    after = (
+        f"It now goes to the {waiting}."
+        if waiting
+        else "Nothing further is needed."
+    )
+
+    return _link_page(
+        f"{approval.document_number or 'The request'} has been {decided}",
+        after,
+        ok=True,
+    )
+
+
+def _link_page(heading: str, detail: str, ok: bool) -> HTMLResponse:
+    """A plain page for a mail client to land on."""
+
+    colour = "#15803d" if ok else "#b91c1c"
+
+    return HTMLResponse(
+        f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{heading}</title></head>
+<body style="margin:0;background:#f1f5f9;font-family:system-ui,-apple-system,'Segoe UI',sans-serif">
+  <div style="max-width:520px;margin:12vh auto;padding:28px 32px;background:#fff;border-radius:14px;box-shadow:0 1px 3px rgba(0,0,0,.08)">
+    <p style="margin:0 0 6px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:{colour}">
+      Synergy CRM
+    </p>
+    <h1 style="margin:0 0 10px;font-size:19px;color:#0f172a">{heading}</h1>
+    <p style="margin:0;font-size:14px;line-height:1.6;color:#475569">{detail}</p>
+  </div>
+</body></html>""",
+        status_code=200,
+    )
 
 
 @router.put("/{approval_id}/withdraw")

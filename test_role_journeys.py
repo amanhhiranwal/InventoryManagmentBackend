@@ -86,13 +86,18 @@ SIDEBARS = {
             "Companies", "Locations", "Customer Type", "Product Type",
             "Category Group", "Units", "Lead Source", "States",
             "Bank Details", "Roles & Access", "Company Profile",
-            "Proposal Approval",
+            "Proposal Approval", "Warranty Terms", "Reporting Chart",
         ]),
         ("Workflows", []),
     ],
     # The sales floor all see the same screens. What separates them is the
     # reporting line - whose records show up inside those screens - not the
     # menu, which is why this list is shared.
+    #
+    # The Reporting Chart is the one Masters entry they get. It is filed
+    # under user.read, which they hold, and it is read-only for them: the
+    # line a discount climbs is theirs to know, and it is the same line
+    # that decides whose work they can see.
     "sales": [
         ("Dashboard", []),
         ("Sales", ["Leads", "Opportunity", "Proposal", "Sales Order", "Proforma Invoice"]),
@@ -100,6 +105,7 @@ SIDEBARS = {
         ("Inventory", []),
         ("Customers", []),
         ("Reports", []),
+        ("Masters", ["Reporting Chart"]),
     ],
     # A desk gets its desk and nothing else of the sales CRM - not even the
     # dashboard, so the app drops them straight onto the screen they work.
@@ -283,53 +289,44 @@ try:
     quotation = r.json()["data"]
     created["quotations"].append(quotation["id"])
 
+    # The figure sent above is deliberately wrong. The server prices a
+    # line from the catalogue by SKU, so what comes back is 5 x the rate
+    # the price list actually holds for that panel, not 5 x whatever the
+    # request claimed. That is the whole point of pricing on the server.
     value = float(quotation["subtotal"])
-    check("the quotation is priced off the catalogue", value == 925000, str(value))
-
-    # ============================================ 3. up the chain
-    banner("3. 18% off goes to the AVP, then the CEO")
-
-    r = api("post", "/approvals", owner, json={
-        "document_type": "QUOTATION",
-        "document_id": quotation["id"],
-        "document_number": quotation.get("quotation_number") or f"QT-{TAG}",
-        "price_type": "ECP",
-        "discount_percent": 18,
-        "discount_amount": value * 0.18,
-        "document_value": value,
-        "remarks": "Bulk classroom order.",
-    })
-    check("it goes up for approval", r.status_code == 200, f"{r.status_code} {r.text[:200]}")
-
-    approval = r.json()["data"]
-    created["approvals"].append(approval["id"])
-
-    check("the AVP is asked first", approval["waiting_on"] == "AVP", str(approval["waiting_on"]))
+    listed = 85000.0
     check(
-        "the quotation is held while the chain runs",
-        api("get", f"/quotations/{quotation['id']}", owner).json()["data"]["status"] == "PENDING_APPROVAL",
+        "the quotation is priced off the catalogue, not off the request",
+        value == 5 * listed,
+        f"{value} - sent 185000 a unit, catalogue says {listed}",
     )
 
-    r = api("put", f"/approvals/{approval['id']}/decide", token["zh_north"], json={"approve": True})
-    check("a Zonal Head has no discounting power", r.status_code == 403, f"got {r.status_code}")
+    # ============================================ 3. up the chain
+    banner("3. A proposal carries no approval")
 
-    r = api("put", f"/approvals/{approval['id']}/decide", token["ceo"], json={"approve": True})
-    check("the CEO cannot jump the AVP's step", r.status_code == 403, f"got {r.status_code}")
-
-    r = api("put", f"/approvals/{approval['id']}/decide", token["avp"], json={
-        "approve": True, "remarks": "Fine up to my limit, passing it up.",
+    # The approval moved to the sales order. A proposal is a price put in
+    # front of a customer to see what they say; the order is where the
+    # company commits, so nothing signs a proposal any more - not even a
+    # deep discount.
+    r = api("get", "/approvals/preview", owner, params={
+        "price_type": "ECP",
+        "discount_percent": 18,
+        "document_type": "QUOTATION",
     })
-    check("the AVP approves", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
-    check("and it moves to the CEO", r.json()["data"]["waiting_on"] == "CEO", str(r.json()["data"]["waiting_on"]))
+    check("a proposal at 18% needs nobody", r.json()["data"]["chain"] == [], str(r.json()["data"]))
 
-    r = api("put", f"/approvals/{approval['id']}/decide", token["ceo"], json={
-        "approve": True, "remarks": "Approved.",
-    })
-    check("the CEO approves", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
-    check("the request is cleared", r.json()["data"]["status"] == "APPROVED", str(r.json()["data"]["status"]))
     check(
-        "and the quotation is released to be sent",
+        "it is not held for approval",
         api("get", f"/quotations/{quotation['id']}", owner).json()["data"]["status"] == "DRAFT",
+    )
+
+    # Nothing is actually sent: no recipient on purpose, so the refusal
+    # tells us whether approval is still being demanded ahead of it.
+    sent = api("post", f"/quotations/{quotation['id']}/send", owner, json={"to": []})
+    check(
+        "and the only thing in the way of emailing it is a recipient",
+        sent.status_code == 400 and "recipient" in sent.text.lower(),
+        f"{sent.status_code} {sent.text[:140]}",
     )
 
     # ============================================ 4. order and invoice
@@ -348,6 +345,7 @@ try:
             "qty": 5,
             "rate": 185000,
             "tax_rate": 18,
+            "discount": 18,
         }],
     })
     check("the quotation turns into a sales order", r.status_code == 200, f"{r.status_code} {r.text[:200]}")
@@ -357,6 +355,48 @@ try:
 
     def order_now():
         return api("get", f"/orders/{order['id']}", admin).json()["data"]
+
+    # 18% is past the AVP's 10%, so this is where the chain runs.
+    blocked = api("put", f"/orders/{order['id']}/status", owner, json={"status": "CONFIRMED"})
+    check(
+        "a discounted order cannot be confirmed unapproved",
+        blocked.status_code == 409,
+        f"got {blocked.status_code} {blocked.text[:140]}",
+    )
+
+    r = api("post", "/approvals", owner, json={
+        "document_type": "SALES_ORDER",
+        "document_id": order["id"],
+        "document_number": order.get("order_number"),
+        "price_type": "ECP",
+        "discount_percent": 18,
+        "document_value": float(order.get("grand_total") or 0),
+        "remarks": "Bulk classroom order.",
+    })
+    check("it goes up for approval", r.status_code == 200, f"{r.status_code} {r.text[:200]}")
+
+    approval = r.json()["data"]
+    created["approvals"].append(approval["id"])
+
+    check("the AVP is asked first", approval["waiting_on"] == "AVP", str(approval["waiting_on"]))
+
+    r = api("put", f"/approvals/{approval['id']}/decide", token["zh_north"], json={"approve": True})
+    check("a Zonal Head has no discounting power", r.status_code == 403, f"got {r.status_code}")
+
+    r = api("put", f"/approvals/{approval['id']}/decide", token["ceo"], json={"approve": True})
+    check("the CEO cannot jump the AVP's step", r.status_code == 403, f"got {r.status_code}")
+
+    r = api("put", f"/approvals/{approval['id']}/decide", token["avp"], json={
+        "approve": True, "remarks": "Fine up to my limit, passing it up.",
+    })
+    check("the AVP approves", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
+    check("and it moves to the CEO", r.json()["data"]["waiting_on"] == "CEO", str(r.json()["data"]["waiting_on"]))
+
+    r = api("put", f"/approvals/{approval['id']}/decide", token["ceo"], json={
+        "approve": True, "remarks": "Approved.",
+    })
+    check("the CEO approves", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
+    check("the request is cleared", r.json()["data"]["status"] == "APPROVED", str(r.json()["data"]["status"]))
 
     r = api("put", f"/orders/{order['id']}/status", owner, json={"status": "CONFIRMED"})
     check("the salesperson confirms it", r.status_code == 200, f"{r.status_code} {r.text[:150]}")

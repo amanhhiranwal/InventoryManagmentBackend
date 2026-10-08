@@ -304,6 +304,20 @@ def _opportunity_from_quotation(quotation_id: str | None, db: Session) -> int | 
     return quotation.opportunity_id if quotation else None
 
 
+def _confirmed_onwards(target: str) -> bool:
+    """Whether this status is past the point of being a draft.
+
+    Everything from Confirmed on commits the company to the price, so the
+    discount has to have been signed off before any of it.
+    """
+
+    return target not in (
+        SalesOrderStatus.DRAFT,
+        SalesOrderStatus.PENDING_APPROVAL,
+        SalesOrderStatus.CANCELLED,
+    )
+
+
 def compute_order_totals(
     items,
     price_type: str | None = None,
@@ -944,6 +958,71 @@ class SalesOrderService:
         return order, activity
 
     @staticmethod
+    def _assert_discount_signed_off(order, target: str, db) -> None:
+        """An order cannot be committed to before the discount is signed.
+
+        This is the point the approval moved to. A proposal is a price put
+        in front of a customer to see what they say; the order is the
+        commitment, so the chain runs here and nothing past Draft happens
+        until it has cleared.
+
+        Draft, Pending Approval and Cancelled are all reachable without
+        it: the first two are where an order sits while it is being
+        decided, and an order nobody wants should not need three
+        signatures before it can be called off.
+        """
+
+        if not _confirmed_onwards(target):
+            return
+
+        from app.core.approvals import approval_chain, price_type_for
+        from app.models.approval import ApprovalDocument
+        from app.services.approval_service import ApprovalService
+
+        chain = approval_chain(
+            price_type_for(order.customer_type),
+            ApprovalService._deepest_discount(
+                ApprovalDocument.SALES_ORDER, order.id, db
+            )
+            or 0.0,
+            db,
+            ApprovalDocument.SALES_ORDER,
+        )
+
+        if not chain:
+            return
+
+        if ApprovalService.is_approved(
+            ApprovalDocument.SALES_ORDER, order.id, db
+        ):
+            return
+
+        waiting = ApprovalService.open_for(
+            ApprovalDocument.SALES_ORDER, order.id, db
+        )
+
+        if waiting is not None:
+            role = waiting.steps[waiting.current_step]["role"]
+
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{order.order_number} is waiting on the {role} to "
+                    "approve the discount. It cannot move on until that is "
+                    "cleared."
+                ),
+            )
+
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{order.order_number} has not been approved yet. The "
+                f"discount needs {' then the '.join(chain)} - use Send For "
+                "Approval first."
+            ),
+        )
+
+    @staticmethod
     def update_status(
         order_id: int,
         request,
@@ -975,6 +1054,8 @@ class SalesOrderService:
         )
 
         assert_desk_allows(order, target, current_user, db)
+
+        SalesOrderService._assert_discount_signed_off(order, target, db)
 
         order.status = target
 

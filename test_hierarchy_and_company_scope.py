@@ -72,9 +72,9 @@ try:
     # Accounts and Inventory sit outside the reporting line on purpose -
     # they answer for the whole company, not for one region.
     check(
-        "the sales chart is exactly Super Admin, CEO, AVP, Zonal Head, Area Manager",
+        "the sales chart is Super Admin, Founder, CEO, AVP, Zonal Head, Area Manager",
         sorted(set(by_name) - {"Accounts", "Inventory"})
-        == ["AVP", "Area Manager", "CEO", "Super Admin", "Zonal Head"],
+        == ["AVP", "Area Manager", "CEO", "Founder", "Super Admin", "Zonal Head"],
         str(sorted(by_name)),
     )
     check(
@@ -83,10 +83,20 @@ try:
         str(sorted(by_name)),
     )
 
+    # The founder sits above the CEO, which is what makes a discount past
+    # the CEO's ceiling land somewhere. Everybody below shifted down one
+    # when they were added.
     levels = {n: r.get("level") for n, r in by_name.items()}
     check(
-        "the chart puts them in order CEO 1, AVP 2, Zonal Head 3, Area Manager 4",
-        [levels["CEO"], levels["AVP"], levels["Zonal Head"], levels["Area Manager"]] == [1, 2, 3, 4],
+        "the chart runs Founder 1, CEO 2, AVP 3, Zonal Head 4, Area Manager 5",
+        [
+            levels["Founder"],
+            levels["CEO"],
+            levels["AVP"],
+            levels["Zonal Head"],
+            levels["Area Manager"],
+        ]
+        == [1, 2, 3, 4, 5],
         str(levels),
     )
 

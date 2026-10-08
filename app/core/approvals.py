@@ -1,26 +1,34 @@
 """Who has to approve a discount, and in what order.
 
+Approval happens on the sales order. A proposal is a price put in front of
+a customer to see what they say; the order is the commitment, and that is
+where the money is actually given away. Quoting used to need the CEO's
+signature whatever the figure, which put a senior approval in front of
+every conversation and none in front of the commitment.
+
 The sales hierarchy gives a discount away in bands. An Area Manager applies
 one but cannot approve it; a Zonal Head has no discounting power either.
-Above them the AVP carries the first 15%, the CEO the next 5%, and past 20%
-only the founder can sign it off.
+Above them the AVP carries the first 10%, the CEO the next 10%, and past
+20% only the founder can sign it off.
 
 Approval is cumulative, not a lookup: an 18% discount needs the AVP *and*
-the CEO, because the AVP's authority runs out at 15% and someone has to
+the CEO, because the AVP's authority runs out at 10% and someone has to
 own the rest. A rejection anywhere ends it.
 
 Dealer price is a different thing entirely. It is a transfer price rather
-than a negotiation, so it is not discounted at all - the CEO approves the
-price itself and nobody below can move it.
+than a negotiation, so the question is not how much has been given away
+but whether we are selling through the channel at all - which is the
+founder's call. Every dealer order goes to them, discounted or not.
 
 Which of the two a document is written against follows from the customer
 type: an End Customer is quoted ECP, and everybody else - dealer,
 distributor, OEM, corporate - is bought through at DTP.
 
-And a proposal always ends at the CEO. Whatever the discount, and whether
-there is one at all, no price leaves the building without that signature.
-A sales order raised off an already-signed proposal is not sent to the
-CEO a second time.
+These names are levels, not people. Who actually signs is read off the
+raiser's own reporting line - their L1, then L2, then L3 - so two area
+managers under different AVPs send their orders to different desks. That
+resolution lives in approval_service; this module decides how far up the
+line an order has to climb.
 """
 
 
@@ -70,7 +78,7 @@ FOUNDER = "Founder"
 #: Where the bands start before anyone has set them on the Masters screen.
 #: The last has no bound - past the CEO's ceiling only the founder can sign.
 DEFAULT_DISCOUNT_BANDS: list[tuple[float | None, str]] = [
-    (15.0, "AVP"),
+    (10.0, "AVP"),
     (20.0, "CEO"),
     (None, FOUNDER),
 ]
@@ -138,8 +146,9 @@ def discount_ceiling(role_name: str, db=None) -> float | None:
     return 0.0
 
 
-#: The signature a proposal cannot leave without.
-MANDATORY_FOR_QUOTATION = "CEO"
+#: Proposals are no longer signed off. Kept as None so anything still
+#: asking gets a clear "nobody" rather than an AttributeError.
+MANDATORY_FOR_QUOTATION = None
 
 
 def approval_chain(
@@ -148,13 +157,12 @@ def approval_chain(
     db=None,
     document_type: str | None = None,
 ) -> list[str]:
-    """The roles that must approve, senior-most last.
+    """The levels that must approve, senior-most last.
 
-    An empty list means nothing needs approving. That is still possible for
-    a sales order raised off a proposal the CEO has already signed, but no
-    longer for a proposal itself: every price we put in front of a customer
-    carries the CEO's signature, whatever the discount and whether there is
-    one at all.
+    An empty list means nothing needs approving, which is now the answer
+    for every proposal: a price shown to a customer is a conversation, and
+    the commitment it may turn into is the sales order. That is where the
+    signatures are.
 
     ``document_type`` is "QUOTATION" for a proposal. It is optional so the
     preview endpoint and anything asking a general "who would sign this?"
@@ -163,11 +171,15 @@ def approval_chain(
 
     from app.models.approval import ApprovalDocument
 
-    is_quotation = document_type == ApprovalDocument.QUOTATION
+    if document_type == ApprovalDocument.QUOTATION:
+        # A proposal is not a commitment. Nothing to sign.
+        return []
 
     if price_type == PriceType.DP:
-        # The transfer price is the CEO's to set, whatever the figure.
-        return ["CEO"]
+        # Selling through the channel at all is the founder's call, so the
+        # question is not how much has been given away. Every dealer order
+        # goes to them, discounted or not.
+        return [FOUNDER]
 
     discount = max(0.0, float(discount_percent or 0))
 
@@ -180,33 +192,6 @@ def approval_chain(
             if bound is not None and discount <= bound:
                 break
 
-    if not is_quotation:
-        return chain
-
-    # The chain is built from the discount bands, which say who owns how
-    # much. The CEO's signature is a separate requirement on top of that,
-    # so it is added rather than substituted - a 25% discount still passes
-    # the AVP and ends at the founder, and the CEO is in the middle where
-    # the bands already put them.
-    if MANDATORY_FOR_QUOTATION not in chain:
-        ceiling = discount_ceiling(MANDATORY_FOR_QUOTATION, db)
-
-        if not chain or ceiling is None:
-            chain.append(MANDATORY_FOR_QUOTATION)
-        else:
-            # Slot them in by seniority rather than on the end, so a
-            # founder never signs before the CEO has.
-            at = len(chain)
-
-            for index, role in enumerate(chain):
-                bound = discount_ceiling(role, db)
-
-                if bound is None or bound > ceiling:
-                    at = index
-                    break
-
-            chain.insert(at, MANDATORY_FOR_QUOTATION)
-
     return chain
 
 
@@ -218,43 +203,38 @@ def describe_chain(
 ) -> str:
     """One line explaining why these approvals are needed.
 
-    The discount and the CEO rule are two separate reasons, so the
-    sentence names whichever actually applies. Reading them off the
-    finished chain said "10% is past the AVP's 15%" whenever the CEO had
-    been added for the other reason, which is both wrong and the kind of
-    wrong that makes somebody distrust the rest of the screen.
+    Written from the reason rather than read off the finished chain: the
+    sentence has to say what actually triggered it, or somebody reading
+    the screen stops trusting the rest of it.
     """
 
     from app.models.approval import ApprovalDocument
 
-    is_quotation = document_type == ApprovalDocument.QUOTATION
+    if document_type == ApprovalDocument.QUOTATION:
+        return (
+            "Proposals are not signed off. The approval is on the sales "
+            "order, which is where the price is committed to."
+        )
 
     if price_type == PriceType.DP:
-        return "Dealer transfer price is fixed and is signed by the CEO."
+        return (
+            "Dealer orders are the founder's call, whatever the discount."
+        )
 
     discount = max(0.0, float(discount_percent or 0))
 
-    # What the discount alone would have called for.
-    by_discount = approval_chain(price_type, discount, db)
+    chain = approval_chain(price_type, discount, db, document_type)
 
-    if not by_discount:
-        if is_quotation:
-            return "Every proposal is signed by the CEO before it is sent."
-
+    if not chain:
         return "No discount, so this needs no approval."
 
-    owner = by_discount[-1]
-    ceiling = discount_ceiling(by_discount[0], db)
+    owner = chain[-1]
+    ceiling = discount_ceiling(chain[0], db)
 
-    if len(by_discount) == 1:
-        reason = f"{discount:g}% discount is within the {owner}'s authority."
-    else:
-        reason = (
-            f"{discount:g}% discount is past the {by_discount[0]}'s "
-            f"{ceiling:g}%, so it goes up to the {owner}."
-        )
+    if len(chain) == 1:
+        return f"{discount:g}% discount is within the {owner}'s authority."
 
-    if is_quotation and MANDATORY_FOR_QUOTATION not in by_discount:
-        reason += " Every proposal also carries the CEO's signature."
-
-    return reason
+    return (
+        f"{discount:g}% discount is past the {chain[0]}'s "
+        f"{ceiling:g}%, so it goes up to the {owner}."
+    )

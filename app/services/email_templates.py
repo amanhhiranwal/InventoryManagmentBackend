@@ -76,6 +76,9 @@ class EmailLetter:
         paragraphs: list[str] | None = None,
         facts: list[tuple[str, str]] | None = None,
         action: tuple[str, str] | None = None,
+        #: (approve url, reject url) - the two one-click buttons on an
+        #: approval email, so a decision does not need the CRM opening.
+        decisions: tuple[str, str] | None = None,
         note: str | None = None,
         sign_off_name: str | None = None,
         sign_off_title: str | None = None,
@@ -106,6 +109,7 @@ class EmailLetter:
         self.paragraphs = [p for p in (paragraphs or []) if p]
         self.facts = [(k, v) for k, v in (facts or []) if v not in (None, "")]
         self.action = action
+        self.decisions = decisions
         self.note = note
 
         # Signed by the person who acted, falling back to whoever signs for
@@ -139,6 +143,10 @@ class EmailLetter:
             width = max(len(label) for label, _ in self.facts)
             lines += [f"{label.ljust(width)}  {value}" for label, value in self.facts]
             lines.append("")
+
+        if self.decisions:
+            approve, reject = self.decisions
+            lines += [f"Approve: {approve}", f"Reject: {reject}", ""]
 
         if self.action:
             label, url = self.action
@@ -191,10 +199,28 @@ class EmailLetter:
 
         action_html = ""
 
+        # The decision itself comes first, because that is what the person
+        # opened the email to do. Opening the document is underneath, for
+        # when they want to look before deciding.
+        if self.decisions:
+            approve, reject = self.decisions
+            action_html += f"""
+              <p style="margin:22px 0 6px;">
+                <a href="{e(approve)}"
+                   style="display:inline-block;background:#15803d;color:#ffffff;
+                          text-decoration:none;font-size:13px;font-weight:600;
+                          padding:11px 22px;border-radius:8px;">Approve</a>
+                <a href="{e(reject)}"
+                   style="display:inline-block;margin-left:8px;background:#ffffff;
+                          color:#b91c1c;border:1px solid #fca5a5;
+                          text-decoration:none;font-size:13px;font-weight:600;
+                          padding:10px 21px;border-radius:8px;">Reject</a>
+              </p>"""
+
         if self.action:
             label, url = self.action
-            action_html = f"""
-              <p style="margin:22px 0 6px;">
+            action_html += f"""
+              <p style="margin:{'8px' if self.decisions else '22px'} 0 6px;">
                 <a href="{e(url)}"
                    style="display:inline-block;background:{NAVY};color:#ffffff;
                           text-decoration:none;font-size:13px;font-weight:600;
