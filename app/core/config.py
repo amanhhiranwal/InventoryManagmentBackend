@@ -12,6 +12,16 @@ class Settings(BaseSettings):
     POSTGRES_USER: str
     POSTGRES_PASSWORD: str
 
+    #: Used only by sync_schema.py, and only for schema changes. The
+    #: application's own user needs no rights beyond reading and writing;
+    #: adding a column needs ownership of the table, which is a different
+    #: and much larger thing to hand the running process.
+    #:
+    #: Leave unset and the schema sync uses the application's connection,
+    #: which works wherever that user already owns the tables.
+    POSTGRES_ADMIN_USER: str | None = None
+    POSTGRES_ADMIN_PASSWORD: str | None = None
+
     MONGO_URI: str
     MONGO_DB: str
 
