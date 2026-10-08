@@ -635,6 +635,20 @@ try:
                 "a token with the signature altered is refused",
                 "no longer valid" in requests.get(tampered, timeout=20).text,
             )
+
+        # Every link the CRM emails has to agree on where the CRM is. The
+        # password reset used to be built from the environment instead,
+        # so a site that had moved sent approvals to the right address
+        # and resets to the old one.
+        from app.services.company_profile_service import app_url as _base
+        from app.services.password_reset_service import PasswordResetService
+
+        reset = PasswordResetService._build_reset_link("T", "a@b.com", session)
+        check(
+            "a password reset points at the same place as an approval",
+            reset.startswith(_base("", session)) and "/reset-password?" in reset,
+            reset,
+        )
     finally:
         _Mailer.send = _sent_for_real
 

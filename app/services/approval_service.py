@@ -32,31 +32,10 @@ DOCUMENT_LINKS = {
     ApprovalDocument.SALES_ORDER: "/sales/orders/{id}",
 }
 
-def app_url(path: str, db=None) -> str:
-    """A path on the CRM as a full link, for a button in an email.
-
-    Read from the company profile first, where a super admin can change
-    it, and only then from the environment. An approval email that points
-    at localhost reaches somebody who cannot act on it, and moving the
-    site should not need a deployment to fix that.
-    """
-
-    base = ""
-
-    if db is not None:
-        try:
-            from app.services.company_profile_service import CompanyProfileService
-
-            base = (CompanyProfileService.raw(db).get("app_base_url") or "").strip()
-        except Exception:  # noqa: BLE001 - a link is not worth failing a send
-            base = ""
-
-    if not base:
-        base = settings.FRONTEND_URL or ""
-
-    base = base.rstrip("/")
-
-    return f"{base}{path}" if base else path
+#: Lives on the company profile service now, beside the field it reads,
+#: so every email agrees on where the CRM answers. Re-exported here
+#: because this is where the rest of the code already imports it from.
+from app.services.company_profile_service import app_url  # noqa: E402,F401
 
 
 DOCUMENT_LABELS = {
