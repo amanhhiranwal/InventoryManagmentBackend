@@ -7,21 +7,27 @@ add a column to them. Postgres requires *ownership* to ALTER a table -
 `GRANT ALL` does not confer it, which is why this appears on a database
 the application otherwise reads and writes happily.
 
-It matters more than a failed pipeline looks. The container is recreated
-and started **before** the schema step runs, so the new code goes live
-against a database missing the column it expects. Every query touching
-that table fails and signing in returns a 500. The site is down until
-the column exists.
+**The pipeline now fixes this by itself.** Postgres runs on the deploy
+host, so before touching the schema the deploy hands every table to the
+application's user over a local `psql` as the postgres superuser. It
+needs no password, because that connection is peer-authenticated, and it
+needs doing once - the next deploy finds nothing to hand over and says
+so.
+
+That step is skipped, not failed, when the host cannot reach Postgres
+that way - the deploy user has no `sudo`, or the database has moved off
+this machine. Then it is one of the two manual fixes below.
 
 ### Get it back up now
 
-On the database server, as the postgres superuser or the tables' owner:
+If the site is already down from an earlier failed deploy, this is the
+missing column; otherwise just re-run the deploy.
 
 ```sql
 ALTER TABLE users ADD COLUMN IF NOT EXISTS location VARCHAR(100);
 ```
 
-### Then stop it happening again — pick one
+### If the automatic handover cannot run — pick one
 
 **Either** add two lines to `backend/.env` on the server:
 
@@ -49,6 +55,17 @@ Replace `<app_db_user>` with the backend's `POSTGRES_USER`.
 Either way, re-run the failed deploy from the Actions tab afterwards.
 
 ### What changed in the pipeline
+
+The deploy now migrates the database **before** the new container takes
+over, where it used to build, start, and only then migrate. That
+ordering was why a refused migration took the site down rather than
+just failing a pipeline: the new code was already serving, against a
+database missing the column it expected, so every request touching that
+table returned a 500.
+
+Now the schema is brought up to date from a throwaway container built
+from the new image. If that fails the deploy stops there, the previous
+container is still running, and the site stays up on the old code.
 
 `sync_schema.py` now:
 
@@ -86,12 +103,12 @@ that is set, and warns on the console when it falls back to the default.
 
 The pipeline runs, in order:
 
-| Script | What it settles |
-|---|---|
-| `sync_schema.py` | tables and columns - `sales_warranty_term`, `users.location` |
-| `check_and_seed_db.py` | the sales roles and the super admin |
-| `apply_crm_workflow_schema.py` | the workflow tables |
-| `apply_release_setup.py` | **menus, warranty terms, the Founder role and its place above the CEO, the discount bands** |
+| Script | When | What it settles |
+|---|---|---|
+| `sync_schema.py` | before switchover | tables and columns - `sales_warranty_term`, `users.location` |
+| `apply_crm_workflow_schema.py` | before switchover | the workflow tables |
+| `check_and_seed_db.py` | after | the sales roles and the super admin |
+| `apply_release_setup.py` | after | **menus, warranty terms, the Founder role and its place above the CEO, the discount bands** |
 
 So the Reporting Chart and Warranty Terms appear in Masters, the Founder
 exists and outranks the CEO, and the bands move to 10 / 20 / Founder -
