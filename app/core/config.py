@@ -97,7 +97,15 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:8000",
-        "http://127.0.0.1:8000"
+        "http://127.0.0.1:8000",
+        "http://synergy-sync.com",
+        "https://synergy-sync.com",
+        "http://www.synergy-sync.com",
+        "https://www.synergy-sync.com",
+        "http://crm.synergy-global.io",
+        "https://crm.synergy-global.io",
+        "http://45.195.159.94",
+        "https://45.195.159.94",
     ]
 
     model_config = SettingsConfigDict(
