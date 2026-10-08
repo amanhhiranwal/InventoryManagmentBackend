@@ -1,5 +1,47 @@
 # Taking these changes to the live site
 
+## If a deploy failed with "must be owner of table users"
+
+The application's database user does not own the tables, so it cannot
+add a column to them. Postgres requires *ownership* to ALTER a table -
+`GRANT ALL` does not confer it, which is why this can appear on a
+database the application otherwise reads and writes happily.
+
+It matters more than a failed pipeline looks: the container is recreated
+and started **before** the schema step runs, so the new code is live
+against a database missing the column it expects. Every query touching
+that table fails. Signing in returns a 500. The site is down until the
+column exists.
+
+Fix it once, on the database server, as the postgres superuser or the
+tables' current owner:
+
+```sql
+-- Hand every table in the schema to the application's user.
+DO $$DECLARE r record; BEGIN
+  FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+  LOOP EXECUTE format('ALTER TABLE public.%I OWNER TO <app_db_user>', r.tablename);
+  END LOOP; END$$;
+```
+
+Replace `<app_db_user>` with whatever `POSTGRES_USER` the backend
+connects as. Then re-run the failed deploy from the Actions tab, or just
+push again.
+
+To get the site back up immediately without waiting for a deploy, add
+the one column by hand as the owner:
+
+```sql
+ALTER TABLE users ADD COLUMN IF NOT EXISTS location VARCHAR(100);
+```
+
+`sync_schema.py` now reports this as an instruction naming the tables
+and the exact SQL, rather than a stack trace, and runs each statement in
+its own transaction so one refusal no longer rolls back the columns it
+had already added.
+
+---
+
 ## Read this first
 
 `check_and_seed_db.py` runs on every deploy, and until now its `else`
