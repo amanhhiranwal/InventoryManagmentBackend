@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.routes.approval import router as approval_router
+from app.routes.attachment import router as attachment_router
 from app.routes.auth import router as auth_router
 from app.routes.category_group import router as category_group_router
 from app.routes.company import router as company_router
@@ -43,6 +44,7 @@ async def health():
 
 
 api_router.include_router(approval_router)
+api_router.include_router(attachment_router)
 api_router.include_router(fulfilment_router)
 api_router.include_router(company_profile_router)
 api_router.include_router(role_router)
