@@ -22,6 +22,10 @@ class UpdateUserRoleRequest(BaseModel):
 class UpdateUserRequest(BaseModel):
     first_name: str
     last_name: str
+    #: Left out to keep the address as it is. Changing it changes how
+    #: somebody signs in, so a form that does not carry the field must
+    #: not be read as asking for it to be blanked.
+    email: str | None = None
     phone_number: str
     employee_id: str
     location: str | None = None

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.models.company import Company
 from app.models.user import User
 from app.repositories.rbac_repository import RBACRepository
+from app.core.field_checks import check_email
 from app.repositories.user_repository import UserRepository
 from app.services.hierarchy_service import HierarchyService
 from app.services.password_service import PasswordService
@@ -307,6 +308,27 @@ class UserService:
                     status_code=400,
                     detail="Employee ID already exists.",
                 )
+
+        # The address somebody signs in with. Held to the same shape as
+        # on the way in, and refused if it already belongs to another
+        # account - two people cannot share a login.
+        new_email = (request.email or "").strip()
+
+        if new_email and new_email.lower() != (user.email or "").lower():
+            check_email(new_email, required=True)
+
+            taken = UserRepository.get_by_email(db, new_email)
+
+            if taken and str(taken.id) != str(user.id):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"{new_email} is already the login for "
+                        f"{taken.first_name} {taken.last_name}."
+                    ),
+                )
+
+            user.email = new_email
         roles_list = []
         for r_id in request.role_ids:
             validate_uuid(r_id, "role_id")
