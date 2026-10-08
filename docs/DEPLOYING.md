@@ -1,5 +1,33 @@
 # Taking these changes to the live site
 
+## Read this first
+
+`check_and_seed_db.py` runs on every deploy, and until now its `else`
+branch reset the super admin's password back to `password123` - a value
+committed to this repository - and forced the account active again. So on
+the live site that credential works, changing it did not survive the next
+release, and switching the account off did not either.
+
+That branch no longer touches the password or the active flag. **After
+the next deploy, sign in as the super admin and change the password.**
+Until then it is still the published one.
+
+A fresh database takes its first password from `SUPERADMIN_PASSWORD` if
+that is set, and warns on the console when it falls back to the default.
+
+---
+
+## What the pipeline already does
+
+The CI runs `sync_schema.py`, `check_and_seed_db.py` and
+`apply_crm_workflow_schema.py` on every deploy, so the schema - the new
+`sales_warranty_term` table and `users.location` - arrives on its own.
+Step 1 below is only for applying it by hand.
+
+Everything else in this file is a one-off that the pipeline does not do.
+
+---
+
 Everything here has been run against the development database. Run it on
 the live one in this order, from the backend container:
 
@@ -164,6 +192,33 @@ Masters › Company Profile › **CRM Address**. Set it to
 Every link in an approval or notification email is built from this. Until
 it is set the links come from the server's `FRONTEND_URL`, which on a
 laptop is `localhost` — a link nobody receiving the email can open.
+
+---
+
+## 8. One-click approval from the email
+
+Nothing to run. An approval email now carries **Approve** and **Reject**
+beside the Open link, and clicking one decides it without signing in.
+
+What that link can and cannot do:
+
+- It is signed with the server's `JWT_SECRET_KEY`, so it cannot be
+  composed by anybody who did not get the email.
+- It carries one approval, one step of it, one person and one decision.
+- It is spent the moment that step is decided, so a forwarded email
+  approves nothing.
+- It expires after seven days.
+- It only ever goes to somebody who actually holds the role the step
+  names - the AVP, the CEO, the founder. Where the reporting line has a
+  gap and the request falls back to the super admins, they get no
+  buttons and open the CRM as before.
+- It does not sign anybody in. It decides that one request and nothing
+  else.
+- The decision is recorded as "Decided from the approval email."
+
+If you would rather not have it, the buttons disappear by removing the
+`decisions=` argument where the letter is built in
+`app/services/approval_service.py`.
 
 ---
 
