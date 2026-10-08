@@ -27,7 +27,7 @@ jobs:
       - name: Verify Python Syntax
         run: |
           python -m py_compile $(find app -name "*.py")
-          python -m py_compile sync_schema.py check_and_seed_db.py
+          python -m py_compile sync_schema.py check_and_seed_db.py apply_release_setup.py
 
   deploy:
     name: Deploy FastAPI Backend
@@ -74,6 +74,7 @@ jobs:
             docker compose -f "$APP_DIR/docker-compose.prod.yml" exec -T saas_backend python sync_schema.py
             docker compose -f "$APP_DIR/docker-compose.prod.yml" exec -T saas_backend python check_and_seed_db.py
             docker compose -f "$APP_DIR/docker-compose.prod.yml" exec -T saas_backend python apply_crm_workflow_schema.py
+            docker compose -f "$APP_DIR/docker-compose.prod.yml" exec -T saas_backend python apply_release_setup.py
 
             echo "==> Waiting for backend healthcheck..."
             sleep 4

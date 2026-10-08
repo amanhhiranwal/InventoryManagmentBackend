@@ -17,33 +17,52 @@ that is set, and warns on the console when it falls back to the default.
 
 ---
 
-## What the pipeline already does
+## What a push to main now does by itself
 
-The CI runs `sync_schema.py`, `check_and_seed_db.py` and
-`apply_crm_workflow_schema.py` on every deploy, so the schema - the new
-`sales_warranty_term` table and `users.location` - arrives on its own.
-Step 1 below is only for applying it by hand.
+The pipeline runs, in order:
 
-Everything else in this file is a one-off that the pipeline does not do.
+| Script | What it settles |
+|---|---|
+| `sync_schema.py` | tables and columns - `sales_warranty_term`, `users.location` |
+| `check_and_seed_db.py` | the sales roles and the super admin |
+| `apply_crm_workflow_schema.py` | the workflow tables |
+| `apply_release_setup.py` | **menus, warranty terms, the Founder role and its place above the CEO, the discount bands** |
 
----
+So the Reporting Chart and Warranty Terms appear in Masters, the Founder
+exists and outranks the CEO, and the bands move to 10 / 20 / Founder -
+all from the push, with nothing to remember.
 
-Everything here has been run against the development database. Run it on
-the live one in this order, from the backend container:
-
-```bash
-docker exec -w /app backend_app python <script>
-```
-
-Nothing below needs the site taken down, but do it when nobody is
-mid-approval: step 3 changes who signs what.
+`apply_release_setup.py` is idempotent and reports what it did. It will
+not overwrite bands somebody has tuned themselves: it only moves a set
+that still matches a default we shipped.
 
 ---
 
-## 1. Schema — the new columns and tables
+## The three things a push cannot do
 
-`create_all` adds what is missing and never removes anything, so this is
-safe to run against a database that already has some of it.
+**1. The people.** Accounts, their locations and who reports to whom are
+data, not code. Run the import against the live site from a machine that
+can reach it - see step 6. Until that is done the Reporting Chart draws
+whoever is already there, which on a fresh production database is the
+seeded demo team.
+
+**2. The warranty rate migration.** It is destructive and carries data
+across, so it stays a decision made with a dry run in front of you - see
+step 4.
+
+**3. The CRM Address.** One field in Masters - see step 7. Without it
+every link in an approval email points at whatever `FRONTEND_URL` the
+server was started with.
+
+---
+
+Everything below has been run against the development database. The
+numbered steps are the ones the pipeline does not do.
+
+## 1. Schema — only if applying by hand
+
+The pipeline does this. Here for a database the pipeline has not
+touched.
 
 ```bash
 docker exec -w /app backend_app python -c "
@@ -67,28 +86,22 @@ somebody fills it in.
 
 ---
 
-## 2. The Founder role
+## 2. The Founder role — somebody has to hold it
 
-```bash
-docker exec -w /app backend_app python seed_founder_role.py
-```
+`apply_release_setup.py` creates the role on deploy and places it above
+the CEO. What it cannot do is decide who the founder is.
 
-Creates the role, places it above the CEO on the Sales chart — which is
-what seniority is read from — and grants it what the CEO holds. Safe to
-run again; everything is checked before it is added.
-
-**Then give somebody the role**, or orders needing founder approval queue
+**Give somebody the role**, or orders needing founder approval queue
 with nobody to action them. On the development database that is Darpan
 Sethi; on the live one, create or pick whoever it should be and assign
 the Founder role from Users.
 
 ---
 
-## 3. The discount bands
+## 3. The discount bands — handled on deploy
 
-The bands are read from a setting, not from the code, so the new figures
-have to be written to the live database. The old set said the AVP carried
-15%.
+`apply_release_setup.py` moves a database still carrying the old 15% set
+onto 10 / 20 / Founder. Only if you want to set them by hand:
 
 ```bash
 docker exec -w /app backend_app python -c "
