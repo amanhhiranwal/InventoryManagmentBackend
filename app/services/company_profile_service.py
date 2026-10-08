@@ -131,3 +131,34 @@ class CompanyProfileService:
             "company_about_paragraphs": pieces("company_about"),
             "company_offering_list": pieces("company_offerings"),
         }
+
+
+def app_url(path: str, db=None) -> str:
+    """A path on the CRM as a full link, for a button in an email.
+
+    Read from the company profile first, where a super admin can change
+    it, and only then from the environment. A link that points at
+    localhost - or at the address the site used to answer on - reaches
+    somebody who cannot act on it, and moving the site should not need a
+    deployment to fix that.
+
+    It lives here, beside the field it reads, because every email that
+    carries a link has to agree on where the CRM is: an approval that
+    says synergy-sync.com and a password reset that says somewhere else
+    are the same bug twice.
+    """
+
+    base = ""
+
+    if db is not None:
+        try:
+            base = (CompanyProfileService.raw(db).get("app_base_url") or "").strip()
+        except Exception:  # noqa: BLE001 - a link is not worth failing a send
+            base = ""
+
+    if not base:
+        base = settings.FRONTEND_URL or ""
+
+    base = base.rstrip("/")
+
+    return f"{base}{path}" if base else path

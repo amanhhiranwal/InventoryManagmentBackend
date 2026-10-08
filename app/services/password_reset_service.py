@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.repositories.auth_repository import AuthRepository
 from app.repositories.password_reset_repository import PasswordResetRepository
+from app.services.company_profile_service import app_url
 from app.services.email_service import EmailService
 from app.services.password_service import PasswordService
 
@@ -23,7 +24,16 @@ class PasswordResetService:
         return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
 
     @staticmethod
-    def _build_reset_link(raw_token: str, email: str) -> str:
+    def _build_reset_link(raw_token: str, email: str, db: Session | None = None) -> str:
+        """Where the person is sent to choose a new password.
+
+        Built from the CRM Address in Masters, like every other link the
+        CRM emails. It used to come straight from FRONTEND_URL, which is
+        set once at deploy time: an installation that had moved sent
+        approval emails to the right site and password resets to the old
+        one, and the person could not sign in to say so.
+        """
+
         query = urlencode(
             {
                 "token": raw_token,
@@ -32,7 +42,7 @@ class PasswordResetService:
             quote_via=quote,
         )
 
-        return f"{settings.FRONTEND_URL.rstrip('/')}/reset-password?{query}"
+        return app_url(f"/reset-password?{query}", db)
 
     @staticmethod
     def forgot_password(email: str, db: Session):
@@ -67,6 +77,7 @@ class PasswordResetService:
         reset_link = PasswordResetService._build_reset_link(
             raw_token,
             user.email,
+            db,
         )
 
         minutes = settings.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES
