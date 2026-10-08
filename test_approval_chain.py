@@ -21,16 +21,24 @@ without one, that the order is held while the chain runs and released
 when it clears, that a rejection hands it back, and that another zone's
 deal is not yours to approve.
 
+The last section opens the approval email itself and clicks Approve in
+it, the way the person who receives it would: the buttons have to be in
+the first ask, decide without a session, work once, and refuse a token
+whose signature has been altered.
+
 Everything it creates is removed again.
 
     docker exec -w /app backend_app python test_approval_chain.py
 """
 
+import re
 import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from seed_sales_team import TEAM_PASSWORD, api, email_for, login, rows
+import requests
+
+from seed_sales_team import BASE, TEAM_PASSWORD, api, email_for, login, rows
 
 ADMIN = ("superadmin@mailinator.com", "password123")
 TAG = uuid.uuid4().hex[:6]
@@ -518,6 +526,117 @@ try:
                 "status": "DISPATCHED",
             })
             check("a draft cannot jump straight to dispatched", r.status_code == 400, f"got {r.status_code}")
+
+    # ------------------------------------------- approving from the email
+    banner("9b. The approval email decides it without signing in")
+
+    # Built here rather than driven over HTTP, because what is being
+    # checked is the letter itself - the two buttons only exist in the
+    # message, and the server has already sent it by the time an API
+    # response comes back. The mailer is replaced first so nothing is
+    # actually posted.
+    from app.database.postgres import SessionLocal as _Session
+    from app.models.user import User as _User
+    from app.services.approval_service import ApprovalService as _Approvals
+    from app.services.email_service import EmailService as _Mailer
+
+    letter = {}
+
+    def _capture(to, subject, text_body, html_body=None, cc=None, **kw):
+        letter.update({"to": to, "html": html_body or ""})
+        return True
+
+    _sent_for_real = _Mailer.send
+    _Mailer.send = staticmethod(_capture)
+
+    try:
+        mail_order = make_order("Email Approval", 18)
+        session = _Session()
+        raiser = session.query(_User).filter(
+            _User.email == email_for("am_north_1")
+        ).first()
+
+        mail_approval = _Approvals.request(
+            "SALES_ORDER",
+            mail_order["id"],
+            document_number=mail_order.get("order_number"),
+            price_type="ECP",
+            discount_percent=18,
+            discount_amount=None,
+            orc_percent=None,
+            orc_amount=None,
+            document_value=mail_order.get("grand_total") or 0,
+            remarks=None,
+            current_user={"user_id": str(raiser.id)},
+            db=session,
+        )
+        created_approvals.append(mail_approval.id)
+
+        # The links are built from the CRM Address in Masters, which on a
+        # real database points at the live site. A test must open its own
+        # server and nothing else, so each one is pulled back onto BASE.
+        links = [
+            BASE.rsplit("/api/v1", 1)[0] + "/api/v1" + found.split("/api/v1", 1)[1]
+            for found in re.findall(
+                r'href="([^"]*decide-by-link[^"]*)"', letter.get("html", "")
+            )
+        ]
+
+        check(
+            "the first ask carries Approve and Reject",
+            len(links) == 2,
+            f"found {len(links)} in the letter to {letter.get('to')}",
+        )
+        check(
+            "and it went to the one person the step names",
+            letter.get("to") == [email_for("avp")],
+            str(letter.get("to")),
+        )
+
+        if len(links) == 2:
+            approve_link, reject_link = links
+
+            # Opened the way a mail client would: no session, no header.
+            landed = requests.get(approve_link, timeout=20)
+            check(
+                "opening the link decides it",
+                landed.status_code == 200
+                and "has been approved" in landed.text,
+                f"{landed.status_code} {landed.text[:120]}",
+            )
+
+            session.expire_all()
+            after = session.get(type(mail_approval), mail_approval.id)
+            check(
+                "the AVP's step is signed, and says where from",
+                after.steps[0]["decision"] == "APPROVED"
+                and "email" in (after.steps[0].get("remarks") or "").lower(),
+                str(after.steps[0]),
+            )
+            check(
+                "and it has moved on to the CEO",
+                after.current_step == 1,
+                f"current step {after.current_step}",
+            )
+
+            again = requests.get(approve_link, timeout=20)
+            check(
+                "the same link cannot be used twice",
+                "cannot be used" in again.text,
+                again.text[:120],
+            )
+            check(
+                "and neither can the Reject half of a spent mail",
+                "cannot be used" in requests.get(reject_link, timeout=20).text,
+            )
+
+            tampered = approve_link[:-2] + ("aa" if approve_link[-2:] != "aa" else "bb")
+            check(
+                "a token with the signature altered is refused",
+                "no longer valid" in requests.get(tampered, timeout=20).text,
+            )
+    finally:
+        _Mailer.send = _sent_for_real
 
 finally:
     banner("10. Clearing what the test created")

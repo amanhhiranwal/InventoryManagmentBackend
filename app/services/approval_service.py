@@ -936,7 +936,12 @@ class ApprovalService:
             # which is where they were going anyway.
             decisions = None
 
-            if event in ("requested", "approved") and approval.status == ApprovalStatus.PENDING:
+            # "raised" is the first ask and the one that matters most -
+            # it is the mail the first approver actually acts on. It was
+            # spelled "requested" here, which is not an event this class
+            # ever emits, so the buttons only appeared from the second
+            # step onwards and the AVP never got them.
+            if event in ("raised", "approved") and approval.status == ApprovalStatus.PENDING:
                 on_point = ApprovalService.approvers_for_step(approval, db)
 
                 # And only to somebody who actually holds the role this
