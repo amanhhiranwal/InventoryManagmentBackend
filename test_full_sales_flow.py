@@ -172,8 +172,8 @@ try:
         full = charts[0]
         labels = {(n.get("data") or {}).get("label") for n in full["nodes"]}
         check(
-            "it holds the whole line CEO to Area Manager",
-            labels == {"CEO", "AVP", "Zonal Head", "Area Manager"},
+            "it holds the whole line Founder to Area Manager",
+            labels == {"Founder", "CEO", "AVP", "Zonal Head", "Area Manager"},
             str(sorted(labels)),
         )
 
