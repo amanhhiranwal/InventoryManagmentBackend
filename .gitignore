@@ -53,3 +53,7 @@ data/
 # to stop.
 docs/Synergy-CRM-Status.html
 docs/Synergy-CRM-Status.pdf
+# Uploaded documents are user content, not source. The directory ships
+# so the container has somewhere to write; what lands in it does not.
+uploads/attachments/*
+!uploads/attachments/.gitkeep
