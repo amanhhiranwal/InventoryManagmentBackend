@@ -4,41 +4,81 @@
 
 The application's database user does not own the tables, so it cannot
 add a column to them. Postgres requires *ownership* to ALTER a table -
-`GRANT ALL` does not confer it, which is why this can appear on a
-database the application otherwise reads and writes happily.
+`GRANT ALL` does not confer it, which is why this appears on a database
+the application otherwise reads and writes happily.
 
-It matters more than a failed pipeline looks: the container is recreated
-and started **before** the schema step runs, so the new code is live
-against a database missing the column it expects. Every query touching
-that table fails. Signing in returns a 500. The site is down until the
-column exists.
+**The pipeline now fixes this by itself.** Postgres runs on the deploy
+host, so before touching the schema the deploy hands every table to the
+application's user over a local `psql` as the postgres superuser. It
+needs no password, because that connection is peer-authenticated, and it
+needs doing once - the next deploy finds nothing to hand over and says
+so.
 
-Fix it once, on the database server, as the postgres superuser or the
-tables' current owner:
+That step is skipped, not failed, when the host cannot reach Postgres
+that way - the deploy user has no `sudo`, or the database has moved off
+this machine. Then it is one of the two manual fixes below.
+
+### Get it back up now
+
+If the site is already down from an earlier failed deploy, this is the
+missing column; otherwise just re-run the deploy.
 
 ```sql
--- Hand every table in the schema to the application's user.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS location VARCHAR(100);
+```
+
+### If the automatic handover cannot run — pick one
+
+**Either** add two lines to `backend/.env` on the server:
+
+```
+POSTGRES_ADMIN_USER=<a user that owns the tables, e.g. postgres>
+POSTGRES_ADMIN_PASSWORD=<its password>
+```
+
+The next deploy then uses them **for schema changes only** and, as its
+first act, hands every table over to the application's own user. After
+that the application owns them and can add its own columns, so you can
+delete those two lines again - they are needed once.
+
+**Or** run the handover yourself, once, and never set them at all:
+
+```sql
 DO $$DECLARE r record; BEGIN
   FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public'
   LOOP EXECUTE format('ALTER TABLE public.%I OWNER TO <app_db_user>', r.tablename);
   END LOOP; END$$;
 ```
 
-Replace `<app_db_user>` with whatever `POSTGRES_USER` the backend
-connects as. Then re-run the failed deploy from the Actions tab, or just
-push again.
+Replace `<app_db_user>` with the backend's `POSTGRES_USER`.
 
-To get the site back up immediately without waiting for a deploy, add
-the one column by hand as the owner:
+Either way, re-run the failed deploy from the Actions tab afterwards.
 
-```sql
-ALTER TABLE users ADD COLUMN IF NOT EXISTS location VARCHAR(100);
-```
+### What changed in the pipeline
 
-`sync_schema.py` now reports this as an instruction naming the tables
-and the exact SQL, rather than a stack trace, and runs each statement in
-its own transaction so one refusal no longer rolls back the columns it
-had already added.
+The deploy now migrates the database **before** the new container takes
+over, where it used to build, start, and only then migrate. That
+ordering was why a refused migration took the site down rather than
+just failing a pipeline: the new code was already serving, against a
+database missing the column it expected, so every request touching that
+table returned a 500.
+
+Now the schema is brought up to date from a throwaway container built
+from the new image. If that fails the deploy stops there, the previous
+container is still running, and the site stays up on the old code.
+
+`sync_schema.py` now:
+
+- uses the admin connection for DDL when those variables are set, and
+  the ordinary one when they are not;
+- hands the tables to the application's user on the first admin run, so
+  the credentials stop being needed;
+- runs each statement in its own transaction, where they used to share
+  one - a single refusal rolled back every column added before it;
+- reports a refusal as the tables and the exact SQL, not a traceback;
+- still exits non-zero while anything is missing, because a missing
+  column is not a degraded corner of the system, it is that table
+  unusable.
 
 ---
 
@@ -63,12 +103,12 @@ that is set, and warns on the console when it falls back to the default.
 
 The pipeline runs, in order:
 
-| Script | What it settles |
-|---|---|
-| `sync_schema.py` | tables and columns - `sales_warranty_term`, `users.location` |
-| `check_and_seed_db.py` | the sales roles and the super admin |
-| `apply_crm_workflow_schema.py` | the workflow tables |
-| `apply_release_setup.py` | **menus, warranty terms, the Founder role and its place above the CEO, the discount bands** |
+| Script | When | What it settles |
+|---|---|---|
+| `sync_schema.py` | before switchover | tables and columns - `sales_warranty_term`, `users.location` |
+| `apply_crm_workflow_schema.py` | before switchover | the workflow tables |
+| `check_and_seed_db.py` | after | the sales roles and the super admin |
+| `apply_release_setup.py` | after | **menus, warranty terms, the Founder role and its place above the CEO, the discount bands** |
 
 So the Reporting Chart and Warranty Terms appear in Masters, the Founder
 exists and outranks the CEO, and the bands move to 10 / 20 / Founder -

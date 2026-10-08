@@ -66,15 +66,55 @@ jobs:
             # Sync docker-compose.prod.yml if changed
             cp -f "$BACKEND_DIR/deploy/docker-compose.prod.yml" "$APP_DIR/docker-compose.prod.yml" 2>/dev/null || true
 
-            echo "==> Building and starting backend container..."
-            docker compose -f "$APP_DIR/docker-compose.prod.yml" build saas_backend
-            docker compose -f "$APP_DIR/docker-compose.prod.yml" up -d saas_backend
+            COMPOSE="docker compose -f $APP_DIR/docker-compose.prod.yml"
 
-            echo "==> Syncing database schemas & seeding..."
-            docker compose -f "$APP_DIR/docker-compose.prod.yml" exec -T saas_backend python sync_schema.py
-            docker compose -f "$APP_DIR/docker-compose.prod.yml" exec -T saas_backend python check_and_seed_db.py
-            docker compose -f "$APP_DIR/docker-compose.prod.yml" exec -T saas_backend python apply_crm_workflow_schema.py
-            docker compose -f "$APP_DIR/docker-compose.prod.yml" exec -T saas_backend python apply_release_setup.py
+            echo "==> Building backend image..."
+            $COMPOSE build saas_backend
+
+            # Postgres runs on this host, so the one thing the application
+            # cannot do for itself can be done from here. Adding a column
+            # needs OWNERSHIP of the table - GRANT ALL is not enough - and a
+            # deploy that cannot add a column leaves the new code running
+            # against a database missing it. Hand the tables over once; after
+            # that this finds nothing to do.
+            APP_DB_USER="$(grep -E '^[[:space:]]*POSTGRES_USER=' "$BACKEND_DIR/.env" | tail -1 | cut -d= -f2- | tr -d "\"' ")" || true
+            APP_DB_NAME="$(grep -E '^[[:space:]]*POSTGRES_DB=' "$BACKEND_DIR/.env" | tail -1 | cut -d= -f2- | tr -d "\"' ")" || true
+
+            if [ -z "$APP_DB_USER" ] || [ -z "$APP_DB_NAME" ]; then
+              echo "==> Table ownership: skipped, POSTGRES_USER/POSTGRES_DB not readable from backend/.env"
+            elif ! sudo -n -u postgres psql -d "$APP_DB_NAME" -Atc 'SELECT 1' > /dev/null 2>&1; then
+              echo "==> Table ownership: skipped, no local postgres superuser access from this host"
+            else
+              OWNED_BY_OTHERS="$(sudo -n -u postgres psql -d "$APP_DB_NAME" -Atc \
+                "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tableowner <> '$APP_DB_USER'")"
+
+              if [ "${OWNED_BY_OTHERS:-0}" = "0" ]; then
+                echo "==> Table ownership: '$APP_DB_USER' already owns every table"
+              else
+                echo "==> Table ownership: handing $OWNED_BY_OTHERS table(s) to '$APP_DB_USER'..."
+                sudo -n -u postgres psql -d "$APP_DB_NAME" -Atc \
+                  "SELECT format('ALTER TABLE public.%I OWNER TO %I;', tablename, '$APP_DB_USER')
+                   FROM pg_tables WHERE schemaname='public' AND tableowner <> '$APP_DB_USER'" \
+                  | sudo -n -u postgres psql -d "$APP_DB_NAME" -q -v ON_ERROR_STOP=1 -f -
+                echo "==> Table ownership: done, the application can migrate itself from now on"
+              fi
+            fi
+
+            # The schema is brought up to date BEFORE the new code goes live.
+            # It used to run after, so a refused migration left the new
+            # container serving against the old database and every request
+            # touching the missing column returned a 500. Failing here now
+            # leaves the previous container running and the site up.
+            echo "==> Migrating the database before switching over..."
+            $COMPOSE run --rm --no-deps -T saas_backend python sync_schema.py
+            $COMPOSE run --rm --no-deps -T saas_backend python apply_crm_workflow_schema.py
+
+            echo "==> Starting backend container..."
+            $COMPOSE up -d saas_backend
+
+            echo "==> Seeding..."
+            $COMPOSE exec -T saas_backend python check_and_seed_db.py
+            $COMPOSE exec -T saas_backend python apply_release_setup.py
 
             echo "==> Waiting for backend healthcheck..."
             sleep 4
