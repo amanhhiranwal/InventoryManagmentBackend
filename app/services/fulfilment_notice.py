@@ -226,7 +226,7 @@ def announce_stage(
                 ),
             ],
             facts=facts,
-            action=(f"Open sales order {reference}", app_url(link)),
+            action=(f"Open sales order {reference}", app_url(link, db)),
             sign_off_name=actor_name or _name(owner),
         )
 

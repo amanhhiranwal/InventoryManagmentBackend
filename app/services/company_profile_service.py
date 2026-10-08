@@ -26,6 +26,12 @@ FIELDS: dict[str, str] = {
     "signatory_name": "SIGNATORY_NAME",
     "signatory_title": "SIGNATORY_TITLE",
 
+    # Where this CRM answers, for the links in the emails it sends. Held
+    # here rather than only in the environment so moving the site does
+    # not need a deployment to stop the approval emails pointing at
+    # somebody's laptop.
+    "app_base_url": "FRONTEND_URL",
+
     # Where the money is to be sent. On the profile rather than printed
     # into the invoice template, because an account number changes and a
     # proforma invoice carrying the old one is how a payment goes astray.
