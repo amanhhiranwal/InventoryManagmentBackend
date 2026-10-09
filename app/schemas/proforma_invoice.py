@@ -78,6 +78,11 @@ class SendProformaInvoiceRequest(BaseModel):
     #: Rich-text body from the editor; becomes the text/html part.
     body_html: Optional[str] = None
 
+    #: The documents to put in the message, by the key each was stored
+    #: under. Without this the dialog's list was decoration: the invoice
+    #: PDF went and nothing beside it.
+    attachment_keys: Optional[List[str]] = None
+
     #: Statutory & Operational Clauses checkboxes.
     track_opens: Optional[bool] = False
     alert_on_download: Optional[bool] = False

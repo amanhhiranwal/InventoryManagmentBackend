@@ -21,53 +21,33 @@ with. Three things worth knowing about how:
 """
 
 import os
-import re
 import uuid
-from pathlib import Path
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session
 
+from app.database.postgres import get_db
 from app.middleware.auth_middleware import get_current_user
+from app.models.attachment import Attachment
+from app.services.attachment_access import may_read
+from app.services.attachment_store import (
+    ALLOWED,
+    ATTACHMENT_DIR,
+    KEY,
+    MAX_BYTES,
+    media_type,
+)
 
 router = APIRouter(prefix="/attachments", tags=["Attachments"])
-
-#: Alongside the other uploads, which in production is a docker volume
-#: and so survives a deploy.
-ATTACHMENT_DIR = Path(__file__).resolve().parents[2] / "uploads" / "attachments"
-
-#: What a CRM record is allowed to carry. Deliberately short: these are
-#: documents people send each other, and anything executable has no
-#: business being handed back out of here later.
-ALLOWED = {
-    ".pdf": "application/pdf",
-    ".doc": "application/msword",
-    ".docx": (
-        "application/vnd.openxmlformats-officedocument"
-        ".wordprocessingml.document"
-    ),
-    ".xls": "application/vnd.ms-excel",
-    ".xlsx": (
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    ),
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".webp": "image/webp",
-}
-
-MAX_BYTES = 10 * 1024 * 1024
-
-#: A key this service issued: uuid4 hex and one known extension. Anything
-#: else is refused before it reaches the filesystem, so a key cannot
-#: describe a path.
-KEY = re.compile(r"^[0-9a-f]{32}(\.[a-z0-9]{1,5})$")
 
 
 @router.post("")
 @router.post("/")
 def upload_attachment(
     file: UploadFile = File(...),
+    db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """Store one file and hand back the key the record should keep."""
@@ -109,6 +89,24 @@ def upload_attachment(
         path.unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail="Could not store the file.")
 
+    # Who uploaded it is the only thing that can answer "may this person
+    # read it" until the record it belongs to has been saved.
+    try:
+        db.add(
+            Attachment(
+                key=key,
+                name=original or key,
+                size=written,
+                content_type=ALLOWED[ext],
+                uploaded_by=UUID(str(current_user["user_id"])),
+            )
+        )
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail="Could not store the file.")
+
     return {
         "success": True,
         "message": "Attachment uploaded.",
@@ -122,8 +120,18 @@ def upload_attachment(
 
 
 @router.get("/{key}")
-def read_attachment(key: str, current_user=Depends(get_current_user)):
-    """Hand the file back, for the preview to show or the browser to save."""
+def read_attachment(
+    key: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Hand the file back, for the preview to show or the browser to save.
+
+    Signed in is not enough. A file follows the record it hangs off, so
+    another zone's purchase order is no more readable here than the order
+    itself is - see attachment_access, which asks each record the
+    question rather than keeping a second rulebook.
+    """
 
     if not KEY.match(key or ""):
         raise HTTPException(status_code=404, detail="No such attachment.")
@@ -133,11 +141,16 @@ def read_attachment(key: str, current_user=Depends(get_current_user)):
     if not path.exists():
         raise HTTPException(status_code=404, detail="No such attachment.")
 
+    if not may_read(key, current_user, db):
+        # Not 403: whether a file exists is itself worth not confirming
+        # to somebody with no business reading it.
+        raise HTTPException(status_code=404, detail="No such attachment.")
+
     ext = os.path.splitext(key)[1].lower()
 
     return FileResponse(
         str(path),
-        media_type=ALLOWED.get(ext, "application/octet-stream"),
+        media_type=media_type(key),
         # inline, so a PDF opens in the viewer rather than downloading.
         headers={"Content-Disposition": f'inline; filename="{key}"'},
     )

@@ -7,6 +7,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session, object_session
 
 from app.core.config import settings
+from app.services.attachment_access import files_for_email
 from app.services.company_profile_service import CompanyProfileService
 from app.core.payment_terms import wording_for
 from app.core.references import highest_issued, next_number, peek_next
@@ -811,6 +812,17 @@ class ProformaInvoiceService:
             f"{inner}</div>"
         )
 
+        # The documents the sender kept in the dialog. That list used to
+        # go nowhere: the customer was told what was attached and the
+        # message arrived with nothing on it.
+        message_files = files_for_email(
+            getattr(request, "attachment_keys", None),
+            "sales_proforma_invoice",
+            invoice.id,
+            current_user,
+            db,
+        )
+
         if request.test_only:
             address = current_user.get("email")
 
@@ -825,6 +837,7 @@ class ProformaInvoiceService:
                 subject=f"[TEST] {subject}",
                 text_body=body,
                 html_body=html,
+                attachments=message_files,
             )
 
             return {
@@ -852,6 +865,7 @@ class ProformaInvoiceService:
             html_body=html,
             cc=cc,
             bcc=bcc,
+            attachments=message_files,
         )
 
         if not delivered:

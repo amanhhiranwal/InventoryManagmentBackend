@@ -1,5 +1,6 @@
 from app.models.app_setting import AppSetting
 from app.models.approval import SalesApproval
+from app.models.attachment import Attachment
 from app.models.company import Company
 from app.models.customer_type import CustomerType
 from app.models.document_counter import DocumentCounter
