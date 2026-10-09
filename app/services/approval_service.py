@@ -238,7 +238,20 @@ class ApprovalService:
         if deepest is not None:
             discount_percent = max(float(discount_percent or 0), deepest)
 
+        requester = (
+            db.query(User)
+            .filter(User.id == UUID(str(current_user["user_id"])))
+            .first()
+        )
+
         chain = approval_chain(price_type, discount_percent, db, document_type)
+
+        # The chain starts above whoever raised it. The bands say who owns
+        # how much discount, so a role the requester already holds is
+        # their own to give - an AVP's 5% is an AVP's decision, and asking
+        # for it sent the request to every AVP in the business, the
+        # requester included, where any of them could sign it off.
+        chain = ApprovalService._above_requester(chain, requester, db)
 
         if not chain:
             return None
@@ -253,12 +266,6 @@ class ApprovalService:
                     f"waiting on the {existing.steps[existing.current_step]['role']}."
                 ),
             )
-
-        requester = (
-            db.query(User)
-            .filter(User.id == UUID(str(current_user["user_id"])))
-            .first()
-        )
 
         approval = SalesApproval(
             document_type=document_type,
@@ -386,38 +393,84 @@ class ApprovalService:
         return [by_id[uid] for uid in chain if uid in by_id]
 
     @staticmethod
+    def _above_requester(chain: list[str], requester, db: Session) -> list[str]:
+        """The part of the chain that is actually above the person asking.
+
+        The chain is built junior first - AVP, then CEO, then the founder
+        - so it is already a ladder. Somebody standing on one of its rungs
+        owns every rung at or below them: the bands exist to say who may
+        give how much away, and an AVP giving 5% is the AVP's decision.
+
+        Asking anyway was worse than redundant. Nobody in an AVP's own
+        reporting line holds AVP, so the step fell through to "everyone
+        with the role" and the request went to all four AVPs at once,
+        the requester among them, for any of them to sign.
+
+        A super admin stands above the whole chart, so nothing is left
+        for them to be asked.
+        """
+
+        if requester is None:
+            return chain
+
+        if getattr(requester, "is_super_admin", False):
+            return []
+
+        held = _role_names(requester)
+
+        # Walk from the top of the ladder down: the highest rung they
+        # hold decides how much of the chain is already theirs.
+        for index in range(len(chain) - 1, -1, -1):
+            if chain[index] in held:
+                return chain[index + 1:]
+
+        return chain
+
+    @staticmethod
     def approvers_for_step(approval: SalesApproval, db: Session) -> list[User]:
         """Who this step is actually waiting on.
 
-        The request goes to the requester's *own* manager holding that role
-        - an Area Manager's discount is their AVP's to approve, not another
-        region's. Where nobody in that line holds it, it falls back to
-        everyone with the role, and then to the super admins, so a gap in
-        the reporting lines cannot freeze a deal.
+        The request goes to the requester's *own* manager holding that
+        role - an Area Manager's discount is their AVP's to approve, not
+        another region's.
+
+        Where nobody in that line holds it, it used to go to everyone
+        with the role. That is sideways, not upwards: with four AVPs, a
+        request that should have had one owner arrived in four queues,
+        and any of them could sign for a region that was not theirs. It
+        now goes up the same line instead - the nearest manager above
+        them - and only to the super admins when the line runs out, so a
+        gap in the chart still cannot freeze a deal.
         """
 
         if approval.status != ApprovalStatus.PENDING or not approval.steps:
             return []
 
         role = approval.steps[approval.current_step]["role"]
-
-        in_line = [
+        managers = [
             manager
             for manager in ApprovalService._managers_of(approval.requested_by, db)
-            if role in _role_names(manager)
+            if str(manager.id) != str(approval.requested_by)
+        ]
+
+        in_line = [
+            manager for manager in managers if role in _role_names(manager)
         ]
 
         if in_line:
             return in_line
 
-        holders = [
-            user
-            for user in db.query(User).filter(User.is_active.is_(True)).all()
-            if role in _role_names(user)
+        # Nobody in the line holds it. The nearest manager above them
+        # owns it rather than a row of strangers who happen to share the
+        # title - _managers_of walks upwards, so the first is the nearest.
+        above = [
+            manager
+            for manager in managers
+            if manager.is_active and not manager.is_super_admin
         ]
 
-        if holders:
-            return holders
+        if above:
+            return above[:1]
 
         return (
             db.query(User)
