@@ -19,6 +19,7 @@ from app.models.quotation_activity import QuotationActivity
 from app.repositories.opportunity_repository import OpportunityRepository
 from app.repositories.quotation_repository import QuotationRepository
 from app.services.approval_service import ApprovalService
+from app.services.attachment_access import files_for_email
 from app.services.email_service import EmailService
 from app.services.lead_service import get_visible_creator_user_ids
 from app.services.quotation_pdf_service import QuotationPDFService
@@ -1115,36 +1116,16 @@ class QuotationService:
         quotation = QuotationService.get_by_id(quotation_id, db)
         QuotationService.assert_can_modify(quotation, current_user, db)
 
-        # No price reaches a client unsigned. Every proposal carries the
-        # CEO's signature, whatever the discount and whether there is one,
-        # so the question here is not only "is an approval still open" but
-        # "has one been granted at all" - a draft nobody ever sent up would
-        # otherwise sail past a guard that only looked for a pending one.
-        # An email cannot be recalled. A test send to oneself is still
-        # allowed, so the letter can be checked before it goes.
-        if not getattr(request, "test_only", False):
-            pending = ApprovalService.open_for(
-                ApprovalDocument.QUOTATION, quotation.id, db
-            )
-
-            if pending is not None:
-                waiting_on = pending.steps[pending.current_step]["role"]
-
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        f"{quotation.quote_number} is waiting on the "
-                        f"{waiting_on} to approve it. It can be sent to the "
-                        "client once that is cleared."
-                    ),
-                )
-
-            # A proposal no longer needs a signature to go out. It is a
-            # price put in front of a customer to see what they say; the
-            # commitment is the sales order, and that is where the
-            # approval now sits. An approval still in flight is honoured
-            # above - somebody sent it up, so let it finish - but one was
-            # never required to begin with.
+        # A proposal goes to the customer whenever the person selling it
+        # says so. It is a price put in front of them to see what they
+        # say; the commitment is the sales order, and that is where the
+        # signature the business asks for now sits.
+        #
+        # This used to refuse the send while an approval was open on the
+        # proposal. Under the current workflow none is ever raised on
+        # one, so the guard only caught rows left over from the old flow
+        # - and what it did there was stop a salesperson emailing a
+        # customer over a signature nobody asks for any more.
 
         recipients = [address.strip() for address in (request.to or []) if address.strip()]
 
@@ -1164,6 +1145,17 @@ class QuotationService:
 
         body = request.body or QuotationService.default_email_body(quotation)
 
+        # The proposal PDF, then the annexures the sender kept in the
+        # dialog. That list used to go nowhere: the message carried the
+        # PDF alone, and dropping a file from it changed nothing.
+        message_files = QuotationService.pdf_attachment(quotation, db) + files_for_email(
+            getattr(request, "attachment_keys", None),
+            "sales_quotation",
+            quotation.id,
+            current_user,
+            db,
+        )
+
         if request.test_only:
             test_address = current_user.get("email")
 
@@ -1182,7 +1174,7 @@ class QuotationService:
                     body,
                     getattr(request, "body_html", None),
                 ),
-                attachments=QuotationService.pdf_attachment(quotation, db),
+                attachments=message_files,
             )
 
             return {
@@ -1205,7 +1197,7 @@ class QuotationService:
             bcc=bcc,
             # The proposal itself travels as a PDF; the message body is the
             # covering note, not the document.
-            attachments=QuotationService.pdf_attachment(quotation, db),
+            attachments=message_files,
         )
 
         if not delivered:

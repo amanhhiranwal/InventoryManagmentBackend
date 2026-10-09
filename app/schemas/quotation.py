@@ -136,6 +136,12 @@ class SendQuotationRequest(BaseModel):
     #: part verbatim, so bold/italic/underline survive into the mail client.
     body_html: Optional[str] = None
 
+    #: The annexures to put in the message, by the key each was stored
+    #: under. The dialog lists them and lets the sender drop any; this is
+    #: what carries that choice, and what was missing while the list was
+    #: decoration.
+    attachment_keys: Optional[List[str]] = None
+
     #: Statutory & Operational Clauses checkboxes.
     track_opens: Optional[bool] = False
     alert_on_download: Optional[bool] = False
