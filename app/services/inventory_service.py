@@ -177,9 +177,15 @@ class InventoryService:
         # distributor or an OEM is bought through at. Which of the two a
         # document uses follows from the customer type, so a product that
         # can be sold through the channel needs both on the same record.
+        # model_number and specification are standard too. A product type
+        # may or may not define a model field, and what it was called
+        # would then depend on whoever set that type up - but every
+        # product has a model, it is what a customer reads on a proposal
+        # line, and a service call is logged against it.
         standard_fields = [
             "rate", "rate_per_unit", "dtp_rate", "unit",
             "instock", "stock", "case_size", "hsn_code",
+            "model_number", "specification",
         ]
         for key in standard_fields:
             if key in attributes:
@@ -306,9 +312,15 @@ class InventoryService:
         # distributor or an OEM is bought through at. Which of the two a
         # document uses follows from the customer type, so a product that
         # can be sold through the channel needs both on the same record.
+        # model_number and specification are standard too. A product type
+        # may or may not define a model field, and what it was called
+        # would then depend on whoever set that type up - but every
+        # product has a model, it is what a customer reads on a proposal
+        # line, and a service call is logged against it.
         standard_fields = [
             "rate", "rate_per_unit", "dtp_rate", "unit",
             "instock", "stock", "case_size", "hsn_code",
+            "model_number", "specification",
         ]
         for key in standard_fields:
             if key in attributes:
