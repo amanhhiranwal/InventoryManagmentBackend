@@ -364,6 +364,111 @@ try:
                 str(offered),
             )
 
+    # ------------------------------------------------ the whole chart
+    print("\n6b. Every person in the chart, against the one rule")
+
+    # The sections above build a small team and check it behaves. This
+    # checks the rule itself, against whoever is actually in the
+    # database - the real staffing chart on a live copy, the demo team
+    # on a fresh one - because the leak worth catching is the pair
+    # nobody thought to write a case for.
+    #
+    # The rule: your own records, and those of everyone below you in the
+    # reporting line, however many steps down. Nothing sideways.
+    from app.database.postgres import SessionLocal as _Session
+    from app.models.user import User as _User
+    from app.services.hierarchy_service import HierarchyService as _Hierarchy
+
+    session = _Session()
+    everyone = session.query(_User).all()
+
+    who = {
+        str(u.id): f"{u.first_name} {u.last_name or ''}".strip() or str(u.id)
+        for u in everyone
+    }
+    manager = {
+        str(u.id): (str(u.reports_to_id) if u.reports_to_id else None)
+        for u in everyone
+    }
+
+    def line_above(user_id):
+        """Everyone above this person, walking up until the top."""
+
+        seen, current, above = set(), manager.get(user_id), []
+
+        while current and current not in seen:
+            seen.add(current)
+            above.append(current)
+            current = manager.get(current)
+
+        return above
+
+    sideways, missing = [], []
+
+    for viewer in everyone:
+        seen_by_viewer = _Hierarchy.visible_user_ids(
+            {"user_id": str(viewer.id)}, session
+        )
+
+        if seen_by_viewer is None:  # a super admin sees everything
+            continue
+
+        for subject in everyone:
+            entitled = str(subject.id) == str(viewer.id) or str(
+                viewer.id
+            ) in line_above(str(subject.id))
+
+            if str(subject.id) in seen_by_viewer and not entitled:
+                sideways.append(f"{who[str(viewer.id)]} sees {who[str(subject.id)]}")
+
+            if entitled and str(subject.id) not in seen_by_viewer:
+                missing.append(f"{who[str(viewer.id)]} cannot see {who[str(subject.id)]}")
+
+    check(
+        f"nobody sees sideways or upwards ({len(everyone)} people, "
+        f"{len(everyone) ** 2} pairs)",
+        not sideways,
+        "; ".join(sideways[:5]),
+    )
+    check(
+        "and everyone sees their whole line below them",
+        not missing,
+        "; ".join(missing[:5]),
+    )
+
+    # Named for the report that prompted it: an Area Manager's work goes
+    # up to their AVP, the CEO, the founder and the super admins, and
+    # stops there.
+    example = next(
+        (u for u in everyone if f"{u.first_name} {u.last_name or ''}".strip()
+         == "Ashish Melwin"),
+        None,
+    )
+
+    if example is not None:
+        watchers = sorted(
+            who[str(u.id)]
+            for u in everyone
+            if (
+                lambda seen: seen is None or str(example.id) in seen
+            )(_Hierarchy.visible_user_ids({"user_id": str(u.id)}, session))
+        )
+
+        expected = sorted(
+            [who[str(example.id)]]
+            + [who[uid] for uid in line_above(str(example.id))]
+        )
+
+        check(
+            f"Ashish Melwin's work is seen by exactly {expected}",
+            watchers == expected,
+            str(watchers),
+        )
+    else:
+        print("   (the staffing chart is not on this database - skipped)")
+
+    session.close()
+
 finally:
     print("\n7. Clearing the test data")
     try:

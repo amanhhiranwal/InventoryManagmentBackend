@@ -166,6 +166,22 @@ class HierarchyService:
     def visible_user_ids(current_user: dict, db: Session) -> set[str] | None:
         """Users whose records the current user may see.
 
+        Your own, and everyone below you in the reporting line - however
+        many steps down. Nothing else. So a lead raised by an Area
+        Manager is seen by that Area Manager, the AVP they report to, the
+        CEO above them, the founder above that, and the super admins. The
+        AVP of another region does not see it, and nor does an Area
+        Manager beside them.
+
+        That is the whole rule. It used to have a second clause: somebody
+        holding a role junior to yours, with no manager recorded at all,
+        was visible to you. It was meant to stop an unassigned person's
+        work disappearing, but it reads sideways rather than downwards -
+        with four AVPs, one Area Manager whose reporting line had not
+        been filled in was visible to all four of them, and to everyone
+        senior to them. A gap in the chart is a thing to fix on the
+        Reporting Chart, not a reason to widen who sees a deal.
+
         None means unrestricted (super admin).
         """
 
@@ -176,18 +192,11 @@ class HierarchyService:
         if not user_id:
             return set()
 
-        my_roles = HierarchyService.user_role_ids(user_id, db)
-        junior_roles = HierarchyService.junior_role_ids(my_roles, db)
-
         users = db.query(User.id, User.reports_to_id).all()
         managers = {
             str(u.id): (str(u.reports_to_id) if u.reports_to_id else None)
             for u in users
         }
-
-        roles_by_user: dict[str, set[str]] = {}
-        for row in db.query(UserRole.user_id, UserRole.role_id).all():
-            roles_by_user.setdefault(str(row.user_id), set()).add(str(row.role_id))
 
         visible = {user_id}
 
@@ -195,13 +204,7 @@ class HierarchyService:
             if other == user_id:
                 continue
 
-            chain = HierarchyService.manager_chain(other, managers)
-
-            if user_id in chain:
-                visible.add(other)
-                continue
-
-            if roles_by_user.get(other, set()) & junior_roles and not chain:
+            if user_id in HierarchyService.manager_chain(other, managers):
                 visible.add(other)
 
         return visible
