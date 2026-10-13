@@ -192,6 +192,15 @@ def approval_chain(
             if bound is not None and discount <= bound:
                 break
 
+    # Every sales order ends with the founder, whatever the discount and
+    # whichever price list it is written against. The bands say who owns
+    # the discount; this says who commits the business to the order. An
+    # order at list price used to need nobody, which meant it was
+    # confirmed the moment it was raised and went straight to invoicing
+    # with no signature anywhere on it.
+    if FOUNDER not in chain:
+        chain.append(FOUNDER)
+
     return chain
 
 
@@ -226,15 +235,30 @@ def describe_chain(
     chain = approval_chain(price_type, discount, db, document_type)
 
     if not chain:
-        return "No discount, so this needs no approval."
+        return "This needs no approval."
 
-    owner = chain[-1]
-    ceiling = discount_ceiling(chain[0], db)
+    # Every order ends with the founder, so the discount bands explain
+    # the steps before that one and nothing else.
+    bands_part = [role for role in chain if role != FOUNDER]
 
-    if len(chain) == 1:
-        return f"{discount:g}% discount is within the {owner}'s authority."
+    if not bands_part:
+        return (
+            f"{discount:g}% discount is within the band, so this goes "
+            f"to the {FOUNDER} to commit."
+            if discount
+            else f"No discount, so this goes straight to the {FOUNDER} to commit."
+        )
+
+    ceiling = discount_ceiling(bands_part[0], db)
+
+    if len(bands_part) == 1:
+        return (
+            f"{discount:g}% discount is within the {bands_part[0]}'s "
+            f"authority, and then the {FOUNDER} commits the order."
+        )
 
     return (
-        f"{discount:g}% discount is past the {chain[0]}'s "
-        f"{ceiling:g}%, so it goes up to the {owner}."
+        f"{discount:g}% discount is past the {bands_part[0]}'s "
+        f"{ceiling:g}%, so it goes up to the {bands_part[-1]}, and then "
+        f"the {FOUNDER} commits the order."
     )

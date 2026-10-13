@@ -588,6 +588,22 @@ class SalesOrderService:
 
         status = normalize_sales_order_status(request.status)
 
+        # An order is born a draft. Everything from Confirmed on commits
+        # the company to the price, and that is the approval chain's to
+        # grant - so it cannot be claimed on the way in. The New Sales
+        # Order screen used to post CONFIRMED straight from its "Send For
+        # Approval" button, which is how an order came into being already
+        # approved, with no chain, no signature and nothing to show on
+        # the approvals screen.
+        if _confirmed_onwards(status):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "A sales order starts as a draft. Send it for approval "
+                    "and it is confirmed once the chain has cleared it."
+                ),
+            )
+
         first_name = current_user.get("first_name", "")
         last_name = current_user.get("last_name", "")
         creator_name = f"{first_name} {last_name}".strip() or "User"

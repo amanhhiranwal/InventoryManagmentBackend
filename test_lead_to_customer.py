@@ -26,7 +26,14 @@ import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from seed_sales_team import TEAM_PASSWORD, api, email_for, login, rows
+from seed_sales_team import (
+    TEAM_PASSWORD,
+    api,
+    email_for,
+    login,
+    rows,
+    sign_off_order,
+)
 
 ADMIN = ("superadmin@mailinator.com", "password123")
 TAG = uuid.uuid4().hex[:6]
@@ -198,6 +205,9 @@ try:
         abs(float(order["total_amount"]) - goods) < 1,
         f"{order['total_amount']} vs {goods}",
     )
+
+    # The founder commits every order before it can confirm.
+    sign_off_order(order, owner)
 
     r = api("put", f"/orders/{order['id']}/status", owner, json={"status": "CONFIRMED"})
     check("it is confirmed", r.status_code == 200, f"{r.status_code} {r.text[:160]}")
@@ -371,6 +381,7 @@ try:
     away = r.json()["data"]
     created_orders.append(away["id"])
 
+    sign_off_order(away, owner)
     api("put", f"/orders/{away['id']}/status", owner, json={"status": "CONFIRMED"})
 
     r = api("post", "/proforma-invoices", owner, json={

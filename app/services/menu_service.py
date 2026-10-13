@@ -16,6 +16,10 @@ RENAMED_DEFAULT_TITLES = {
   # a person reads has.
   "Quotation": "Proposal",
   "Quotation Approval": "Proposal Approval",
+  # Approval sits on the sales order now - a proposal is a price put in
+  # front of a customer and needs no signature. The bands on this screen
+  # decide who signs an order, so the name follows them.
+  "Proposal Approval": "Sales Order Approval",
 }
 
 #: Renames that would be ambiguous on the title alone, so the path decides.
@@ -163,7 +167,7 @@ DEFAULT_MENUS_DATA = [
       # rest of Masters - the page refuses anyone else.
       {"title": "Company Profile", "icon": "LuBuilding2", "path": "/company-profile", "permission_key": "company.read", "order_index": 11},
       # Who signs off how much discount. Super admin only, like the rest.
-      {"title": "Proposal Approval", "icon": "LuPercent", "path": "/quotation-approval", "permission_key": "company.read", "order_index": 12},
+      {"title": "Sales Order Approval", "icon": "LuPercent", "path": "/quotation-approval", "permission_key": "company.read", "order_index": 12},
       # How long the cover runs and what extending to it costs. Filed under
       # product_type.read, beside the other lists that describe what is
       # being sold rather than who is buying it.

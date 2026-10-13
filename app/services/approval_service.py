@@ -15,7 +15,7 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.approvals import PriceType, approval_chain, describe_chain
+from app.core.approvals import FOUNDER, PriceType, approval_chain, describe_chain
 from app.models.approval import ApprovalDocument, ApprovalStatus, SalesApproval
 from app.models.user import User
 from app.core.config import settings
@@ -406,25 +406,45 @@ class ApprovalService:
         with the role" and the request went to all four AVPs at once,
         the requester among them, for any of them to sign.
 
-        A super admin stands above the whole chart, so nothing is left
-        for them to be asked.
+        The founder is the exception, and stays on whoever raised it.
+        Every sales order is committed by them; a super admin raising one
+        does not sign it off by raising it. Only the founder's own order
+        has nobody left to ask.
         """
 
         if requester is None:
             return chain
 
-        if getattr(requester, "is_super_admin", False):
-            return []
-
         held = _role_names(requester)
 
-        # Walk from the top of the ladder down: the highest rung they
-        # hold decides how much of the chain is already theirs.
-        for index in range(len(chain) - 1, -1, -1):
-            if chain[index] in held:
-                return chain[index + 1:]
+        # The founder stands above the whole ladder, so their own order
+        # has nobody left to ask - including themselves.
+        if FOUNDER in held:
+            return []
 
-        return chain
+        # A super admin stands outside the sales line rather than above
+        # the business: the bands below are theirs, the commitment is
+        # still the founder's to make.
+        if getattr(requester, "is_super_admin", False):
+            return [FOUNDER] if FOUNDER in chain else []
+
+        # Otherwise walk the ladder from the top down: the highest rung
+        # they hold is already their own authority, and everything below
+        # it with them. The founder's rung is never theirs to take.
+        remaining = chain
+
+        for index in range(len(chain) - 1, -1, -1):
+            if chain[index] == FOUNDER:
+                continue
+
+            if chain[index] in held:
+                remaining = chain[index + 1:]
+                break
+
+        if FOUNDER in chain and FOUNDER not in remaining:
+            remaining = remaining + [FOUNDER]
+
+        return remaining
 
     @staticmethod
     def approvers_for_step(approval: SalesApproval, db: Session) -> list[User]:
@@ -437,10 +457,14 @@ class ApprovalService:
         Where nobody in that line holds it, it used to go to everyone
         with the role. That is sideways, not upwards: with four AVPs, a
         request that should have had one owner arrived in four queues,
-        and any of them could sign for a region that was not theirs. It
-        now goes up the same line instead - the nearest manager above
-        them - and only to the super admins when the line runs out, so a
-        gap in the chart still cannot freeze a deal.
+        and any of them could sign for a region that was not theirs.
+
+        Now it goes to the sole holder of the role where there is one -
+        the founder is a single office, so "which founder" is not a
+        question, and a super admin raising an order still needs their
+        signature rather than their own. Failing that it climbs the
+        raiser's own line, and only reaches the super admins when the
+        line runs out, so a gap in the chart still cannot freeze a deal.
         """
 
         if approval.status != ApprovalStatus.PENDING or not approval.steps:
@@ -460,9 +484,27 @@ class ApprovalService:
         if in_line:
             return in_line
 
-        # Nobody in the line holds it. The nearest manager above them
-        # owns it rather than a row of strangers who happen to share the
-        # title - _managers_of walks upwards, so the first is the nearest.
+        # Nobody in that line holds it. Before giving up on the role,
+        # see whether the business has exactly one person in it: the
+        # founder is a single office, and "which founder" is not a
+        # question. What must not happen is the old behaviour of handing
+        # it to every holder, which with four AVPs put one region's
+        # discount in four queues for any of them to sign.
+        holders = [
+            user
+            for user in db.query(User).filter(User.is_active.is_(True)).all()
+            if role in _role_names(user)
+            and str(user.id) != str(approval.requested_by)
+        ]
+
+        if len(holders) == 1:
+            return holders
+
+        # Several of them, or none. Escalate up the raiser's own line
+        # instead, to the most senior rather than the nearest, because
+        # the role that is missing sits above all of them - a gap in the
+        # chart should escalate, not quietly hand a founder's signature
+        # to a Zonal Head.
         above = [
             manager
             for manager in managers
@@ -470,7 +512,14 @@ class ApprovalService:
         ]
 
         if above:
-            return above[:1]
+            return above[-1:]
+
+        # No line to climb - a super admin raising an order has no
+        # manager anywhere. Then the holders of the role are the right
+        # audience after all: better several founders than the raiser
+        # signing their own order because nobody else was found.
+        if holders:
+            return holders
 
         return (
             db.query(User)

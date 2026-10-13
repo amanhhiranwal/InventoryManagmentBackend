@@ -65,7 +65,10 @@ created_orders = []
 
 try:
     admin = login(*ADMIN)
-    everyone = ["ceo", "avp", "zh_north", "zh_south", "am_north_1", "am_south_1"]
+    everyone = [
+        "founder", "ceo", "avp", "zh_north", "zh_south",
+        "am_north_1", "am_south_1",
+    ]
 
     for key in everyone:
         token[key] = login(email_for(key), TEAM_PASSWORD)
@@ -95,11 +98,19 @@ try:
             },
         ).json()["data"]
 
-    check("no discount needs no approval", preview(0)["chain"] == [], str(preview(0)))
-    check("5% stops at the AVP", preview(5)["chain"] == ["AVP"], str(preview(5)["chain"]))
-    check("10% still stops at the AVP", preview(10)["chain"] == ["AVP"], str(preview(10)["chain"]))
-    check("12% reaches the CEO", preview(12)["chain"] == ["AVP", "CEO"], str(preview(12)["chain"]))
-    check("20% still stops at the CEO", preview(20)["chain"] == ["AVP", "CEO"], str(preview(20)["chain"]))
+    # Every sales order ends with the founder: the bands say who owns the
+    # discount, the founder commits the business to the order. An order at
+    # list price used to need nobody at all, which meant it was confirmed
+    # the moment it was raised.
+    check(
+        "an undiscounted order still goes to the founder",
+        preview(0)["chain"] == ["Founder"],
+        str(preview(0)["chain"]),
+    )
+    check("5% stops at the AVP", preview(5)["chain"] == ["AVP", "Founder"], str(preview(5)["chain"]))
+    check("10% still stops at the AVP", preview(10)["chain"] == ["AVP", "Founder"], str(preview(10)["chain"]))
+    check("12% reaches the CEO", preview(12)["chain"] == ["AVP", "CEO", "Founder"], str(preview(12)["chain"]))
+    check("20% still stops at the CEO", preview(20)["chain"] == ["AVP", "CEO", "Founder"], str(preview(20)["chain"]))
     check(
         "25% reaches the founder",
         preview(25)["chain"] == ["AVP", "CEO", "Founder"],
@@ -205,8 +216,9 @@ try:
 
     check("it is waiting on the AVP first", (approval or {}).get("waiting_on") == "AVP", str((approval or {}).get("waiting_on")))
     check(
-        "both steps are recorded up front",
-        [step["role"] for step in (approval or {}).get("steps", [])] == ["AVP", "CEO"],
+        "every step is recorded up front, the founder last",
+        [step["role"] for step in (approval or {}).get("steps", [])]
+        == ["AVP", "CEO", "Founder"],
         str((approval or {}).get("steps")),
     )
 
@@ -264,6 +276,32 @@ try:
     })
     check("the CEO approves", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
 
+    after_ceo = r.json()["data"] if r.status_code == 200 else {}
+    check(
+        "it now waits on the founder, who commits every order",
+        after_ceo.get("waiting_on") == "Founder",
+        str(after_ceo.get("waiting_on")),
+    )
+    check(
+        "still not approved on the CEO's signature alone",
+        after_ceo.get("status") == "PENDING",
+        str(after_ceo.get("status")),
+    )
+
+    not_yet = api("put", f"/orders/{order['id']}/status", token["am_north_1"], json={
+        "status": "CONFIRMED",
+    })
+    check(
+        "and the order is still held",
+        not_yet.status_code == 409,
+        f"got {not_yet.status_code} {not_yet.text[:140]}",
+    )
+
+    r = api("put", f"/approvals/{approval['id']}/decide", token["founder"], json={
+        "approve": True, "remarks": "Committed.",
+    })
+    check("the founder approves", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
+
     final = r.json()["data"] if r.status_code == 200 else {}
     check("the request is fully approved", final.get("status") == "APPROVED", str(final.get("status")))
     check("nothing is waiting on anyone", final.get("waiting_on") is None, str(final.get("waiting_on")))
@@ -312,23 +350,41 @@ try:
     # --------------------------------------------------- no approval due
     banner("6. A proposal is not signed off, and goes out anyway")
 
+    # An order at list price gives nothing away, but it is still a
+    # commitment - so it goes to the founder and nowhere else.
     plain = make_order("No Discount", 0)
     r = api("put", f"/orders/{plain['id']}/status", token["am_north_1"], json={
         "status": "CONFIRMED",
     })
     check(
-        "an undiscounted order is confirmed with no approval",
-        r.status_code == 200,
+        "even an undiscounted order cannot be confirmed unapproved",
+        r.status_code == 409,
         f"{r.status_code} {r.text[:140]}",
     )
 
     r = send_up(plain, 0)
-    check("sending nothing up is accepted and does nothing", r.status_code == 200, f"{r.status_code}")
+    check("it is sent up", r.status_code == 200, f"{r.status_code} {r.text[:140]}")
+
+    plain_approval = r.json().get("data")
+
+    if plain_approval:
+        created_approvals.append(plain_approval["id"])
+
     check(
-        "and says so rather than raising an empty request",
-        r.json().get("data") is None,
-        str(r.json())[:140],
+        "with the founder as the only step",
+        [s["role"] for s in (plain_approval or {}).get("steps", [])] == ["Founder"],
+        str((plain_approval or {}).get("steps")),
     )
+
+    r = api("put", f"/approvals/{plain_approval['id']}/decide", token["founder"], json={
+        "approve": True,
+    })
+    check("the founder commits it", r.status_code == 200, f"{r.status_code} {r.text[:140]}")
+
+    r = api("put", f"/orders/{plain['id']}/status", token["am_north_1"], json={
+        "status": "CONFIRMED",
+    })
+    check("and then it confirms", r.status_code == 200, f"{r.status_code} {r.text[:140]}")
 
     # A proposal at 25% - which on an order would need all three - needs
     # nothing, because the commitment is the order.
@@ -479,10 +535,35 @@ try:
         order = r.json()["data"]
         created_orders.append(order["id"])
 
+        # The founder commits every order, so the walk starts by getting
+        # that signature rather than setting Confirmed by hand.
+        raised = send_up(order, 0)
+        check(
+            "it goes up for approval first",
+            raised.status_code == 200,
+            f"{raised.status_code} {raised.text[:140]}",
+        )
+
+        walk_approval = raised.json().get("data")
+
+        if walk_approval:
+            created_approvals.append(walk_approval["id"])
+
+            signed = api(
+                "put",
+                f"/approvals/{walk_approval['id']}/decide",
+                token["founder"],
+                json={"approve": True},
+            )
+            check(
+                "the founder commits it",
+                signed.status_code == 200,
+                f"{signed.status_code} {signed.text[:140]}",
+            )
+
         # Who may push each step: the sales owner up to Confirmed, then the
         # desks, because once an order is approved it stops being theirs.
         chain = [
-            ("PENDING_APPROVAL", "sent for approval", "am_north_1"),
             ("CONFIRMED", "approved", "am_north_1"),
             ("PAYMENT_VERIFIED", "payment verified by accounts", "accounts"),
             ("PROCUREMENT", "with inventory", "inventory"),
@@ -528,6 +609,88 @@ try:
             check("a draft cannot jump straight to dispatched", r.status_code == 400, f"got {r.status_code}")
 
     # ------------------------------------------- approving from the email
+    # ------------------------------------- the screen's own flow, per role
+    banner("9c. Send For Approval, from each desk in turn")
+
+    # What the New Sales Order screen does: save the order, then send it
+    # up. It used to create the order CONFIRMED and raise nothing, so the
+    # button said "Send For Approval" and the row said Approved - with no
+    # chain, no signature, and nothing in anybody's queue.
+    born_confirmed = api("post", "/orders", token["am_north_1"], json={
+        "customer_name": f"Born Confirmed {TAG}",
+        "order_date": datetime.now(timezone.utc).isoformat(),
+        "status": "CONFIRMED",
+        "items": [{"product": "Panel", "qty": 1, "rate": 50000, "tax_rate": 18}],
+    })
+    check(
+        "an order cannot be created already confirmed",
+        born_confirmed.status_code == 400,
+        f"got {born_confirmed.status_code} {born_confirmed.text[:120]}",
+    )
+
+    if born_confirmed.status_code == 200:
+        created_orders.append(born_confirmed.json()["data"]["id"])
+
+    # Each desk raises one at 15%, which is past the AVP's ceiling.
+    for who, expected in [
+        ("am_north_1", ["AVP", "CEO", "Founder"]),
+        ("zh_north", ["AVP", "CEO", "Founder"]),
+        ("avp", ["CEO", "Founder"]),
+        ("ceo", ["Founder"]),
+        ("founder", []),
+    ]:
+        their_order = make_order(f"Desk {who}", 15, who=who)
+
+        check(
+            f"{who}: the order is raised as a draft",
+            their_order.get("status") == "DRAFT",
+            str(their_order.get("status")),
+        )
+
+        sent = send_up(their_order, 15, who=who)
+        raised = (sent.json() or {}).get("data") if sent.status_code == 200 else None
+
+        if raised:
+            created_approvals.append(raised["id"])
+
+        got = [step["role"] for step in (raised or {}).get("steps", [])]
+
+        check(
+            f"{who}: it climbs {expected or 'nothing - they are the top'}",
+            got == expected,
+            f"got {got}",
+        )
+
+        after = api("get", f"/orders/{their_order['id']}", token[who]).json()["data"]
+
+        check(
+            f"{who}: the order is held, not approved"
+            if expected
+            else f"{who}: nothing to approve, so it is theirs to confirm",
+            after["status"] == ("PENDING_APPROVAL" if expected else "DRAFT"),
+            str(after["status"]),
+        )
+
+        # And it is their own line that is asked, not every holder.
+        if raised:
+            waiting = raised.get("waiting_on")
+            queue_holder = {
+                "AVP": "avp", "CEO": "ceo", "Founder": "founder",
+            }.get(waiting)
+
+            if queue_holder:
+                check(
+                    f"{who}: it is in the {waiting}'s queue",
+                    raised["id"] in pending_ids(queue_holder),
+                    f"waiting on {waiting}",
+                )
+
+            for stranger in ("am_south_1", "zh_south"):
+                check(
+                    f"{who}: and not in {stranger}'s",
+                    raised["id"] not in pending_ids(stranger),
+                )
+
     banner("9b. The approval email decides it without signing in")
 
     # Built here rather than driven over HTTP, because what is being
