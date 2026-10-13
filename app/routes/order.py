@@ -30,6 +30,7 @@ router = APIRouter(
 
 
 @router.post("")
+@router.post("/")
 def create_order(
     request: CreateSalesOrderRequest,
     db: Session = Depends(get_db),
@@ -55,6 +56,7 @@ def next_order_number(
 
 
 @router.get("")
+@router.get("/")
 def get_orders(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
