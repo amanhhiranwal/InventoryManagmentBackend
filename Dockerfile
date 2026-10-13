@@ -26,4 +26,9 @@ USER appuser
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers $UVICORN_WORKERS"]
+# --proxy-headers so the app believes nginx about the scheme. Without
+# it every redirect uvicorn builds says http, and a browser on the
+# https site refuses to follow one - which is how a trailing slash on
+# a Masters screen turned into "Network Error" in production and
+# worked perfectly on a laptop.
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*' --workers $UVICORN_WORKERS"]

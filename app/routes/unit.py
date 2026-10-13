@@ -9,7 +9,11 @@ router = APIRouter(prefix="/inventory/units", tags=["Units Master"])
 class UnitCreate(BaseModel):
     name: str
 
+# Both spellings, so neither needs a redirect. A 307 from here is
+# answered with an absolute URL, and behind a proxy that URL is only
+# as trustworthy as the headers it was built from.
 @router.get("")
+@router.get("/")
 def get_units():
     units_col = sync_mongo_db["inventory_units"]
     units = list(units_col.find())
@@ -23,6 +27,7 @@ def get_units():
 
 # Adding and removing units is a Masters change, so super admin only.
 @router.post("", dependencies=[Depends(require_super_admin)])
+@router.post("/", dependencies=[Depends(require_super_admin)])
 def add_unit(request: UnitCreate):
     units_col = sync_mongo_db["inventory_units"]
     name = request.name.strip()

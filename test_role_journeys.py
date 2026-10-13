@@ -43,6 +43,7 @@ from seed_sales_team import (
     email_for,
     login,
     rows,
+    sign_off_order,
 )
 
 ACCOUNTS_EMAIL = "accounts@mailinator.com"
@@ -86,7 +87,7 @@ SIDEBARS = {
             "Companies", "Locations", "Customer Type", "Product Type",
             "Category Group", "Units", "Lead Source", "States",
             "Bank Details", "Roles & Access", "Company Profile",
-            "Proposal Approval", "Warranty Terms", "Reporting Chart",
+            "Sales Order Approval", "Warranty Terms", "Reporting Chart",
         ]),
         ("Workflows", []),
     ],
@@ -107,6 +108,23 @@ SIDEBARS = {
         ("Reports", []),
         ("Masters", ["Reporting Chart"]),
     ],
+    # The founder sells like the rest of the line but holds the masters
+    # that decide what is sold and at what price - which is why every
+    # order ends with them.
+    "founder": [
+        ("Dashboard", []),
+        ("Sales", ["Leads", "Opportunity", "Proposal", "Sales Order", "Proforma Invoice"]),
+        ("Users", []),
+        ("Inventory", []),
+        ("Customers", []),
+        ("Reports", []),
+        ("Masters", [
+            "Companies", "Locations", "Customer Type", "Product Type",
+            "Category Group", "Units", "Lead Source", "States",
+            "Bank Details", "Company Profile", "Sales Order Approval",
+            "Warranty Terms", "Reporting Chart",
+        ]),
+    ],
     # A desk gets its desk and nothing else of the sales CRM - not even the
     # dashboard, so the app drops them straight onto the screen they work.
     "accounts": [
@@ -120,6 +138,7 @@ SIDEBARS = {
 
 WHO = [
     ("admin", ADMIN_EMAIL, ADMIN_PASSWORD, "admin"),
+    ("founder", email_for("founder"), TEAM_PASSWORD, "founder"),
     ("ceo", email_for("ceo"), TEAM_PASSWORD, "sales"),
     ("avp", email_for("avp"), TEAM_PASSWORD, "sales"),
     ("zh_north", email_for("zh_north"), TEAM_PASSWORD, "sales"),
@@ -396,6 +415,16 @@ try:
         "approve": True, "remarks": "Approved.",
     })
     check("the CEO approves", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
+    check(
+        "and it goes to the founder, who commits every order",
+        r.json()["data"].get("waiting_on") == "Founder",
+        str(r.json()["data"].get("waiting_on")),
+    )
+
+    r = api("put", f"/approvals/{approval['id']}/decide", token["founder"], json={
+        "approve": True, "remarks": "Committed.",
+    })
+    check("the founder approves", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
     check("the request is cleared", r.json()["data"]["status"] == "APPROVED", str(r.json()["data"]["status"]))
 
     r = api("put", f"/orders/{order['id']}/status", owner, json={"status": "CONFIRMED"})
@@ -715,6 +744,8 @@ try:
     short_order = r.json()["data"]
     created["orders"].append(short_order["id"])
 
+    # The founder commits every order before it can be confirmed.
+    sign_off_order(short_order, owner)
     api("put", f"/orders/{short_order['id']}/status", owner, json={"status": "CONFIRMED"})
 
     # Accounts will not pass an order with nothing recorded against it, so

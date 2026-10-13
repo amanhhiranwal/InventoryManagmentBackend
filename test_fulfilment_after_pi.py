@@ -22,7 +22,14 @@ import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from seed_sales_team import TEAM_PASSWORD, api, email_for, login, rows
+from seed_sales_team import (
+    TEAM_PASSWORD,
+    api,
+    email_for,
+    login,
+    rows,
+    sign_off_order,
+)
 
 ADMIN = ("superadmin@mailinator.com", "password123")
 TAG = uuid.uuid4().hex[:6]
@@ -92,6 +99,9 @@ try:
 
     order = r.json()["data"]
     created_orders.append(order["id"])
+
+    # The founder commits every order before it can confirm.
+    sign_off_order(order, owner)
 
     r = api("put", f"/orders/{order['id']}/status", owner, json={"status": "CONFIRMED"})
     check("it is confirmed", r.status_code == 200, f"{r.status_code} {r.text[:150]}")

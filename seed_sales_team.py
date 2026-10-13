@@ -69,7 +69,11 @@ COMPANIES = [
 
 #: key, name, role, who they report to, which companies they work for.
 TEAM = [
-    ("ceo", "Arjun", "Sethi", "CEO", None, ["north", "south"]),
+    # Every sales order ends with the founder, so the demo team needs
+    # one - without it the top of the chart was the CEO and the founder's
+    # step fell through to whoever stood highest in the line.
+    ("founder", "Nina", "Kapoor", "Founder", None, ["north", "south"]),
+    ("ceo", "Arjun", "Sethi", "CEO", "founder", ["north", "south"]),
     ("avp", "Rohit", "Malhotra", "AVP", "ceo", ["north", "south"]),
     ("zh_north", "Priya", "Nair", "Zonal Head", "avp", ["north"]),
     ("zh_south", "Sanjay", "Mehta", "Zonal Head", "avp", ["south"]),
@@ -135,14 +139,69 @@ def seed(token) -> dict:
         raise SystemExit(f"missing roles: {', '.join(sorted(missing))}. Run check_and_seed_db.py first.")
 
     # --------------------------------------------------------------- team
-    people = {u["email"]: u["id"] for u in rows(api("get", "/users/", token, params={"size": 500}))}
+    roster = {
+        u["email"]: u
+        for u in rows(api("get", "/users/", token, params={"size": 500}))
+    }
+    people = {email: u["id"] for email, u in roster.items()}
 
     for key, first, last, role, manager_key, companies in TEAM:
         email = email_for(key)
 
         if email in people:
             ids[key] = people[email]
-            print(f"  {first} {last} ({role}) already there")
+            existing_row = roster[email]
+
+            # The chart is the point of this team, so a line that has
+            # changed since the account was made is repaired rather than
+            # left - adding a founder above the CEO did nothing while the
+            # CEO still reported to nobody.
+            wanted_manager = ids.get(manager_key) if manager_key else None
+            wanted_roles = [roles[role]]
+            wanted_companies = [ids[c] for c in companies]
+
+            needs = []
+
+            if str(existing_row.get("reports_to_id") or "") != str(
+                wanted_manager or ""
+            ):
+                needs.append(f"reporting to {manager_key or 'nobody'}")
+
+            if sorted(map(str, existing_row.get("role_ids") or [])) != sorted(
+                map(str, wanted_roles)
+            ):
+                needs.append(f"the {role} role")
+
+            if sorted(map(str, existing_row.get("company_ids") or [])) != sorted(
+                map(str, wanted_companies)
+            ):
+                needs.append("their companies")
+
+            note = ""
+
+            if needs:
+                # PUT /users takes the whole user: a field left out of the
+                # payload is a field cleared. Repairing the reporting line
+                # by sending that alone is how this seeder once stripped
+                # the CEO's role and both his companies.
+                fixed = api("put", f"/users/{ids[key]}", token, json={
+                    "first_name": existing_row.get("first_name") or first,
+                    "last_name": existing_row.get("last_name") or last,
+                    "phone_number": existing_row.get("phone_number") or "9800000000",
+                    "employee_id": existing_row.get("employee_id")
+                    or f"EMP-{key.upper().replace('_', '-')}",
+                    "role_ids": wanted_roles,
+                    "company_ids": wanted_companies,
+                    "reports_to_id": wanted_manager,
+                })
+
+                note = (
+                    f", repaired: {', '.join(needs)}"
+                    if fixed.status_code < 400
+                    else f" (could not repair: {fixed.status_code} {fixed.text[:60]})"
+                )
+
+            print(f"  {first} {last} ({role}) already there{note}")
             continue
 
         payload = {
@@ -251,3 +310,49 @@ if __name__ == "__main__":
         print(f"  {email_for(key):<45} {first} {last:<12} {role:<13} {', '.join(companies)}")
 
     sys.exit(0)
+
+
+def sign_off_order(order: dict, raiser_token: str) -> dict | None:
+    """Clear the approval a sales order now needs, so a test can move on.
+
+    Every order ends with the founder, whatever the discount - which is
+    the point of the approval suite, and in the way of every other one.
+    A test about invoicing or fulfilment should not have to restate the
+    chain, so this raises the request and signs it off as the super
+    admin, who stands in for any step.
+
+    Returns the approval, or None where the order needed none.
+    """
+
+    raised = api("post", "/approvals", raiser_token, json={
+        "document_type": "SALES_ORDER",
+        "document_id": order["id"],
+        "document_number": order.get("order_number"),
+        "price_type": "ECP",
+        "discount_percent": 0,
+        "document_value": order.get("grand_total") or 0,
+    })
+
+    approval = (raised.json() or {}).get("data") if raised.status_code == 200 else None
+
+    if not approval:
+        return None
+
+    admin = login(ADMIN_EMAIL, ADMIN_PASSWORD)
+
+    # One decision per step, however many the chain has.
+    for _ in range(6):
+        decided = api(
+            "put", f"/approvals/{approval['id']}/decide", admin,
+            json={"approve": True, "remarks": "Signed off for the test."},
+        )
+
+        if decided.status_code != 200:
+            break
+
+        approval = decided.json()["data"]
+
+        if approval.get("status") != "PENDING":
+            break
+
+    return approval

@@ -22,7 +22,15 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-from seed_sales_team import BASE, TEAM_PASSWORD, api, email_for, login, rows
+from seed_sales_team import (
+    BASE,
+    TEAM_PASSWORD,
+    api,
+    email_for,
+    login,
+    rows,
+    sign_off_order,
+)
 
 ADMIN = ("superadmin@mailinator.com", "password123")
 TAG = uuid.uuid4().hex[:6]
@@ -363,7 +371,11 @@ try:
                     created["orders"].append(order["id"])
                     visibility("the sales order", "/orders", order["id"])
 
-                    # An invoice can only go on a confirmed order.
+                    # An invoice can only go on a confirmed order, and an
+                    # order is only confirmed once the founder has
+                    # committed it - so that signature comes first.
+                    sign_off_order(order, token[owner])
+
                     r = api("put", f"/orders/{order['id']}/status", token[owner], json={"status": "CONFIRMED"})
                     check("the order is confirmed", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
 
