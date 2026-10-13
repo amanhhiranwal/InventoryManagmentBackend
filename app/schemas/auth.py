@@ -64,3 +64,15 @@ class ResetPasswordRequest(BaseModel):
     password: str = Field(..., min_length=8)
 
     email: EmailStr | None = None
+
+
+class ChangePasswordRequest(BaseModel):
+    """Choosing your own password, while signed in.
+
+    The current one is asked for even when the account is on a
+    temporary password: a session left open on somebody's desk should
+    not be enough to take the account over.
+    """
+
+    current_password: str
+    new_password: str
