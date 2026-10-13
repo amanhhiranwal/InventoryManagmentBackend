@@ -2,6 +2,7 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core import gst
 from app.models.state import State
 from app.schemas.state import CreateStateRequest
 
@@ -84,6 +85,76 @@ def _repair_id_sequence(db: Session) -> None:
 
 class StateService:
     @staticmethod
+    def publish_codes(db: Session) -> None:
+        """Hand Masters' GST codes to the tax calculation.
+
+        Only the codes somebody has actually set are published; the rest
+        fall through to the statutory table, which is where they should
+        come from.
+        """
+
+        try:
+            gst.set_configured_codes(
+                {
+                    name: code
+                    for name, code in db.query(State.name, State.gst_code).all()
+                    if (code or "").strip()
+                }
+            )
+        except Exception:  # noqa: BLE001 - tax still has the statutory table
+            db.rollback()
+
+    @staticmethod
+    def update(state_id: int, request, db: Session) -> State:
+        """Correct a state from Masters."""
+
+        st = db.query(State).filter(State.id == state_id).first()
+
+        if not st:
+            raise HTTPException(status_code=404, detail="State not found.")
+
+        if request.name is not None and request.name.strip():
+            st.name = request.name.strip()
+
+        if request.code is not None and request.code.strip():
+            wanted = request.code.upper().strip()
+
+            clash = (
+                db.query(State)
+                .filter(State.code == wanted, State.id != st.id)
+                .first()
+            )
+
+            if clash:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{clash.name} already uses the abbreviation {wanted}.",
+                )
+
+            st.code = wanted
+
+        if request.gst_code is not None:
+            digits = "".join(ch for ch in request.gst_code if ch.isdigit())
+
+            if request.gst_code.strip() and len(digits) != 2:
+                raise HTTPException(
+                    status_code=400,
+                    detail="A GST state code is two digits, for example 23.",
+                )
+
+            st.gst_code = digits or None
+
+        if request.country is not None and request.country.strip():
+            st.country = request.country.strip()
+
+        db.commit()
+        db.refresh(st)
+
+        StateService.publish_codes(db)
+
+        return st
+
+    @staticmethod
     def create(request: CreateStateRequest, db: Session) -> State:
         name = request.name.strip()
         code_upper = request.code.upper().strip()
@@ -108,14 +179,27 @@ class StateService:
         # Before inserting, not after: this is what the collision was.
         _repair_id_sequence(db)
 
+        digits = "".join(
+            ch for ch in str(getattr(request, "gst_code", "") or "") if ch.isdigit()
+        )
+
+        if str(getattr(request, "gst_code", "") or "").strip() and len(digits) != 2:
+            raise HTTPException(
+                status_code=400,
+                detail="A GST state code is two digits, for example 23.",
+            )
+
         st = State(
             name=name,
             code=code_upper,
+            gst_code=digits or None,
             country=request.country.strip() if request.country else "India",
         )
         db.add(st)
         db.commit()
         db.refresh(st)
+
+        StateService.publish_codes(db)
 
         return st
 
@@ -148,7 +232,14 @@ class StateService:
         _repair_id_sequence(db)
 
         for name, code in missing:
-            db.add(State(name=name, code=code, country="India"))
+            db.add(
+                State(
+                    name=name,
+                    code=code,
+                    gst_code=gst.STATE_CODES.get(name.lower()),
+                    country="India",
+                )
+            )
 
         db.commit()
 
@@ -157,6 +248,7 @@ class StateService:
     @staticmethod
     def get_all(db: Session) -> list[State]:
         StateService.seed_default_states(db)
+        StateService.publish_codes(db)
 
         # Alphabetical: the list is long enough now that seeding order is
         # no use to somebody looking for one.

@@ -54,6 +54,29 @@ def rate_for(hsn: str | None, fallback: float = 18.0) -> float:
         return 18.0
 
 
+#: Codes a super admin has set on Masters > States, by lower-cased state
+#: name. Refreshed by StateService whenever the list is read or changed.
+#:
+#: The statutory table below is the fallback, not the authority: a state
+#: it does not know - a new union territory, a renamed one - would
+#: otherwise be untaxable until somebody shipped a new build. Setting one
+#: here is how that is fixed from the screen instead.
+_CONFIGURED: dict[str, str] = {}
+
+
+def set_configured_codes(codes: dict[str, str]) -> None:
+    """Replace what Masters has on file."""
+
+    _CONFIGURED.clear()
+    _CONFIGURED.update(
+        {
+            str(name or "").strip().lower(): str(code).strip()
+            for name, code in (codes or {}).items()
+            if str(code or "").strip()
+        }
+    )
+
+
 def state_code(value: str | None) -> str:
     """The two-digit GST code for a state, from a code or a name."""
 
@@ -64,7 +87,14 @@ def state_code(value: str | None) -> str:
     if digits:
         return digits[:2].zfill(2)
 
-    return STATE_CODES.get(raw.lower(), "")
+    name = raw.lower()
+
+    configured = _CONFIGURED.get(name)
+
+    if configured:
+        return "".join(ch for ch in configured if ch.isdigit())[:2].zfill(2)
+
+    return STATE_CODES.get(name, "")
 
 
 #: The GST state codes. Only the two-digit code decides the tax split, so
