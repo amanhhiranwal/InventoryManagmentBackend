@@ -691,6 +691,114 @@ try:
                     raised["id"] not in pending_ids(stranger),
                 )
 
+    # ------------------------------------------- rejected, then resubmitted
+    banner("9d. A rejected order comes back with its history")
+
+    second = make_order("Round Two", 18)
+    sent = send_up(second, 18)
+    first_round = (sent.json() or {}).get("data")
+
+    if first_round:
+        created_approvals.append(first_round["id"])
+
+    turned_down = api(
+        "put", f"/approvals/{first_round['id']}/decide", token["avp"],
+        json={"approve": False, "remarks": "Drop it to 12% and come back."},
+    )
+    check(
+        "the AVP rejects it with a reason",
+        turned_down.status_code == 200,
+        f"{turned_down.status_code} {turned_down.text[:120]}",
+    )
+
+    # Raising it again is what a resubmission is: a second approval on the
+    # same order.
+    again = send_up(second, 12)
+    second_round = (again.json() or {}).get("data")
+
+    if second_round:
+        created_approvals.append(second_round["id"])
+
+    check(
+        "it can be sent up again",
+        again.status_code == 200 and second_round is not None,
+        f"{again.status_code} {again.text[:140]}",
+    )
+
+    history = api(
+        "get", f"/approvals/document/SALES_ORDER/{second['id']}/history",
+        token["am_north_1"],
+    )
+
+    rounds = history.json().get("data") if history.status_code == 200 else []
+
+    check(
+        "the history carries both rounds, newest first",
+        len(rounds) == 2 and rounds[0]["id"] == second_round["id"],
+        f"{history.status_code}: {[r['id'] for r in rounds]}",
+    )
+    check(
+        "the older one is the rejected one",
+        rounds and rounds[-1]["status"] == "REJECTED",
+        str([r.get("status") for r in rounds]),
+    )
+    check(
+        "and it still carries why",
+        any(
+            "12%" in (step.get("remarks") or "")
+            for step in (rounds[-1]["steps"] if rounds else [])
+        ),
+        str(rounds[-1]["steps"] if rounds else None),
+    )
+
+    # ------------------------------------- changing it sends it back up
+    banner("9e. Changing an approved order sends it back up the chain")
+
+    settled = make_order("Edited After Approval", 0)
+    raised = send_up(settled, 0)
+    settled_approval = (raised.json() or {}).get("data")
+
+    if settled_approval:
+        created_approvals.append(settled_approval["id"])
+        api(
+            "put", f"/approvals/{settled_approval['id']}/decide",
+            token["founder"], json={"approve": True},
+        )
+
+    api("put", f"/orders/{settled['id']}/status", token["am_north_1"],
+        json={"status": "CONFIRMED"})
+
+    confirmed = api("get", f"/orders/{settled['id']}", token["am_north_1"]).json()["data"]
+    check("it is approved and confirmed", confirmed["status"] == "CONFIRMED",
+          str(confirmed["status"]))
+
+    # An attachment is not a change to the commitment.
+    api("put", f"/orders/{settled['id']}", token["am_north_1"],
+        json={"attachments": [{"name": "site-photo.pdf"}]})
+
+    after_file = api("get", f"/orders/{settled['id']}", token["am_north_1"]).json()["data"]
+    check(
+        "attaching a document leaves it approved",
+        after_file["status"] == "CONFIRMED",
+        str(after_file["status"]),
+    )
+
+    # The discount is.
+    api("put", f"/orders/{settled['id']}", token["am_north_1"],
+        json={"discount_mode": "PERCENT", "discount_input": 30})
+
+    after_edit = api("get", f"/orders/{settled['id']}", token["am_north_1"]).json()["data"]
+    check(
+        "changing the discount sends it back to draft",
+        after_edit["status"] == "DRAFT",
+        str(after_edit["status"]),
+    )
+    check(
+        "and it cannot be confirmed again without approval",
+        api("put", f"/orders/{settled['id']}/status", token["am_north_1"],
+            json={"status": "CONFIRMED"}).status_code == 409,
+    )
+
     banner("9b. The approval email decides it without signing in")
 
     # Built here rather than driven over HTTP, because what is being
