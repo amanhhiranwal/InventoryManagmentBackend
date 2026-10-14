@@ -41,6 +41,34 @@ def login(email, password):
     return body.get("data", body)["access_token"]
 
 
+def settled(user_id):
+    """Treat a freshly made account as one whose owner has signed in.
+
+    Every account is created on a temporary password and may do nothing
+    but change it - which is tested in test_first_login.py. This suite is
+    about who can see whose records, so the accounts it makes start past
+    that gate rather than each one signing in to walk through it.
+    """
+
+    import sys
+
+    sys.path.insert(0, "/app")
+
+    from app.database.postgres import SessionLocal
+    from app.models.user import User
+
+    db = SessionLocal()
+
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+
+        if user is not None:
+            user.must_change_password = False
+            db.commit()
+    finally:
+        db.close()
+
+
 def head(token):
     return {"Authorization": f"Bearer {token}"}
 
@@ -145,6 +173,13 @@ try:
             raise RuntimeError(f"{label}: {r.status_code} {r.text}")
         uid = r.json().get("data", r.json())["id"]
         created_users.append(uid)
+
+        # A new account cannot work the CRM until its owner has chosen
+        # their own password - which is the point of that flag, and has a
+        # suite of its own in test_first_login.py. Here it is simply
+        # stepped over: this suite is about who can see whose records.
+        settled(uid)
+
         return uid, payload["email"]
 
     ceo_id, ceo_email = make_user("Ceo", "CEO", None, [company_a, company_b])

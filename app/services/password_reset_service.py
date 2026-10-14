@@ -136,6 +136,10 @@ class PasswordResetService:
                 detail="This reset link does not belong to that email address.",
             )
 
+        # The same rules as choosing one while signed in - a password set
+        # off a link is the one the account is worked under afterwards.
+        PasswordService.assert_strong(new_password)
+
         user.password = PasswordService.hash_password(new_password)
         db.add(user)
         db.commit()

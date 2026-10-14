@@ -138,6 +138,7 @@ def sync_db_and_seed():
             "inventory.menu",
             "inventory.read",
             "inventory.create",
+            "inventory.bulk_upload",
             "masters.menu",
             "company.read",
             "company.create",

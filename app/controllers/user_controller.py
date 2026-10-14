@@ -61,8 +61,8 @@ class UserController:
         }
 
     @staticmethod
-    def get_all(db, skip: int = 0, limit: int = 100, current_user=None):
-        result = UserService.get_all(db, skip, limit, current_user)
+    def get_all(db, skip: int = 0, limit: int = 100, current_user=None, search: str | None = None):
+        result = UserService.get_all(db, skip, limit, current_user, search)
         return {
             "success": True,
             "data": [UserController._to_response_dict(u) for u in result["data"]],
@@ -84,6 +84,18 @@ class UserController:
         return {
             "success": True,
             "message": "User deleted successfully.",
+        }
+
+    @staticmethod
+    def reset_password(user_id: str, db, current_user=None):
+        user = UserService.reset_password(user_id, db, current_user)
+
+        return {
+            "success": True,
+            "message": (
+                f"A temporary password has been emailed to {user.email}. "
+                "They will choose their own when they sign in."
+            ),
         }
 
     @staticmethod

@@ -46,6 +46,13 @@ PERMISSIONS = {
     # but a super admin could correct a stock figure.
     "inventory.update": ("Inventory", "Edit a product and its stock level"),
     "inventory.delete": ("Inventory", "Remove a product from the catalogue"),
+    # Loading a supplier's sheet is a different act from adding a product:
+    # one row can become forty records, so it is granted on its own rather
+    # than coming free with inventory.create.
+    "inventory.bulk_upload": (
+        "Inventory",
+        "Load a sheet of products from Excel or CSV",
+    ),
 }
 
 #: role -> what it is for, and what it is granted.
@@ -66,7 +73,7 @@ ROLES = {
         [
             "procurement_desk.read",
             "inventory.read", "inventory.create", "inventory.update",
-            "inventory.delete",
+            "inventory.delete", "inventory.bulk_upload",
             # The product type, category group and unit lookups the
             # catalogue screen needs come with inventory.read - granting
             # the Masters pages themselves would put the warehouse in

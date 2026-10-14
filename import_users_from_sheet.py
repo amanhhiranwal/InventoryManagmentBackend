@@ -150,8 +150,30 @@ def phone_digits(value):
 
 
 def make_password():
+    """A first password that meets the rules the API enforces.
+
+    One of each kind rather than a sample of an alphabet, because a
+    fourteen-character password drawn only from letters and digits is
+    refused on the way in - and this is a script that onboards people in
+    bulk, so it would be refused fourteen times before anyone noticed.
+    """
+
     alphabet = string.ascii_letters + string.digits
-    return "".join(secrets.choice(alphabet) for _ in range(PASSWORD_LENGTH))
+
+    picked = [
+        secrets.choice(string.ascii_uppercase),
+        secrets.choice(string.ascii_lowercase),
+        secrets.choice(string.digits),
+        secrets.choice("!@#$%&*"),
+    ]
+
+    picked += [
+        secrets.choice(alphabet) for _ in range(PASSWORD_LENGTH - len(picked))
+    ]
+
+    secrets.SystemRandom().shuffle(picked)
+
+    return "".join(picked)
 
 
 #: The same place written two ways in one sheet. Left as a small, visible
