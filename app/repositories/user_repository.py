@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.user import User
 
@@ -62,7 +62,18 @@ class UserRepository:
             )
 
         total = query.count()
-        data = query.order_by(User.email.asc()).offset(skip).limit(limit).all()
+
+        # Roles and companies are on every row, so they are fetched with
+        # the page - two more queries altogether, rather than two per
+        # person each time the list is drawn.
+        data = (
+            query.options(selectinload(User.roles), selectinload(User.companies))
+            .order_by(User.email.asc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+
         return {"data": data, "total": total}
 
     @staticmethod

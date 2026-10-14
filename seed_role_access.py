@@ -65,7 +65,10 @@ ROLES = {
         "customer.bulk_upload",
         "lead.bulk_upload",
     ],
-    "AVP": SALES_FLOOR,
+    # The AVP brings enquiries in by the spreadsheet for their region.
+    # Customers are not theirs to import: a few hundred people who have
+    # already bought is a different privilege, and stays with the CEO.
+    "AVP": SALES_FLOOR + ["lead.bulk_upload"],
     "Zonal Head": SALES_FLOOR,
     "Area Manager": SALES_FLOOR,
 }
