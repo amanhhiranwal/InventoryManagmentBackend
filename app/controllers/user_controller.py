@@ -87,6 +87,18 @@ class UserController:
         }
 
     @staticmethod
+    def reset_password(user_id: str, db, current_user=None):
+        user = UserService.reset_password(user_id, db, current_user)
+
+        return {
+            "success": True,
+            "message": (
+                f"A temporary password has been emailed to {user.email}. "
+                "They will choose their own when they sign in."
+            ),
+        }
+
+    @staticmethod
     def update(user_id: str, request, db, current_user=None):
         user = UserService.update(user_id, request, db, current_user)
         return {

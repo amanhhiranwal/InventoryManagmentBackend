@@ -94,15 +94,7 @@ def reset_user_password(
     it went to, and the inbox is where it is read.
     """
 
-    user = UserService.reset_password(user_id, db, current_user)
-
-    return {
-        "success": True,
-        "message": (
-            f"A temporary password has been emailed to {user.email}. "
-            "They will choose their own when they sign in."
-        ),
-    }
+    return UserController.reset_password(user_id, db, current_user)
 
 
 @router.put("/{user_id}")

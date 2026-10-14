@@ -183,6 +183,27 @@ try:
     sent.clear()
     session.expire_all()
 
+    # The endpoint is reached over HTTP, for an account that does not
+    # exist. A 404 means the route imported, ran, and got as far as
+    # looking the person up; a 500 means it fell over before that - which
+    # is exactly what a route referring to a name it never imported did,
+    # while the service underneath it passed every test it had.
+    #
+    # No real reset, so no real email: the behaviour itself is exercised
+    # in process below, where the mailer is replaced.
+    nobody = api(
+        "post",
+        "/users/00000000-0000-4000-8000-000000000000/reset-password",
+        admin,
+        json={},
+    )
+
+    check(
+        "the reset endpoint is wired up",
+        nobody.status_code == 404,
+        f"{nobody.status_code} {nobody.text[:160]}",
+    )
+
     reset = UserService.reset_password(
         user_id, session, {"is_super_admin": True, "user_id": user_id}
     )
