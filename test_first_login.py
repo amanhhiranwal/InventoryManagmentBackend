@@ -140,11 +140,30 @@ try:
     check("the old password has to be right", wrong.status_code == 400,
           f"{wrong.status_code} {wrong.text[:120]}")
 
-    short = api("post", "/auth/change-password", token, json={
-        "current_password": temporary, "new_password": "short",
-    })
-    check("and the new one long enough", short.status_code == 400,
-          f"{short.status_code} {short.text[:120]}")
+    # Every rule, each on a password that breaks only that one, so a
+    # refusal cannot be passing for the wrong reason. The space and the
+    # equals sign are refused outright rather than trimmed: a password
+    # with a space in it is one that gets typed wrong down a phone, and
+    # one with an equals sign is one that has to be reasoned about
+    # wherever it is pasted into something else.
+    for why, weak in [
+        ("long enough", "Ab1@567"),
+        ("a small letter", "ABCD1234@"),
+        ("a capital letter", "abcd1234@"),
+        ("a number", "Abcdefg@h"),
+        ("a symbol", "Abcd12345"),
+        ("no space in it", "Abcd 123@x"),
+        ("no equals sign in it", "Abcd=123@x"),
+    ]:
+        refused = api("post", "/auth/change-password", token, json={
+            "current_password": temporary, "new_password": weak,
+        })
+
+        check(
+            f"and the new one has to have {why}",
+            refused.status_code == 400,
+            f"{refused.status_code} {refused.text[:120]}",
+        )
 
     same = api("post", "/auth/change-password", token, json={
         "current_password": temporary, "new_password": temporary,
@@ -232,8 +251,61 @@ try:
         str(back.json().get("user")),
     )
 
+    print("\n6. Searching the list finds people who are not on this page")
+
+    # The screen shows ten at a time. Until now the search box filtered
+    # those ten, so looking for somebody on page 3 found nothing at all
+    # and the list said "no records" about a person who was right there.
+    everyone = api("get", "/users/?page=1&size=500", admin).json()
+    people = everyone.get("data", [])
+
+    check("there are users to search", len(people) > 0, str(len(people)))
+
+    first_page = {
+        u["email"] for u in api("get", "/users/?page=1&size=10", admin).json().get("data", [])
+    }
+
+    # Somebody the first page does not show, so finding them can only be
+    # the search reaching past it.
+    deep = next((u for u in people if u["email"] not in first_page), None)
+
+    if deep is None:
+        check("there is somebody past the first page", False, f"{len(people)} users in all")
+    else:
+        found = api("get", f"/users/?page=1&size=10&search={deep['email']}", admin).json()
+        hits = found.get("data", [])
+
+        check(
+            "searching for them finds them",
+            [u["email"] for u in hits] == [deep["email"]],
+            f"{deep['email']} -> {[u['email'] for u in hits]}",
+        )
+        check(
+            "and the count is the count of matches, not of everybody",
+            found.get("total") == 1,
+            str(found.get("total")),
+        )
+
+        by_name = api(
+            "get", f"/users/?page=1&size=50&search={deep['first_name']}", admin
+        ).json()
+
+        check(
+            "a first name finds them too",
+            any(u["email"] == deep["email"] for u in by_name.get("data", [])),
+            str(len(by_name.get("data", []))),
+        )
+
+    nowhere = api("get", "/users/?page=1&size=10&search=zzz-nobody-zzz", admin).json()
+
+    check(
+        "and a search that matches nobody says so",
+        nowhere.get("data") == [] and nowhere.get("total") == 0,
+        str(nowhere.get("total")),
+    )
+
 finally:
-    print("\n6. Clearing up")
+    print("\n7. Clearing up")
 
     try:
         from sqlalchemy import text

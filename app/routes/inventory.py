@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -74,6 +74,90 @@ def create_item(
         "message": "Inventory item created successfully.",
         "data": doc
     }
+
+@router.get("/items/bulk/template")
+def bulk_upload_template(
+    current_user=Depends(require_permission("inventory.bulk_upload")),
+    db: Session = Depends(get_db),
+):
+    """The blank sheet to fill in, with today's masters listed on it."""
+
+    from fastapi.responses import Response
+
+    from app.services import inventory_import_service
+
+    workbook = inventory_import_service.template_workbook(db, current_user)
+
+    return Response(
+        content=workbook,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={
+            "Content-Disposition":
+                'attachment; filename="Inventory_Upload_Template.xlsx"'
+        },
+    )
+
+
+@router.post("/items/bulk")
+async def bulk_upload(
+    file: UploadFile = File(...),
+    commit: bool = False,
+    current_user=Depends(require_permission("inventory.bulk_upload")),
+    db: Session = Depends(get_db),
+):
+    """Load a sheet of products.
+
+    Called twice by the screen: once to show what the file would do, and
+    again with ``commit`` to do it. Both read the file the same way, so
+    what was shown is what is saved - and a sheet with anything wrong in
+    it saves nothing at all.
+    """
+
+    from app.services import inventory_import_service
+
+    content = await file.read()
+
+    if not content:
+        raise HTTPException(status_code=400, detail="That file is empty.")
+
+    # Big enough for a catalogue, small enough that nobody uploads a
+    # database by accident.
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(
+            status_code=400,
+            detail="That file is larger than 5 MB. Split it into two sheets.",
+        )
+
+    result = inventory_import_service.load(
+        content=content,
+        filename=file.filename or "",
+        current_user=current_user,
+        db=db,
+        commit=commit,
+    )
+
+    if result["errors"]:
+        message = (
+            f"{len(result['errors'])} problem"
+            f"{'' if len(result['errors']) == 1 else 's'} in that sheet. "
+            "Nothing has been loaded."
+        )
+    elif result["created"]:
+        message = f"{result['created']} products loaded from that sheet."
+    else:
+        message = (
+            f"{result['products']} products ready to load from "
+            f"{result['rows']} rows."
+        )
+
+    return {
+        "success": not result["errors"],
+        "message": message,
+        "data": result,
+    }
+
 
 @router.get("/companies")
 def get_scope_companies(

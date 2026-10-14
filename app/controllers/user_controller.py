@@ -61,8 +61,8 @@ class UserController:
         }
 
     @staticmethod
-    def get_all(db, skip: int = 0, limit: int = 100, current_user=None):
-        result = UserService.get_all(db, skip, limit, current_user)
+    def get_all(db, skip: int = 0, limit: int = 100, current_user=None, search: str | None = None):
+        result = UserService.get_all(db, skip, limit, current_user, search)
         return {
             "success": True,
             "data": [UserController._to_response_dict(u) for u in result["data"]],
