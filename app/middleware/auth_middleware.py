@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -9,7 +9,20 @@ from app.services.jwt_service import JWTService
 security = HTTPBearer()
 
 
+#: What an account on a temporary password may still reach: the two
+#: things it needs to stop being on one, and signing out. Everything
+#: else waits until the password has been changed - an emailed password
+#: has been through a mail server and somebody's inbox, and is not a
+#: credential to work under.
+WHILE_PASSWORD_IS_TEMPORARY = (
+    "/auth/change-password",
+    "/auth/me",
+    "/auth/logout",
+)
+
+
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
 ):
@@ -42,6 +55,18 @@ def get_current_user(
             raise HTTPException(
                 status_code=401,
                 detail="This account has been deactivated. Sign in again.",
+            )
+
+        if user.must_change_password and not str(
+            request.url.path
+        ).endswith(WHILE_PASSWORD_IS_TEMPORARY):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Choose your own password before using the CRM. The "
+                    "one you signed in with was emailed to you and is "
+                    "temporary."
+                ),
             )
 
     return payload

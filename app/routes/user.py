@@ -82,6 +82,29 @@ def delete_user(
     return UserController.delete(user_id, db, current_user)
 
 
+@router.post("/{user_id}/reset-password")
+def reset_user_password(
+    user_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_permission("user.update")),
+):
+    """Email this person a new temporary password.
+
+    The password itself is never in the response - the message says who
+    it went to, and the inbox is where it is read.
+    """
+
+    user = UserService.reset_password(user_id, db, current_user)
+
+    return {
+        "success": True,
+        "message": (
+            f"A temporary password has been emailed to {user.email}. "
+            "They will choose their own when they sign in."
+        ),
+    }
+
+
 @router.put("/{user_id}")
 def update_user(
     user_id: str,

@@ -208,11 +208,16 @@ class QuotationStatus:
 
 
 QUOTATION_TRANSITIONS: dict[str, set[str]] = {
-    # A draft is sent, held for approval when it carries a discount, or
-    # allowed to lapse past its validity date.
+    # A draft is sent to the customer, marked accepted once they agree,
+    # or allowed to lapse past its validity date.
+    #
+    # Not held for approval: a proposal is a price put in front of a
+    # customer to see what they say, and the signature the business asks
+    # for is on the sales order. The status stays on the enum for
+    # proposals raised under the old flow, but nothing moves to it now.
     QuotationStatus.DRAFT: {
-        QuotationStatus.PENDING_APPROVAL,
         QuotationStatus.SENT,
+        QuotationStatus.ACCEPTED,
         QuotationStatus.EXPIRED,
     },
     # Approval either releases the quotation to be sent or hands it back.

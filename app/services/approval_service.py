@@ -109,6 +109,29 @@ class ApprovalService:
         )
 
     @staticmethod
+    def history_for(
+        document_type: str, document_id: int, db: Session
+    ) -> list[SalesApproval]:
+        """Every approval ever raised on this document, newest first.
+
+        A document that was rejected and resubmitted has more than one:
+        the open request, and the ones before it. Whoever is deciding the
+        current request wants to know what was said about the last one -
+        "no" with no reason attached is what sends an order round the
+        loop a second time unchanged.
+        """
+
+        return (
+            db.query(SalesApproval)
+            .filter(
+                SalesApproval.document_type == document_type,
+                SalesApproval.document_id == document_id,
+            )
+            .order_by(SalesApproval.id.desc())
+            .all()
+        )
+
+    @staticmethod
     def _price_type_for_document(
         document_type: str,
         document_id: int,

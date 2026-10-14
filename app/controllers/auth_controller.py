@@ -54,6 +54,9 @@ class AuthController:
                 "last_name": user.last_name,
                 "email": user.email,
                 "is_super_admin": user.is_super_admin,
+                #: Signed in, but on a password that was emailed to them.
+                #: Nothing else in the CRM answers until it is changed.
+                "must_change_password": bool(user.must_change_password),
             },
         }
 

@@ -9,6 +9,7 @@ from app.repositories.rbac_repository import RBACRepository
 from app.core.field_checks import check_email
 from app.repositories.user_repository import UserRepository
 from app.services.hierarchy_service import HierarchyService
+from app.services import account_mail
 from app.services.password_service import PasswordService
 from app.utils.validators import validate_uuid
 
@@ -46,6 +47,52 @@ class UserService:
                 status_code=403,
                 detail="You can only manage users who are below you in the hierarchy.",
             )
+
+    @staticmethod
+    def reset_password(user_id: str, db: Session, current_user: dict) -> User:
+        """Issue a fresh temporary password and email it to the person.
+
+        The password is not returned. An administrator who can read it
+        off their own screen will write it somewhere, or say it down a
+        phone; the point of mailing it is that the account's owner is
+        the one who learns it.
+        """
+
+        validate_uuid(user_id, "user_id")
+
+        user = db.query(User).filter(User.id == UUID(user_id)).first()
+
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        if not HierarchyService.can_see_user(current_user, user.id, db):
+            raise HTTPException(
+                status_code=403,
+                detail="You can only reset the password of somebody in your team.",
+            )
+
+        temporary = PasswordService.temporary_password()
+
+        user.password = PasswordService.hash_password(temporary)
+        user.must_change_password = True
+
+        db.commit()
+        db.refresh(user)
+
+        if not account_mail.send_reset(user, temporary, db):
+            # The password has already changed, so saying it went when it
+            # did not would lock somebody out with nothing to sign in
+            # with and no way to know why.
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"The password was reset but the email to {user.email} "
+                    "could not be sent. Check the mail settings and reset "
+                    "it again."
+                ),
+            )
+
+        return user
 
     @staticmethod
     def create(request, db: Session, current_user: dict | None = None) -> User:
@@ -104,7 +151,15 @@ class UserService:
         ):
             reports_to = UUID(current_user["user_id"])
 
-        hashed_password = PasswordService.hash_password(request.password)
+        # Whatever it starts as, the account cannot be worked under
+        # until the person has chosen their own - so a blank field is not
+        # an omission to refuse, it is the ordinary case.
+        temporary = (getattr(request, "password", None) or "").strip()
+
+        if not temporary:
+            temporary = PasswordService.temporary_password()
+
+        hashed_password = PasswordService.hash_password(temporary)
 
         user = User(
             first_name=request.first_name,
@@ -116,6 +171,7 @@ class UserService:
             location=getattr(request, "location", None),
             is_super_admin=False,
             is_active=True,
+            must_change_password=True,
             reports_to_id=reports_to,
         )
 
@@ -123,6 +179,11 @@ class UserService:
         user.companies = companies_list
 
         created_user = UserRepository.create(db, user)
+
+        # The only place that password is ever written down. It is not in
+        # the response and not on the screen that asked for the account,
+        # so the person it belongs to is the one who learns it.
+        account_mail.send_welcome(created_user, temporary, db)
         
         # Mirror user record across all microservice databases
         try:

@@ -7,10 +7,12 @@ from app.core.fulfilment import desk_for, holds_desk
 from app.core.approvals import price_type_for
 from app.core.workflow_status import (
     SALES_ORDER_TRANSITIONS,
+    ProformaInvoiceStatus,
     SalesOrderStatus,
     assert_transition,
     normalize_sales_order_status,
 )
+from app.models.approval import ApprovalDocument, ApprovalStatus
 from app.models.opportunity_activity import OpportunityActivity
 from app.models.quotation import Quotation
 from app.models.sales_order import SalesOrder
@@ -578,6 +580,65 @@ class SalesOrderService:
     # Writes
     # ------------------------------------------------------------------
     @staticmethod
+    def send_to_desks(order_id: int, current_user: dict, db: Session) -> SalesOrder:
+        """Tell accounts an approved order is theirs to collect against.
+
+        Deliberately changes nothing. The order is already approved and
+        already invoiced; what was missing is that nobody downstream knew.
+        Accounts verify the payment as they always have, and the order
+        moves on from there.
+        """
+
+        from app.models.proforma_invoice import ProformaInvoice
+        from app.services.fulfilment_notice import announce_processing
+
+        order = SalesOrderService.get_by_id(order_id, db)
+
+        SalesOrderService.assert_can_edit(order, current_user, db)
+
+        if not _confirmed_onwards(order.status):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{order.order_number or order.id} has not been approved "
+                    "yet. It can be processed once the chain has cleared it."
+                ),
+            )
+
+        invoice = (
+            db.query(ProformaInvoice)
+            .filter(ProformaInvoice.sales_order_id == order.id)
+            .order_by(ProformaInvoice.id.desc())
+            .first()
+        )
+
+        if invoice is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Generate the proforma invoice first - it is what "
+                    "accounts collect the advance against."
+                ),
+            )
+
+        name = f"{current_user.get('first_name', '')} {current_user.get('last_name', '')}".strip()
+
+        announce_processing(order, invoice, db, name or None)
+
+        SalesOrderService.record_activity(
+            db,
+            order,
+            action="Sent For Processing",
+            description=(
+                "Accounts told to collect the advance against "
+                f"{invoice.pi_number or invoice.id}."
+            ),
+            user_id=current_user.get("user_id"),
+        )
+
+        return order
+
+    @staticmethod
     def create(request, current_user: dict, db: Session) -> SalesOrder:
         SalesOrderService._validate_opportunity(request.opportunity_id, db)
 
@@ -784,7 +845,95 @@ class SalesOrderService:
             for key, value in totals.items():
                 setattr(order, key, value)
 
+            # The figures have changed, so the thing that was approved is
+            # not the thing we now hold. An order past Draft goes back to
+            # it and climbs the chain again - otherwise a signed-off 10%
+            # could be edited to 40% afterwards and stay approved, and
+            # the invoice already raised would be asking for the wrong
+            # money.
+            SalesOrderService._reopen_for_approval(order, current_user, db)
+
         return SalesOrderRepository.save(db, order)
+
+    @staticmethod
+    def _reopen_for_approval(order, current_user: dict, db: Session) -> None:
+        """Send a priced-up order back to Draft after its figures change.
+
+        Nothing happens to an order that is still a draft - it has not
+        been approved, so there is nothing to withdraw and nothing to
+        invalidate.
+        """
+
+        from app.models.proforma_invoice import ProformaInvoice
+        from app.services.approval_service import ApprovalService
+
+        if order.status == SalesOrderStatus.DRAFT:
+            return
+
+        was = order.status
+
+        # Every approval that still stands, not just one waiting to be
+        # decided. A signature already given was given to figures that no
+        # longer exist, and leaving it in place let a changed order be
+        # confirmed straight back on the strength of it - which is the
+        # whole thing this is here to stop.
+        from app.models.approval import SalesApproval
+
+        standing = (
+            db.query(SalesApproval)
+            .filter(
+                SalesApproval.document_type == ApprovalDocument.SALES_ORDER,
+                SalesApproval.document_id == order.id,
+                SalesApproval.status.in_(
+                    [ApprovalStatus.PENDING, ApprovalStatus.APPROVED]
+                ),
+            )
+            .all()
+        )
+
+        for approval in standing:
+            approval.status = ApprovalStatus.WITHDRAWN
+            approval.remarks = (
+                "Superseded - the order was changed after this was decided."
+            )
+
+        # An invoice raised against the old figures asks for the wrong
+        # money. Cancelled rather than deleted: it was a real document,
+        # and it may already have been sent.
+        stale = (
+            db.query(ProformaInvoice)
+            .filter(
+                ProformaInvoice.sales_order_id == order.id,
+                ProformaInvoice.status != ProformaInvoiceStatus.CANCELLED,
+            )
+            .all()
+        )
+
+        for invoice in stale:
+            invoice.status = ProformaInvoiceStatus.CANCELLED
+
+        order.status = SalesOrderStatus.DRAFT
+
+        name = f"{current_user.get('first_name', '')} {current_user.get('last_name', '')}".strip()
+
+        SalesOrderService.record_activity(
+            db,
+            order,
+            action="Reopened For Approval",
+            description=(
+                "The order was changed after approval, so it goes back up "
+                "the chain."
+                + (
+                    f" {len(stale)} proforma invoice(s) cancelled."
+                    if stale
+                    else ""
+                )
+            ),
+            from_status=was,
+            to_status=SalesOrderStatus.DRAFT,
+            user_id=current_user.get("user_id"),
+            commit=False,
+        )
 
     # ------------------------------------------------------------------
     # Activity History

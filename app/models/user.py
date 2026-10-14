@@ -21,6 +21,19 @@ class User(BaseModel):
 
     password: Mapped[str] = mapped_column(String(255))
 
+    #: Set when an account is created, and when somebody resets it for
+    #: them. While it stands the password they hold is a temporary one
+    #: that was emailed to them, so the account can do exactly two
+    #: things: sign in, and choose a new password. Everything else is
+    #: refused - an emailed password has been through a mail server and
+    #: somebody's inbox, and is not a credential to work under.
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+        server_default="false",
+    )
+
     phone_number: Mapped[str] = mapped_column(
         String(20),
         nullable=True,

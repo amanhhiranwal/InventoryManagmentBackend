@@ -110,6 +110,23 @@ def update_order(
     return SalesOrderController.update(order_id, request, current_user, db)
 
 
+@router.post("/{order_id}/process")
+def process_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Hand an approved order to the desks that take it from here.
+
+    Changes nothing about the order: it tells accounts the advance and
+    the terms to collect against, and the existing flow carries on from
+    their verification. An approved order used to sit with nobody
+    downstream told about it.
+    """
+
+    return SalesOrderController.process(order_id, current_user, db)
+
+
 @router.put("/{order_id}/status")
 def update_order_status(
     order_id: int,

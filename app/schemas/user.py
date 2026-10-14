@@ -5,7 +5,10 @@ class CreateUserRequest(BaseModel):
     first_name: str
     last_name: str
     email: EmailStr
-    password: str
+    #: Optional: left out, the server makes one up and emails it. An
+    #: account is unusable until the password has been changed either
+    #: way, so what it starts as matters less than who knows it.
+    password: str | None = None
     phone_number: str
     employee_id: str
     location: str | None = None
