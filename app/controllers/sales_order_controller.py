@@ -55,6 +55,19 @@ class SalesOrderController:
         }
 
     @staticmethod
+    def process(order_id: int, current_user: dict, db: Session):
+        order = SalesOrderService.send_to_desks(order_id, current_user, db)
+
+        return {
+            "success": True,
+            "message": (
+                f"Accounts have been told. {order.order_number or order.id} "
+                "is with them for the advance."
+            ),
+            "data": serialize_sales_order(order),
+        }
+
+    @staticmethod
     def create(request, current_user: dict, db: Session):
         order = SalesOrderService.create(request, current_user, db)
 

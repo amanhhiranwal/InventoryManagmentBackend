@@ -76,7 +76,7 @@ def banner(title):
 SIDEBARS = {
     "admin": [
         ("Dashboard", []),
-        ("Sales", ["Leads", "Opportunity", "Proposal", "Sales Order", "Proforma Invoice"]),
+        ("Sales", ["Leads", "Opportunity", "Proposal", "Sales Order"]),
         ("Users", []),
         ("Inventory", []),
         ("Customers", []),
@@ -101,7 +101,7 @@ SIDEBARS = {
     # that decides whose work they can see.
     "sales": [
         ("Dashboard", []),
-        ("Sales", ["Leads", "Opportunity", "Proposal", "Sales Order", "Proforma Invoice"]),
+        ("Sales", ["Leads", "Opportunity", "Proposal", "Sales Order"]),
         ("Users", []),
         ("Inventory", []),
         ("Customers", []),
@@ -113,7 +113,7 @@ SIDEBARS = {
     # order ends with them.
     "founder": [
         ("Dashboard", []),
-        ("Sales", ["Leads", "Opportunity", "Proposal", "Sales Order", "Proforma Invoice"]),
+        ("Sales", ["Leads", "Opportunity", "Proposal", "Sales Order"]),
         ("Users", []),
         ("Inventory", []),
         ("Customers", []),

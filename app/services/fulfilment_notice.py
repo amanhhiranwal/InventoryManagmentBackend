@@ -307,3 +307,109 @@ def _strip(stage: str) -> str:
         else step.replace("_", " ").title()
         for index, step in enumerate(SalesOrderStatus.PIPELINE)
     )
+
+
+def announce_processing(order, invoice, db: Session, actor_name: str | None) -> None:
+    """Hand a confirmed order to the desks that take it from here.
+
+    An approved order used to sit there: the chain had cleared it and
+    nobody downstream had been told. Accounts need the advance and the
+    terms to collect against, so this is the letter that says the order
+    is theirs now - and it names the invoice, because that is what the
+    money comes in against.
+
+    Never allowed to break what it reports.
+    """
+
+    try:
+        from app.services.company_profile_service import app_url
+
+        owner, managers = _line(
+            str(order.creator_id) if order.creator_id else None, db
+        )
+
+        accounts = desk_holders(ACCOUNTS, db)
+        reference = order.order_number or f"#{order.id}"
+        link = f"/sales/orders/{order.id}"
+
+        advance_percent = (
+            invoice.advance_percent
+            if invoice is not None and invoice.advance_percent is not None
+            else getattr(order, "advance_percent", None)
+        )
+
+        total = getattr(order, "grand_total", None) or 0
+
+        facts: list[tuple[str, str]] = [
+            ("Order No.", reference),
+            ("Customer", order.customer_name or "-"),
+        ]
+
+        if invoice is not None:
+            facts.append(("Proforma invoice", invoice.pi_number or f"#{invoice.id}"))
+
+        if total:
+            facts.append(("Order value", inr(total)))
+
+        if advance_percent is not None:
+            facts.append(("Advance", f"{advance_percent:g}%"))
+
+            if total:
+                facts.append(
+                    ("Advance due", inr(float(total) * float(advance_percent) / 100.0))
+                )
+
+        terms = getattr(order, "payment_terms", None) or (
+            getattr(invoice, "payment_terms", None) if invoice is not None else None
+        )
+
+        if terms:
+            facts.append(("Payment terms", str(terms)))
+
+        recipients = [u for u in [*accounts, owner, *managers] if u is not None]
+
+        notify_users(
+            db,
+            [u.id for u in recipients],
+            module="sales_order",
+            entity_id=order.id,
+            action="Order Processing",
+            message=(
+                f"Sales order {reference} is ready to process - accounts to "
+                "collect the advance against the proforma invoice."
+            ),
+            link=link,
+            actor_name=actor_name,
+        )
+
+        addresses = [u.email for u in recipients if u.email]
+
+        if not addresses:
+            return
+
+        letter = EmailLetter(
+            db,
+            heading=f"Sales order {reference} is ready to process",
+            greeting="Dear Accounts,",
+            paragraphs=[
+                f"{actor_name or 'The sales team'} has sent this order on "
+                "for processing. The approval is cleared and the proforma "
+                "invoice is raised.",
+                "The advance and the terms are below. Once the money is in, "
+                "verify the payment on the order and it moves to "
+                "procurement.",
+            ],
+            facts=facts,
+            action=(f"Open sales order {reference}", app_url(link, db)),
+            sign_off_name=actor_name,
+        )
+
+        EmailService.send(
+            to=addresses[:1],
+            subject=f"Sales order {reference} is ready to process",
+            text_body=letter.text(),
+            html_body=letter.html(),
+            cc=addresses[1:],
+        )
+    except Exception:  # noqa: BLE001 - the order is already on its way
+        logger.exception("Could not announce processing for order %s", getattr(order, "id", "?"))

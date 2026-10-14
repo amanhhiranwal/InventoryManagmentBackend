@@ -36,7 +36,18 @@ RENAMED_BY_PATH = {
 #: and the warehouse behind the same heading - they are separate teams and
 #: now have separate menus. "Order Tracking" was a second answer to a
 #: question the sales order's own Order Process panel already answers.
+#: "Proforma Invoice" was a list of documents that only ever belong to a
+#: sales order, and a second place to go looking for one. The invoice now
+#: lives on the order that raised it - generated, downloaded, previewed
+#: and sent from there - so the heading is a route to the same documents
+#: by a longer way round.
 RETIRED_DEFAULT_MENUS = {"Fulfilment", "Order Tracking"}
+
+#: The same, for a menu that sits under another one. Matched on title and
+#: path together, so a heading somebody made themselves is never swept up.
+RETIRED_DEFAULT_CHILDREN = {
+    ("Proforma Invoice", "/sales/proforma-invoices"),
+}
 
 #: Top-level menus the design moved: title -> (old defaults, new default).
 #: A row still at one of its old defaults is moved; one the user reordered
@@ -83,7 +94,6 @@ DEFAULT_MENUS_DATA = [
       {"title": "Sales Order", "icon": "LuFileText", "path": "/sales/orders", "permission_key": "order.read", "order_index": 4},
       # Raised against a confirmed sales order, so whoever can see orders can
       # see their invoices - no separate permission to grant.
-      {"title": "Proforma Invoice", "icon": "LuReceiptText", "path": "/sales/proforma-invoices", "permission_key": "order.read", "order_index": 5},
     ]
   },
   {
@@ -250,6 +260,11 @@ class MenuService:
             if row.parent_id is None
             and row.title in RETIRED_DEFAULT_MENUS
             and (row.path or "") in ("", "/fulfilment/tracking")
+        ] + [
+            row
+            for row in rows
+            if row.parent_id is not None
+            and (row.title, row.path or "") in RETIRED_DEFAULT_CHILDREN
         ]
 
         for row in retired:
