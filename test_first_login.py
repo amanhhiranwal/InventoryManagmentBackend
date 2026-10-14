@@ -304,8 +304,53 @@ try:
         str(nowhere.get("total")),
     )
 
+    print("\n7. The list is read in a handful of queries, not one per person")
+
+    # It used to ask the database about each person separately - their
+    # roles, their companies, what each of those roles grants, and who
+    # their manager is - so 37 people cost 113 round trips. The database
+    # is on another machine, so each of those is milliseconds of waiting
+    # and the screen sat on a spinner.
+    #
+    # The count is asserted rather than the clock: a slow afternoon on the
+    # network should not fail a suite, but a query per person should.
+    from sqlalchemy import event
+
+    from app.database.postgres import engine
+
+    queries = []
+
+    def counted(conn, cursor, statement, *rest):
+        queries.append(statement)
+
+    event.listen(engine, "before_cursor_execute", counted)
+
+    try:
+        from app.controllers.user_controller import UserController
+
+        counting = SessionLocal()
+        listed = UserController.get_all(
+            counting, 0, 500, {"is_super_admin": True, "user_id": None}
+        )
+        counting.close()
+    finally:
+        event.remove(engine, "before_cursor_execute", counted)
+
+    people = len(listed["data"])
+
+    check(
+        "the whole list came back",
+        people > 1,
+        str(people),
+    )
+    check(
+        f"{people} people cost a fixed handful of queries",
+        len(queries) <= 12,
+        f"{len(queries)} queries for {people} people",
+    )
+
 finally:
-    print("\n7. Clearing up")
+    print("\n8. Clearing up")
 
     try:
         from sqlalchemy import text
