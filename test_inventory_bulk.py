@@ -61,7 +61,7 @@ HEADERS = [
 ]
 
 
-def sheet(*rows_in) -> bytes:
+def sheet_with(heads, *rows_in) -> bytes:
     """Those rows as a .xlsx, laid out like the template: title, then heads."""
 
     from openpyxl import Workbook
@@ -72,7 +72,7 @@ def sheet(*rows_in) -> bytes:
 
     page.append(["Inventory data collection - one product per row"])
     page.append(["Shaded columns are required."])
-    page.append(HEADERS)
+    page.append(list(heads))
 
     for row in rows_in:
         page.append(list(row))
@@ -80,6 +80,10 @@ def sheet(*rows_in) -> bytes:
     buffer = io.BytesIO()
     book.save(buffer)
     return buffer.getvalue()
+
+
+def sheet(*rows_in) -> bytes:
+    return sheet_with(HEADERS, *rows_in)
 
 
 def comma_separated(*rows_in) -> bytes:
@@ -277,6 +281,186 @@ try:
         all(row["name"] == f"Bulk Trio {TAG}" for row in saved)
         and all(float((row.get("attributes") or {}).get("rate") or 0) == 5000 for row in saved),
     )
+    check(
+        "each holds one unit, not the row's figure three times over",
+        all(
+            float((row.get("attributes") or {}).get("instock") or 0) == 1
+            for row in saved
+        ),
+        str([(row.get("attributes") or {}).get("instock") for row in saved]),
+    )
+
+    print("\n4b. A delivery written the way the warehouse writes it")
+
+    # Seventy-five panels on one line, a line break after each slash, and
+    # In-Stock Qty saying 75 - meaning the delivery, not 75 of each. The
+    # sheet this is modelled on came back from the inventory team like
+    # this, and the first rule I wrote would have made 5,625 units of it.
+    many = [f"BULK-{TAG}-D{n:03d}" for n in range(1, 76)]
+
+    delivery = sheet(
+        [
+            '65" SPX-3576',
+            f"Bulk Delivery {TAG}",
+            '65" 4K UHD, 20-point touch',
+            "/\n".join(many),
+            code,
+            "",
+            75000,
+            63000,
+            75,
+            1,
+            unit,
+            "",
+        ],
+    )
+
+    loaded = upload(admin, delivery, "products.xlsx", commit=True)
+
+    check(
+        "seventy-five serial numbers become seventy-five products",
+        data(loaded).get("created") == 75,
+        str(data(loaded).get("created") or body(loaded)),
+    )
+
+    saved = rows(api("get", f"/inventory/items?search=BULK-{TAG}-D", admin))
+    made += [row["_id"] for row in saved]
+
+    stock = [float((row.get("attributes") or {}).get("instock") or 0) for row in saved]
+
+    check(
+        "and the delivery is seventy-five units, not five thousand",
+        sum(stock) == 75,
+        f"{sum(stock)} units across {len(saved)} products",
+    )
+    check(
+        "the line breaks did not end up in a serial number",
+        all(
+            row["serial_number"].strip() == row["serial_number"]
+            and "\n" not in row["serial_number"]
+            for row in saved
+        ),
+        str([r["serial_number"] for r in saved][:2]),
+    )
+
+    # The other way the same delivery gets written down.
+    one_each = sheet(
+        [
+            "",
+            f"Bulk Each {TAG}",
+            "",
+            f"BULK-{TAG}-E1/BULK-{TAG}-E2",
+            code,
+            "",
+            100,
+            "",
+            1,
+            1,
+            unit,
+            "",
+        ],
+    )
+
+    either = upload(admin, one_each, "products.xlsx", commit=True)
+
+    check(
+        "writing 1 for 'one of each' is read the same way",
+        data(either).get("created") == 2,
+        str(data(either).get("created") or body(either)),
+    )
+
+    saved = rows(api("get", f"/inventory/items?search=BULK-{TAG}-E", admin))
+    made += [row["_id"] for row in saved]
+
+    check(
+        "and both hold one unit",
+        [float((row.get("attributes") or {}).get("instock") or 0) for row in saved] == [1, 1],
+        str([(row.get("attributes") or {}).get("instock") for row in saved]),
+    )
+
+    # Anything else is two claims about the same delivery.
+    muddled = sheet(
+        [
+            "",
+            f"Bulk Muddle {TAG}",
+            "",
+            f"BULK-{TAG}-M1/BULK-{TAG}-M2/BULK-{TAG}-M3",
+            code,
+            "",
+            100,
+            "",
+            40,
+            1,
+            unit,
+            "",
+        ],
+    )
+
+    refused = upload(admin, muddled, "products.xlsx", commit=True)
+
+    check(
+        "three serial numbers and a quantity of 40 is refused",
+        data(refused).get("created") == 0,
+        str(data(refused)),
+    )
+    check(
+        "and the refusal says what to write instead",
+        any(
+            "3 serial numbers" in e and "In-Stock Qty says 40" in e
+            for e in data(refused).get("errors", [])
+        ),
+        str(data(refused).get("errors")),
+    )
+
+    print("\n4c. What cover costs, a column per term")
+
+    terms = rows(api("get", "/warranty-terms", admin))
+    term_name = str((terms[0] or {}).get("name") or "") if terms else ""
+
+    if not term_name:
+        check("there is a warranty term to price", False, "none in Masters")
+    else:
+        with_cover = sheet_with(
+            HEADERS + [f"{term_name} Warranty Rate", f"{term_name} Rate Mode"],
+            [
+                "",
+                f"Bulk Cover {TAG}",
+                "",
+                f"BULK-{TAG}-W1",
+                code,
+                "",
+                1000,
+                "",
+                1,
+                1,
+                unit,
+                "",
+                7.5,
+                "%",
+            ],
+        )
+
+        covered = upload(admin, with_cover, "products.xlsx", commit=True)
+
+        check(
+            "the sheet loads with its warranty columns",
+            covered.status_code == 200 and data(covered).get("created") == 1,
+            str(body(covered)),
+        )
+
+        saved = rows(api("get", f"/inventory/items?search=BULK-{TAG}-W1", admin))
+        made += [row["_id"] for row in saved]
+
+        priced = ((saved[0].get("attributes") if saved else {}) or {}).get(
+            "warranty_rates"
+        ) or {}
+
+        check(
+            f"{term_name} is priced on the product",
+            priced.get(term_name, {}).get("rate") == 7.5
+            and priced.get(term_name, {}).get("mode") == "PERCENT",
+            str(priced),
+        )
 
     print("\n5. A sheet with anything wrong in it loads nothing at all")
 

@@ -120,8 +120,9 @@ COLUMNS: list[dict] = [
         "required": True,
         "aliases": ["in stock qty", "in stock", "stock", "quantity", "qty"],
         "help": (
-            "How many are on the shelf. On a row with several serial "
-            "numbers it is how many of each."
+            "How many are on the shelf. On a row carrying several serial "
+            "numbers each one is a single unit, so this is how many serial "
+            "numbers there are."
         ),
     },
     {
@@ -150,6 +151,11 @@ COLUMNS: list[dict] = [
 #: Figures, as opposed to text.
 NUMERIC = {"rate", "dtp_rate", "instock", "case_size"}
 
+#: Stands in for a cell holding a formula that was never worked out - see
+#: _rows_from_xlsx. Not something anybody could type, so it cannot collide
+#: with a real value.
+UNCALCULATED = "\x00formula"
+
 
 def _normalise(heading) -> str:
     """A column heading reduced to what it means.
@@ -164,6 +170,9 @@ def _normalise(heading) -> str:
 
     return re.sub(r"\s+", " ", text).strip()
 
+
+#: key -> the heading it is called on the sheet, for saying which column.
+_HEADER_BY_KEY: dict[str, str] = {c["key"]: c["header"] for c in COLUMNS}
 
 #: heading -> key, built once from the aliases above.
 _BY_HEADING: dict[str, str] = {}
@@ -203,6 +212,9 @@ class Draft:
             "instock": self.attributes.get("instock", 0),
             "case_size": self.attributes.get("case_size", 1),
             "hsn_code": self.attributes.get("hsn_code", ""),
+            # So the screen can say "5 Years at 10%" before anything is
+            # saved, rather than after somebody opens the product.
+            "warranty_rates": self.attributes.get("warranty_rates") or {},
         }
 
 
@@ -231,22 +243,50 @@ def _rows_from_xlsx(content: bytes) -> list[list[str]]:
             detail="This server cannot read .xlsx files. Upload a CSV instead.",
         )
 
+    def grid(data_only: bool) -> list[list[str]]:
+        book = load_workbook(io.BytesIO(content), data_only=data_only, read_only=True)
+
+        # The template's own tab if it is there, so the examples and the
+        # notes beside it are never read as products.
+        sheet = (
+            book["Products"] if "Products" in book.sheetnames else book.worksheets[0]
+        )
+
+        return [
+            [_cell(cell) for cell in row]
+            for row in sheet.iter_rows(values_only=True)
+        ]
+
     try:
-        book = load_workbook(io.BytesIO(content), data_only=True, read_only=True)
+        rows = grid(True)
     except Exception:
         raise HTTPException(
             status_code=400,
             detail="That file could not be opened as a spreadsheet.",
         )
 
-    # The template's own tab if it is there, so the examples and the notes
-    # beside it are never read as products.
-    sheet = book["Products"] if "Products" in book.sheetnames else book.worksheets[0]
+    # A formula is read as the answer Excel last worked out and saved with
+    # the file. A sheet written by a program rather than by Excel has the
+    # formula and no answer, and the cell then reads as empty - so a
+    # quantity sitting in plain sight on screen is reported missing. Said
+    # plainly instead: the cell is marked, and whatever needed it says so.
+    try:
+        written = grid(False)
+    except Exception:  # pragma: no cover - it opened once already
+        return rows
 
-    return [
-        [_cell(cell) for cell in row]
-        for row in sheet.iter_rows(values_only=True)
-    ]
+    for index, row in enumerate(rows):
+        if index >= len(written):
+            break
+
+        for position, value in enumerate(row):
+            if value or position >= len(written[index]):
+                continue
+
+            if str(written[index][position]).startswith("="):
+                rows[index][position] = UNCALCULATED
+
+    return rows
 
 
 def _rows_from_csv(content: bytes) -> list[list[str]]:
@@ -262,27 +302,40 @@ def _rows_from_csv(content: bytes) -> list[list[str]]:
     return [[_cell(cell) for cell in row] for row in csv.reader(io.StringIO(text))]
 
 
-def _find_header(rows: list[list[str]]) -> tuple[int, dict[int, str]]:
-    """Which row is the headings, and which column is which field.
+def _find_header(rows: list[list[str]]) -> tuple[int, dict[int, str], dict[int, str]]:
+    """Which row is the headings, which column is which field, and the rest.
 
     Looked for rather than assumed, because the template carries a title
     and a note above the headings, and a sheet that has been edited has
     them somewhere else again.
+
+    The columns that are not one of ours come back too, under their own
+    headings. The warranty rates are read from those: what cover costs is
+    a column per term, and the terms are a master, so they cannot be
+    written down here.
     """
 
     for index, row in enumerate(rows[:25]):
-        mapping = {}
+        mapping: dict[int, str] = {}
+        extra: dict[int, str] = {}
 
         for position, heading in enumerate(row):
-            key = _BY_HEADING.get(_normalise(heading))
+            label = str(heading or "").strip()
+
+            if not label:
+                continue
+
+            key = _BY_HEADING.get(_normalise(label))
 
             # First column wins, so a sheet with two "Rate" columns is not
             # read off the second one.
             if key and key not in mapping.values():
                 mapping[position] = key
+            elif not key:
+                extra[position] = label
 
         if "name" in mapping.values() and "serial_number" in mapping.values():
-            return index, mapping
+            return index, mapping, extra
 
     raise HTTPException(
         status_code=400,
@@ -317,7 +370,7 @@ def read_sheet(content: bytes, filename: str) -> list[dict]:
             detail="Upload an Excel (.xlsx) or CSV (.csv) file.",
         )
 
-    header_index, mapping = _find_header(rows)
+    header_index, mapping, extra = _find_header(rows)
 
     read: list[dict] = []
 
@@ -333,12 +386,99 @@ def read_sheet(content: bytes, filename: str) -> list[dict]:
             continue
 
         values["_row"] = header_index + offset + 2  # 1-based, as Excel shows it
+        values["_extra"] = {
+            heading: (row[position] if position < len(row) else "")
+            for position, heading in extra.items()
+        }
+
         read.append(values)
 
     return read
 
 
+def _singular(text: str) -> str:
+    """"4 years" and "4 year" are the same length of cover."""
+
+    return " ".join(
+        word[:-1] if len(word) > 2 and word.endswith("s") else word
+        for word in text.split()
+    )
+
+
+def _warranty_from(extra: dict, terms: list[str], row: int) -> tuple[dict, list[str]]:
+    """What this row says cover costs, per term.
+
+    The terms are a master - "3 Years", "4 Years", "5 Years" - so the
+    columns cannot be written down here: they are matched by name against
+    whatever Masters holds, "4 Year Warranty Rate" beside "4 Year Rate
+    Mode". A term with no figure is simply not offered on this product,
+    which is a different thing from being offered at nothing.
+    """
+
+    by_term = {_singular(_normalise(t)): t for t in terms}
+
+    rates: dict[str, str] = {}
+    modes: dict[str, str] = {}
+    problems: list[str] = []
+
+    for heading, value in extra.items():
+        flat = _normalise(heading)
+
+        for suffix, bucket in (("warranty rate", rates), ("rate mode", modes)):
+            if not flat.endswith(suffix):
+                continue
+
+            prefix = _singular(flat[: -len(suffix)].strip())
+
+            if prefix in by_term:
+                bucket[by_term[prefix]] = str(value or "").strip()
+
+            break
+
+    cover: dict[str, dict] = {}
+
+    for term, raw in rates.items():
+        if not raw:
+            continue
+
+        figure, problem = _number(raw, f"{term} warranty rate", row, 0)
+
+        if problem:
+            problems.append(problem)
+            continue
+
+        if not figure:
+            continue
+
+        # "%" survives nothing that strips punctuation, so the mode is read
+        # off the cell as it was typed. Percent unless it plainly says
+        # money - which is the way most of them are quoted.
+        said = str(modes.get(term, "")).strip().lower()
+
+        money = any(
+            token in said for token in ("₹", "rs", "inr", "amount", "flat", "fixed")
+        )
+
+        cover[term] = {
+            "mode": "AMOUNT" if money else "PERCENT",
+            "rate": figure,
+        }
+
+    return cover, problems
+
+
+def _uncalculated(row: int, label: str) -> str:
+    return (
+        f"Row {row}: {label} is a formula the sheet does not carry an answer "
+        "for. Open it in Excel, let it calculate, and save it again - or "
+        "paste the figure in place of the formula."
+    )
+
+
 def _number(raw: str, label: str, row: int, minimum: float) -> tuple[float | None, str | None]:
+    if str(raw) == UNCALCULATED:
+        return None, _uncalculated(row, label)
+
     text = str(raw or "").strip().replace(",", "")
 
     # ₹ and the like, so a sheet typed as currency is not a sheet of errors.
@@ -399,6 +539,16 @@ def plan(
         if allowed is None or company_id in allowed
     }
 
+    # What cover costs is a commercial figure that happens to live on the
+    # product record, so only a super admin may set it - the same rule the
+    # form follows. For anyone else the columns are simply not read.
+    terms: list[str] = []
+
+    if (current_user or {}).get("is_super_admin"):
+        from app.models.warranty_term import WarrantyTerm
+
+        terms = [str(t.name) for t in db.query(WarrantyTerm).all() if t.name]
+
     errors: list[str] = []
     drafts: list[Draft] = []
 
@@ -408,6 +558,21 @@ def plan(
     for values in rows:
         row = values["_row"]
         before = len(errors)
+
+        # A formula with no saved answer, anywhere on the row. Caught here
+        # rather than column by column, so the complaint names the column
+        # instead of calling a cell with a number plainly in it empty.
+        stale = [
+            _HEADER_BY_KEY.get(key, key)
+            for key, value in values.items()
+            if not key.startswith("_") and str(value) == UNCALCULATED
+        ]
+
+        if stale:
+            for label in stale:
+                errors.append(_uncalculated(row, label))
+
+            continue
 
         name = str(values.get("name", "")).strip()
         serial_raw = str(values.get("serial_number", "")).strip()
@@ -480,6 +645,12 @@ def plan(
             except HTTPException as refused:
                 errors.append(f"Row {row}: {refused.detail}")
 
+        cover, cover_problems = _warranty_from(
+            values.get("_extra") or {}, terms, row
+        )
+
+        errors.extend(cover_problems)
+
         if len(errors) > before:
             # Something above is wrong with this row. Carry on reading the
             # rest of the sheet - the point is to report all of it at once -
@@ -487,13 +658,36 @@ def plan(
             continue
 
         # One product per serial number. This is the whole reason a row can
-        # carry several: three panels delivered together are three records,
-        # each with the serial that is printed on its own box.
+        # carry several: seventy-five panels delivered together are
+        # seventy-five records, each with the serial printed on its own box.
+        #
+        # Split on the slash and then stripped, because a cell holding
+        # seventy-five of them has a line break after every one.
         serials = [s.strip().upper() for s in serial_raw.split("/") if s.strip()]
 
         if not serials:
             errors.append(f"Row {row}: Hardware Serial Number is missing.")
             continue
+
+        # A serial number names one physical thing. So on a row carrying
+        # several, the stock is one each, and the quantity column is a
+        # statement about the row - either the total, or the one each.
+        # Anything else is two different claims about the same delivery,
+        # and guessing which was meant is how a stock figure ends up
+        # seventy-five times too high.
+        each = instock
+
+        if len(serials) > 1:
+            if instock in (len(serials), 1):
+                each = 1.0
+            else:
+                errors.append(
+                    f"Row {row}: there are {len(serials)} serial numbers but "
+                    f"In-Stock Qty says {instock:g}. Each serial number is one "
+                    f"unit, so put {len(serials)} there (the total), or 1 (one "
+                    "of each) - or give each serial number its own row."
+                )
+                continue
 
         for serial in serials:
             if (company_id, serial) in claimed:
@@ -530,9 +724,10 @@ def plan(
                         "rate": rate,
                         "rate_per_unit": rate,
                         "dtp_rate": dtp_rate,
-                        "instock": instock,
-                        "stock": instock,
+                        "instock": each,
+                        "stock": each,
                         "case_size": case_size,
+                        **({"warranty_rates": cover} if cover else {}),
                     },
                 )
             )
@@ -613,6 +808,23 @@ def template_workbook(db: Session, current_user: dict) -> bytes:
         for column in COLUMNS
     ]
 
+    # A pair of columns per warranty term, because the terms are a master
+    # and what each costs belongs on the product. Only on a super admin's
+    # template: nobody else's upload reads them.
+    cover_headers: list[str] = []
+
+    if (current_user or {}).get("is_super_admin"):
+        from app.models.warranty_term import WarrantyTerm
+
+        for term in db.query(WarrantyTerm).all():
+            if term.name:
+                cover_headers += [
+                    f"{term.name} Warranty Rate",
+                    f"{term.name} Rate Mode",
+                ]
+
+    headers += cover_headers
+
     products.append(headers)
 
     for index, column in enumerate(COLUMNS, start=1):
@@ -647,7 +859,7 @@ def template_workbook(db: Session, current_user: dict) -> bytes:
         "",
         71000,
         58000,
-        1,
+        3,
         1,
         "Nos",
         "85285900",
@@ -677,9 +889,12 @@ def template_workbook(db: Session, current_user: dict) -> bytes:
         )
 
     example["A5"] = (
-        "The first row shows three panels delivered together: three serial "
-        "numbers separated by / on one row, loaded as three products with "
-        "1 in stock each."
+        "The first row is three panels delivered together: three serial "
+        "numbers separated by / on one row, loaded as three products with 1 "
+        "in stock each. Each serial number is one unit, so In-Stock Qty is "
+        "the 3 of them (writing 1, meaning one of each, is read the same "
+        "way). The second row is a product that is not serialised one by "
+        "one: a single code with 24 of them on the shelf."
     )
     example["A5"].font = Font(italic=True, color="555555")
 
@@ -707,8 +922,16 @@ def template_workbook(db: Session, current_user: dict) -> bytes:
         "Serial numbers",
         "",
         "Several on one row, separated by / , are loaded as that many "
-        "products - each with its own serial number, and each with the "
-        "In-Stock Qty on that row.",
+        "products - each with its own serial number, and 1 in stock, "
+        "because a serial number names one physical thing. Line breaks "
+        "between them are fine.",
+    ])
+    guide.append([
+        "Warranty rates",
+        "",
+        "A pair of columns per term from Masters: the rate, and whether it "
+        "is a percentage or an amount. Leave a rate blank where that term "
+        "is not offered on the product.",
     ])
     guide.append([
         "If a row is wrong",
