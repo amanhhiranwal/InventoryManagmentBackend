@@ -61,8 +61,14 @@ HEADERS = [
 ]
 
 
-def sheet_with(heads, *rows_in) -> bytes:
-    """Those rows as a .xlsx, laid out like the template: title, then heads."""
+def sheet_with(heads, *rows_in, fill=True) -> bytes:
+    """Those rows as a .xlsx, laid out like the template: title, then heads.
+
+    Every product needs a model number and a specification - they go on
+    the sticker and on the proposal line - so rows that leave them blank
+    get stand-ins, and the sections that are about those two fields pass
+    fill=False to say what they mean.
+    """
 
     from openpyxl import Workbook
 
@@ -75,15 +81,24 @@ def sheet_with(heads, *rows_in) -> bytes:
     page.append(list(heads))
 
     for row in rows_in:
-        page.append(list(row))
+        row = list(row)
+
+        if fill:
+            if not str(row[0] or "").strip():
+                row[0] = f"MDL-{TAG}"
+
+            if not str(row[2] or "").strip():
+                row[2] = "20-point touch, Android 16"
+
+        page.append(row)
 
     buffer = io.BytesIO()
     book.save(buffer)
     return buffer.getvalue()
 
 
-def sheet(*rows_in) -> bytes:
-    return sheet_with(HEADERS, *rows_in)
+def sheet(*rows_in, fill=True) -> bytes:
+    return sheet_with(HEADERS, *rows_in, fill=fill)
 
 
 def comma_separated(*rows_in) -> bytes:
@@ -92,7 +107,16 @@ def comma_separated(*rows_in) -> bytes:
     writer.writerow(HEADERS)
 
     for row in rows_in:
-        writer.writerow(list(row))
+        row = list(row)
+
+        # The same stand-ins as the Excel helper, for the same reason.
+        if not str(row[0] or "").strip():
+            row[0] = f"MDL-{TAG}"
+
+        if not str(row[2] or "").strip():
+            row[2] = "20-point touch, Android 16"
+
+        writer.writerow(row)
 
     return buffer.getvalue().encode("utf-8")
 
@@ -461,6 +485,26 @@ try:
             and priced.get(term_name, {}).get("mode") == "PERCENT",
             str(priced),
         )
+
+    print("\n4d. A product with no model or specification cannot be loaded")
+
+    # Both are on the sticker that goes on the box and on the proposal
+    # line a customer reads, so a sheet that leaves them out would load
+    # products nobody downstream could identify.
+    bare = sheet(
+        ["", f"Bulk Bare {TAG}", "", f"BULK-{TAG}-B1", code, "", 100, "", 1, 1, unit, ""],
+        fill=False,
+    )
+
+    refused = upload(admin, bare, "products.xlsx", commit=True)
+
+    check("it is refused", data(refused).get("created") == 0, str(data(refused)))
+    check(
+        "and names both fields",
+        any("Model Number is missing" in e for e in data(refused).get("errors", []))
+        and any("Specification is missing" in e for e in data(refused).get("errors", [])),
+        str(data(refused).get("errors")),
+    )
 
     print("\n5. A sheet with anything wrong in it loads nothing at all")
 

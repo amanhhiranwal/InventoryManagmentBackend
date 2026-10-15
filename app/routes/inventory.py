@@ -187,19 +187,73 @@ def get_items(
     product_type_code: Optional[str] = None,
     search: Optional[str] = None,
     company_id: Optional[str] = None,
+    page: Optional[int] = None,
+    size: Optional[int] = None,
     current_user=Depends(require_permission("inventory.read")),
     db: Session = Depends(get_db),
 ):
+    """The catalogue, a page at a time when a page is asked for.
+
+    The figures across the top come back with it, worked out by the
+    database over the whole catalogue - a total that only adds up the
+    hundred rows on screen is not a total.
+
+    Without page and size this returns everything, which is what the
+    screens that read the catalogue into a picker still expect.
+    """
+
     items = InventoryService.get_items(
         product_type_code=product_type_code,
         search=search,
         company_id=company_id,
         current_user=current_user,
         db=db,
+        page=page,
+        size=size,
     )
+
+    summary = InventoryService.summarise(
+        search=search,
+        company_id=company_id,
+        current_user=current_user,
+        db=db,
+    )
+
+    counts = summary.pop("counts", {})
+
+    # With a category chosen, the page is that category; the total it is
+    # paged against has to be that category's count, not the catalogue's.
+    total = (
+        counts.get(str(product_type_code or "").upper().strip(), 0)
+        if product_type_code
+        else summary["products"]
+    )
+
     return {
         "success": True,
         "data": items,
+        "total": total,
+        "summary": summary,
+        "counts": counts,
+    }
+
+
+@router.get("/items/{item_id}/image")
+def get_item_image(
+    item_id: str,
+    current_user=Depends(require_permission("inventory.read")),
+    db: Session = Depends(get_db),
+):
+    """One product's picture.
+
+    Kept off the list: a data: URI of a couple of megabytes on every
+    record is a hundred megabytes of wire to draw thumbnails the size of
+    a thumbnail.
+    """
+
+    return {
+        "success": True,
+        "data": InventoryService.image_for(item_id, current_user=current_user, db=db),
     }
 
 @router.get("/items/{item_id}/label")
@@ -236,10 +290,30 @@ def item_label(
 
     attributes = item.get("attributes") or {}
 
+    # Where the QR sends a phone: this product, on the Inventory screen,
+    # opened on its details. Scanning the sticker on the box and pressing
+    # the eye on the row land in the same place.
+    from urllib.parse import quote
+
+    from app.services.company_profile_service import app_url
+
+    try:
+        link = app_url(
+            f"/inventory?product={quote(str(item.get('serial_number') or ''))}", db
+        )
+    except Exception:
+        # No address configured is a reason for the QR to carry plain
+        # text, not a reason to fail printing a label.
+        link = ""
+
     svg = label_svg(
         sku=item.get("serial_number") or "",
         name=item.get("name") or "",
         hsn=str(attributes.get("hsn_code") or ""),
+        model=str(attributes.get("model_number") or ""),
+        specification=str(attributes.get("specification") or ""),
+        unit=str(attributes.get("unit") or ""),
+        url=link,
     )
 
     return Response(
@@ -271,6 +345,9 @@ def update_item(
         # Whether the form sent the field at all, so "move to All companies"
         # reads differently from a form that never showed the picker.
         company_set="company_id" in request.model_fields_set,
+        # Same question about the picture: a form that never had it must
+        # not clear it. The list does not carry images any more.
+        image_set="image_base64" in request.model_fields_set,
         current_user=current_user,
         db=db,
     )

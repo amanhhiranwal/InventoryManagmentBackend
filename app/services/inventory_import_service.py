@@ -47,7 +47,7 @@ COLUMNS: list[dict] = [
     {
         "key": "model_number",
         "header": "Model Number",
-        "required": False,
+        "required": True,
         "aliases": ["model", "model no", "model number"],
         "help": "The manufacturer's model, as it is printed on the box.",
     },
@@ -61,7 +61,7 @@ COLUMNS: list[dict] = [
     {
         "key": "specification",
         "header": "Specification",
-        "required": False,
+        "required": True,
         "aliases": ["specification", "specifications", "spec", "description"],
         "help": "Free text: size, capacity, finish - whatever a customer asks about.",
     },
@@ -555,6 +555,20 @@ def plan(
     #: (company, serial) -> the row that claimed it first.
     claimed: dict[tuple[str | None, str], int] = {}
 
+    # Every serial already in the catalogue, read once. Asking the
+    # database per serial number is fine for the three on a delivery note
+    # and is a thousand round trips for a supplier's price list - which is
+    # exactly the sheet somebody uploads and then watches a spinner for.
+    taken: set[tuple[str | None, str]] = {
+        (
+            str(row.get("company_id")) if row.get("company_id") else None,
+            str(row.get("serial_number") or "").upper(),
+        )
+        for row in InventoryService.items_col.find(
+            {}, {"serial_number": 1, "company_id": 1}
+        )
+    }
+
     for values in rows:
         row = values["_row"]
         before = len(errors)
@@ -579,6 +593,15 @@ def plan(
 
         if not name:
             errors.append(f"Row {row}: Product Name is missing.")
+
+        # Both go on the sticker and on the proposal line, so a product
+        # loaded without them is one nobody downstream can identify.
+        for key, label in (
+            ("model_number", "Model Number"),
+            ("specification", "Specification"),
+        ):
+            if not str(values.get(key, "")).strip():
+                errors.append(f"Row {row}: {label} is missing.")
 
         if not serial_raw:
             errors.append(f"Row {row}: Hardware Serial Number is missing.")
@@ -697,7 +720,7 @@ def plan(
                 )
                 continue
 
-            if InventoryService._serial_clash(serial, company_id):
+            if (str(company_id) if company_id else None, serial) in taken:
                 where = names.get(str(company_id), "all companies") if company_id else "all companies"
                 errors.append(
                     f"Row {row}: a product with serial number '{serial}' is "

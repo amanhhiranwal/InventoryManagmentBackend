@@ -190,6 +190,14 @@ def restock(admin) -> None:
 
         attributes["instock"] = want
 
+        # Products stocked before these two became required have neither,
+        # and a stock top-up should not be the thing that fails over it.
+        if not str(attributes.get("model_number") or "").strip():
+            attributes["model_number"] = item.get("serial_number") or ""
+
+        if not str(attributes.get("specification") or "").strip():
+            attributes["specification"] = item.get("name") or ""
+
         fixed = api("put", f"/inventory/items/{item['_id']}", admin, json={
             "name": item.get("name"),
             "serial_number": item.get("serial_number"),
@@ -328,6 +336,10 @@ def catalogue(admin, types: dict) -> None:
                 "unit": unit,
                 "instock": instock,
                 "case_size": case_size,
+                # Required on every product: the model says which one it
+                # is, the specification says what is in it.
+                "model_number": serial,
+                "specification": name,
             },
         }
 
@@ -412,6 +424,12 @@ def realign(admin, types: dict) -> None:
             continue
 
         attributes.update({"rate": rate, "unit": unit, "case_size": case_size})
+
+        if not str(attributes.get("model_number") or "").strip():
+            attributes["model_number"] = item.get("serial_number") or ""
+
+        if not str(attributes.get("specification") or "").strip():
+            attributes["specification"] = name
 
         updated = api("put", f"/inventory/items/{item['_id']}", admin, json={
             "name": name,
