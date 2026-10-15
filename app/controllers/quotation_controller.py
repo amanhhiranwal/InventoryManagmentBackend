@@ -83,12 +83,23 @@ class QuotationController:
         }
 
     @staticmethod
-    def get_all(current_user: dict, db: Session):
-        quotations = QuotationService.get_visible(current_user, db)
+    def get_all(
+        current_user: dict,
+        db: Session,
+        search: str | None = None,
+        page: int | None = None,
+        size: int | None = None,
+        status: str | None = None,
+    ):
+        quotations, total = QuotationService.get_visible_page(
+            current_user, db, search, page, size, status
+        )
 
         return {
             "success": True,
             "data": [serialize_quotation(q) for q in quotations],
+            "total": total,
+            "summary": QuotationService.summarise(current_user, db, search),
         }
 
     @staticmethod

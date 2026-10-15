@@ -32,10 +32,19 @@ router = APIRouter(
 
 @router.get("/")
 def get_opportunities(
+    search: str | None = None,
+    page: int | None = None,
+    size: int | None = None,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    return OpportunityController.get_all(current_user, db)
+    """One page of the opportunities this person can see.
+
+    A search narrows all of them rather than the page on screen. Without
+    page and size this returns everything, as the pickers expect.
+    """
+
+    return OpportunityController.get_all(current_user, db, search, page, size)
 
 
 @router.get("/{opportunity_id}")

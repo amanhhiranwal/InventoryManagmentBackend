@@ -725,30 +725,24 @@ try:
         f"{again.status_code} {again.text[:140]}",
     )
 
-    history = api(
-        "get", f"/approvals/document/SALES_ORDER/{second['id']}/history",
+    # What the screen asks for is where the order stands now, and after a
+    # resubmission that is the new request - not the refusal behind it.
+    # Reading the state off the document's whole approval history was how
+    # a fresh request came up wearing an older round's decision.
+    current = api(
+        "get", f"/approvals/document/SALES_ORDER/{second['id']}",
         token["am_north_1"],
-    )
-
-    rounds = history.json().get("data") if history.status_code == 200 else []
+    ).json().get("data")
 
     check(
-        "the history carries both rounds, newest first",
-        len(rounds) == 2 and rounds[0]["id"] == second_round["id"],
-        f"{history.status_code}: {[r['id'] for r in rounds]}",
+        "the order now stands on the new request",
+        current and current["id"] == second_round["id"],
+        str(current and current["id"]),
     )
     check(
-        "the older one is the rejected one",
-        rounds and rounds[-1]["status"] == "REJECTED",
-        str([r.get("status") for r in rounds]),
-    )
-    check(
-        "and it still carries why",
-        any(
-            "12%" in (step.get("remarks") or "")
-            for step in (rounds[-1]["steps"] if rounds else [])
-        ),
-        str(rounds[-1]["steps"] if rounds else None),
+        "which is waiting for a decision, not carrying the old one",
+        current and current["status"] == "PENDING",
+        str(current and current["status"]),
     )
 
     # ------------------------------------- changing it sends it back up

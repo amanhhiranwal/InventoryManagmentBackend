@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.listing import page_of, search_clause
 from app.core.workflow_status import (
     LEAD_TRANSITIONS,
     OPPORTUNITY_TRANSITIONS,
@@ -96,14 +97,116 @@ class OpportunityService:
     # ------------------------------------------------------------------
     # Reads
     # ------------------------------------------------------------------
+    #: What a search box looks through on the Opportunity screen.
+    SEARCHABLE = [
+        "title", "organization_name", "contact_name", "email",
+        "mobile_number", "city", "status", "priority", "description",
+    ]
+
+    @staticmethod
+    def visible_query(current_user: dict, db: Session, search: str | None = None):
+        """The opportunities this person may see, narrowed by a search."""
+
+        query = OpportunityRepository.visible_query(
+            db,
+            get_visible_creator_user_ids(current_user, db),
+            current_user.get("user_id"),
+        )
+
+        clause = search_clause(
+            search,
+            [getattr(Opportunity, name) for name in OpportunityService.SEARCHABLE],
+        )
+
+        return query.filter(clause) if clause is not None else query
+
     @staticmethod
     def get_visible(current_user: dict, db: Session) -> list[Opportunity]:
-        visible_ids = get_visible_creator_user_ids(current_user, db)
+        return OpportunityService.visible_query(current_user, db).all()
 
-        return OpportunityRepository.get_visible(
-            db,
-            visible_ids,
-            current_user.get("user_id"),
+    @staticmethod
+    def summarise(
+        current_user: dict,
+        db: Session,
+        search: str | None = None,
+    ) -> dict:
+        """The four figures across the top of the Opportunity screen.
+
+        The same definitions the screen used when it counted them in the
+        browser: everything in play, what that pipeline is worth with the
+        decided deals left out, the win rate measured against decided
+        deals only, and how many are expected to close this month.
+        """
+
+        from sqlalchemy import and_, func, or_
+
+        from app.core.listing import measure, month_bounds
+
+        query = OpportunityService.visible_query(current_user, db, search)
+
+        won = Opportunity.status == OpportunityStatus.WON
+        lost = Opportunity.status == OpportunityStatus.LOST
+        open_deal = ~or_(won, lost)
+
+        figures = measure(
+            query,
+            Opportunity.created_at,
+            {
+                "total": {},
+                # Still in play: a closed deal is not pipeline.
+                "pipeline_value": {"where": open_deal, "sum": Opportunity.deal_value},
+                "won": {"where": won},
+                "decided": {"where": or_(won, lost)},
+            },
+        )
+
+        this_month, _ = month_bounds()
+
+        next_month = (
+            this_month.replace(year=this_month.year + 1, month=1)
+            if this_month.month == 12
+            else this_month.replace(month=this_month.month + 1)
+        )
+
+        closing = (
+            # Ordering dropped for the same reason as in measure(): a
+            # count does not need sorting and Postgres will not group by
+            # the column it would sort on.
+            query.order_by(None)
+            .with_entities(func.count())
+            .filter(
+                and_(
+                    Opportunity.expected_closing_date >= this_month,
+                    Opportunity.expected_closing_date < next_month,
+                )
+            )
+            .scalar()
+        )
+
+        figures["closing_this_month"] = {
+            "value": float(closing or 0),
+            "this_month": 0.0,
+            "last_month": 0.0,
+        }
+
+        return figures
+
+    @staticmethod
+    def get_visible_page(
+        current_user: dict,
+        db: Session,
+        search: str | None = None,
+        page: int | None = None,
+        size: int | None = None,
+    ) -> tuple[list[Opportunity], int]:
+        """One page of them, and how many there are in all.
+
+        The search runs over every opportunity this person can see rather
+        than the page on screen.
+        """
+
+        return page_of(
+            OpportunityService.visible_query(current_user, db, search), page, size
         )
 
     @staticmethod

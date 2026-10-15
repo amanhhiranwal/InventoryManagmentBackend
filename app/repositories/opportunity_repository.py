@@ -36,11 +36,11 @@ class OpportunityRepository:
         )
 
     @staticmethod
-    def get_visible(
+    def visible_query(
         db: Session,
         visible_creator_ids: list[str],
         user_id: str | None = None,
-    ) -> list[Opportunity]:
+    ):
         """Return opportunities the caller may see.
 
         Follows the convention already used by ``get_visible_creator_user_ids``
@@ -69,4 +69,14 @@ class OpportunityRepository:
 
             query = query.filter(or_(*conditions))
 
-        return query.order_by(Opportunity.id.desc()).all()
+        return query.order_by(Opportunity.id.desc())
+
+    @staticmethod
+    def get_visible(
+        db: Session,
+        visible_creator_ids: list[str],
+        user_id: str | None = None,
+    ) -> list[Opportunity]:
+        return OpportunityRepository.visible_query(
+            db, visible_creator_ids, user_id
+        ).all()
