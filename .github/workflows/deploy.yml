@@ -1,4 +1,4 @@
-```yaml
+
 name: CI/CD Pipeline - Backend
 
 on:
@@ -324,4 +324,3 @@ jobs:
             echo "=========================================="
             echo "==> Backend deployment completed successfully."
             echo "=========================================="
-```
