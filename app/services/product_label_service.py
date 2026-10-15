@@ -1,17 +1,21 @@
-"""The label that goes on the box: a barcode, a QR and what they say.
+"""The label that goes on the box: a barcode, a QR, and what they say.
 
 A warehouse scans one of two things. A barcode reader at a desk wants
-Code128, which carries the SKU and nothing else. A phone wants a QR, which
-can carry enough to identify the item without a lookup - so it carries the
-SKU, the name and the HSN as plain text.
+Code128, which carries the serial number and nothing else, because that
+is all it can type into a field. A phone wants a QR, and a QR can carry
+enough to be worth scanning: a link straight to this product in the CRM,
+so whoever is holding the box can see what it is, what it costs and how
+many are left.
 
-Both are drawn from the SKU itself rather than stored, so a label can
-never be out of date with the product it is on, and nothing has to be
-regenerated when a name changes.
+Both identify the same product by the same serial number, and both are
+drawn from the record rather than stored, so a label can never be out of
+date with the product it is on and the same product always produces the
+same label - byte for byte. Scanning the sticker on the shelf and
+scanning the one on screen land in the same place.
 
 Drawn as SVG: it needs nothing the PDF did not already bring in, it stays
-crisp at whatever size the sticker is printed, and the screen can show the
-same markup it prints.
+crisp at whatever size the sticker is printed, and the screen can show
+the same markup it prints.
 """
 
 import io
@@ -20,13 +24,15 @@ from reportlab.graphics import renderSVG
 from reportlab.graphics.barcode import createBarcodeDrawing, qr
 from reportlab.graphics.shapes import Drawing, String
 
-#: Label canvas, in points: 75 x 30 mm, which is what a Code128 of a
-#: seventeen-character SKU needs beside a QR without the two colliding.
-LABEL_W = 250
-LABEL_H = 85
+#: Label canvas, in points: wide enough for a Code128 of a long serial
+#: beside a QR, and tall enough to say what the thing is. A sticker that
+#: only carries a code means walking back to a screen to find out what is
+#: in the box.
+LABEL_W = 320
+LABEL_H = 132
 
-#: The QR sits in the right-hand column, the barcode fills the rest.
-QR_SIZE = 56
+#: The QR sits in the left-hand column, the barcode under the text.
+QR_SIZE = 72
 
 
 def _qr_drawing(payload: str, size: float) -> Drawing:
@@ -42,39 +48,150 @@ def _qr_drawing(payload: str, size: float) -> Drawing:
     return drawing
 
 
-def label_svg(sku: str, name: str = "", hsn: str = "") -> str:
-    """One product's label as SVG markup."""
+def _fit(text: str, width: float, size: float) -> str:
+    """Cut text to what fits, with an ellipsis when it had to be cut.
+
+    Helvetica averages about 0.5 of its point size per character, which is
+    close enough for a sticker and does not need the font metrics loaded.
+    """
+
+    text = " ".join(str(text or "").split())
+
+    room = int(width / (size * 0.5))
+
+    if len(text) <= room:
+        return text
+
+    return text[: max(1, room - 1)] + "…"
+
+
+def _wrap(text: str, width: float, size: float, lines: int) -> list[str]:
+    """The text broken over at most that many lines, on word boundaries."""
+
+    words = " ".join(str(text or "").split()).split(" ")
+
+    room = max(8, int(width / (size * 0.5)))
+
+    out: list[str] = []
+    current = ""
+
+    for word in words:
+        candidate = f"{current} {word}".strip()
+
+        if len(candidate) <= room:
+            current = candidate
+            continue
+
+        out.append(current)
+        current = word
+
+        if len(out) == lines:
+            break
+
+    if current and len(out) < lines:
+        out.append(current)
+
+    if not out:
+        return []
+
+    # Whatever did not fit is marked rather than dropped silently.
+    used = len(" ".join(out))
+
+    if used < len(" ".join(words)):
+        out[-1] = _fit(out[-1] + " …", width, size)
+
+    return out
+
+
+def label_svg(
+    sku: str,
+    name: str = "",
+    hsn: str = "",
+    model: str = "",
+    specification: str = "",
+    unit: str = "",
+    url: str = "",
+) -> str:
+    """One product's label as SVG markup.
+
+    ``url`` is where the QR points - this product's page in the CRM. With
+    no address to send anyone to, the QR carries the same facts as plain
+    text instead, so it is still worth scanning away from the network.
+    """
 
     sku = (sku or "").strip()
+    model = (model or "").strip()
+    specification = (specification or "").strip()
 
-    # The QR carries enough to identify the item off a phone without a
-    # round trip; the barcode carries only the SKU, which is all a desk
-    # scanner can type into a field.
-    payload = "\n".join(part for part in (sku, name, f"HSN {hsn}" if hsn else "") if part)
+    # What the QR is for: standing at the shelf with a phone and wanting
+    # to know what this is. A link opens the product; the text fallback
+    # at least says what it is without one.
+    payload = (url or "").strip() or "\n".join(
+        part
+        for part in (
+            sku,
+            name,
+            f"Model {model}" if model else "",
+            specification,
+            f"HSN {hsn}" if hsn else "",
+        )
+        if part
+    )
 
     label = Drawing(LABEL_W, LABEL_H)
 
-    # The barcode is scaled to the column it has rather than drawn at its
-    # natural width, so a long SKU shrinks the bars instead of running
-    # under the QR beside it.
-    # The QR takes the left column and the barcode the rest, at its
-    # natural width. Scaling the bars to fit a narrower column was how
-    # they ended up running under the QR - a label is cheap to make wider
-    # and a squashed Code128 is harder for a scanner to read.
     square = _qr_drawing(payload or sku or "-", QR_SIZE)
-    square.translate(4, 6)
+    square.translate(8, LABEL_H - QR_SIZE - 8)
     label.add(square)
 
-    code = createBarcodeDrawing(
-        "Code128", value=sku or "-", barHeight=30, humanReadable=True, fontSize=6,
+    text_left = QR_SIZE + 20
+    text_width = LABEL_W - text_left - 8
+
+    cursor = LABEL_H - 18
+
+    label.add(
+        String(
+            text_left,
+            cursor,
+            _fit(name, text_width, 9),
+            fontSize=9,
+            fontName="Helvetica-Bold",
+        )
     )
-    code.translate(QR_SIZE + 12, 6)
+
+    if model:
+        cursor -= 12
+        label.add(
+            String(
+                text_left,
+                cursor,
+                _fit(f"Model {model}", text_width, 7.5),
+                fontSize=7.5,
+                fontName="Helvetica-Bold",
+            )
+        )
+
+    for line in _wrap(specification, text_width, 6.5, 3):
+        cursor -= 9
+        label.add(String(text_left, cursor, line, fontSize=6.5, fontName="Helvetica"))
+
+    footnote = "   ".join(
+        part for part in (f"HSN {hsn}" if hsn else "", f"Unit {unit}" if unit else "") if part
+    )
+
+    if footnote:
+        cursor -= 10
+        label.add(
+            String(text_left, cursor, _fit(footnote, text_width, 6.5), fontSize=6.5)
+        )
+
+    # The barcode runs the full width under everything, so a desk scanner
+    # gets the longest bars the sticker can give it.
+    code = createBarcodeDrawing(
+        "Code128", value=sku or "-", barHeight=26, humanReadable=True, fontSize=7,
+    )
+    code.translate(8, 6)
     label.add(code)
-
-    label.add(String(4, LABEL_H - 12, (name or "")[:40], fontSize=7, fontName="Helvetica-Bold"))
-
-    if hsn:
-        label.add(String(4, LABEL_H - 22, f"HSN {hsn}", fontSize=6, fontName="Helvetica"))
 
     buffer = io.StringIO()
     renderSVG.drawToFile(label, buffer)

@@ -412,7 +412,11 @@ try:
             return api("post", "/inventory/items", token[who], json={
                 "name": f"{label} {TAG}", "serial_number": serial,
                 "product_type_code": code, "category": category,
-                "attributes": {"rate": 450, "unit": "Kg", "instock": 500, "case_size": 50},
+                "attributes": {
+                    "rate": 450, "unit": "Kg", "instock": 500, "case_size": 50,
+                    "model_number": f"MDL-{TAG}",
+                    "specification": "Seeded by the sales flow suite",
+                },
                 "company_id": company_id,
             })
 

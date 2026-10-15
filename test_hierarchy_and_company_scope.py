@@ -336,7 +336,13 @@ try:
                 "serial_number": serial,
                 "product_type_code": type_code,
                 "category": category,
-                "attributes": {"rate": 100, "unit": "Kg", "instock": 10, "case_size": 1},
+                "attributes": {
+                    "rate": 100, "unit": "Kg", "instock": 10, "case_size": 1,
+                    # Both are required on a product: they go on the
+                    # sticker and on the proposal line.
+                    "model_number": f"MDL-{TAG}",
+                    "specification": "Seeded by the hierarchy suite",
+                },
                 "company_id": company_id,
             })
 
@@ -384,7 +390,10 @@ try:
                 "serial_number": serial,
                 "product_type_code": type_code,
                 "category": category,
-                "attributes": {"rate": 1, "unit": "Kg", "instock": 1, "case_size": 1},
+                "attributes": {
+                    "rate": 1, "unit": "Kg", "instock": 1, "case_size": 1,
+                    "model_number": "HIJACK", "specification": "Hijack attempt",
+                },
             })
             check(
                 "editing the other company's product is refused",

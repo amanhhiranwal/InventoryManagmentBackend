@@ -182,6 +182,15 @@ def set_stock(serial: str, quantity: float) -> None:
     attributes["instock"] = quantity
     attributes["stock"] = quantity
 
+    # Products stocked before the model and the specification became
+    # required have neither, and setting a stock figure should not be the
+    # thing that fails over it.
+    if not str(attributes.get("model_number") or "").strip():
+        attributes["model_number"] = item.get("serial_number") or ""
+
+    if not str(attributes.get("specification") or "").strip():
+        attributes["specification"] = item.get("name") or ""
+
     api("put", f"/inventory/items/{item['_id']}", token["admin"], json={
         "name": item.get("name"),
         "serial_number": item.get("serial_number"),
@@ -1005,6 +1014,12 @@ finally:
                 continue
 
             attributes["instock"] = was
+
+            if not str(attributes.get("model_number") or "").strip():
+                attributes["model_number"] = item.get("serial_number") or ""
+
+            if not str(attributes.get("specification") or "").strip():
+                attributes["specification"] = item.get("name") or ""
 
             api("put", f"/inventory/items/{item['_id']}", admin, json={
                 "name": item.get("name"),

@@ -1,3 +1,5 @@
+import re
+
 from bson import ObjectId
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -199,6 +201,20 @@ class InventoryService:
                     val = str(val).strip()
                 validated_attrs[key] = val
 
+        # The model says which one it is and the specification says what it
+        # is. Both are on the proposal line a customer reads, on the sticker
+        # on the box and in the list the warehouse scans, so a product
+        # without them is one nobody downstream can identify.
+        for key, label in (
+            ("model_number", "Model Number"),
+            ("specification", "Specification"),
+        ):
+            if not str(validated_attrs.get(key) or "").strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{label} is required.",
+                )
+
         # What extending the cover costs, per term, for this product. The
         # lengths themselves are a master - everything is quoted on the same
         # three - but the price of them is not: five years on a panel and
@@ -240,30 +256,161 @@ class InventoryService:
         cls.items_col.insert_one(doc)
         return cls._decorate(doc, CompanyScopeService.company_names(db))
 
+    #: How many units a product holds, whichever field it was written to.
+    _HELD = {
+        "$convert": {
+            "input": {"$ifNull": ["$attributes.instock", "$attributes.stock"]},
+            "to": "double",
+            "onError": 0,
+            "onNull": 0,
+        }
+    }
+
+    _RATE = {
+        "$convert": {
+            "input": "$attributes.rate",
+            "to": "double",
+            "onError": 0,
+            "onNull": 0,
+        }
+    }
+
     @classmethod
-    def get_items(cls, product_type_code: str = None, search: str = None, company_id: str = None, current_user: dict = None, db: Session = None) -> list:
-        """
-        Retrieves all items from database. Matches query params.
-        """
+    def _scope(cls, search, company_id, current_user, db) -> dict:
+        """The catalogue this caller is looking at, before any category."""
+
         query = dict(
             CompanyScopeService.mongo_filter(current_user or {}, db, company_id)
         )
-        if product_type_code:
-            query["product_type_code"] = product_type_code.upper().strip()
-        
+
         if search:
+            # Escaped: a serial number with a dot or a bracket in it is a
+            # serial number, not a pattern.
+            safe = re.escape(str(search).strip())
+
             query["$or"] = [
-                {"name": {"$regex": search, "$options": "i"}},
-                {"serial_number": {"$regex": search, "$options": "i"}},
-                {"category": {"$regex": search, "$options": "i"}}
+                {"name": {"$regex": safe, "$options": "i"}},
+                {"serial_number": {"$regex": safe, "$options": "i"}},
+                {"category": {"$regex": safe, "$options": "i"}},
+                {"attributes.model_number": {"$regex": safe, "$options": "i"}},
             ]
 
-        names = CompanyScopeService.company_names(db)
-        cursor = cls.items_col.find(query).sort("_id", -1)
-        return [cls._decorate(doc, names) for doc in cursor]
+        return query
 
     @classmethod
-    def update_item(cls, item_id: str, name: str, serial_number: str, product_type_code: str, category: str, attributes: dict, image_base64: str = None, company_id: str = None, company_set: bool = False, current_user: dict = None, db: Session = None) -> dict:
+    def get_items(
+        cls,
+        product_type_code: str = None,
+        search: str = None,
+        company_id: str = None,
+        current_user: dict = None,
+        db: Session = None,
+        page: int = None,
+        size: int = None,
+    ) -> list:
+        """One page of the catalogue, or all of it when no page is asked for.
+
+        The image is left out. It is a data: URI of up to two megabytes
+        sitting on every record, and a hundred of them is a hundred
+        megabytes crossing the wire to draw thumbnails forty pixels wide.
+        The screen fetches the one product it is showing.
+        """
+
+        query = cls._scope(search, company_id, current_user, db)
+
+        if product_type_code:
+            query["product_type_code"] = product_type_code.upper().strip()
+
+        names = CompanyScopeService.company_names(db)
+
+        cursor = cls.items_col.find(query, {"image_base64": 0}).sort("_id", -1)
+
+        if page and size:
+            cursor = cursor.skip((max(1, page) - 1) * size).limit(size)
+
+        return [
+            {**cls._decorate(doc, names), "has_image": True}
+            for doc in cursor
+        ]
+
+    @classmethod
+    def summarise(
+        cls,
+        search: str = None,
+        company_id: str = None,
+        current_user: dict = None,
+        db: Session = None,
+    ) -> dict:
+        """The figures across the top, and a count per product type.
+
+        Worked out by the database over the whole catalogue rather than by
+        adding up the rows that happen to be on screen - which is the only
+        way they stay true once the list is a page at a time.
+        """
+
+        query = cls._scope(search, company_id, current_user, db)
+
+        totals = list(
+            cls.items_col.aggregate([
+                {"$match": query},
+                {
+                    "$group": {
+                        "_id": None,
+                        "products": {"$sum": 1},
+                        "units": {"$sum": cls._HELD},
+                        "value": {"$sum": {"$multiply": [cls._HELD, cls._RATE]}},
+                        "thin": {
+                            "$sum": {
+                                "$cond": [
+                                    {
+                                        "$and": [
+                                            {"$gt": [cls._HELD, 0]},
+                                            {"$lte": [cls._HELD, 3]},
+                                        ]
+                                    },
+                                    1,
+                                    0,
+                                ]
+                            }
+                        },
+                        "out": {
+                            "$sum": {"$cond": [{"$lte": [cls._HELD, 0]}, 1, 0]}
+                        },
+                    }
+                },
+            ])
+        )
+
+        counts = {
+            str(row["_id"] or ""): row["n"]
+            for row in cls.items_col.aggregate([
+                {"$match": query},
+                {"$group": {"_id": "$product_type_code", "n": {"$sum": 1}}},
+            ])
+        }
+
+        figures = totals[0] if totals else {}
+
+        return {
+            "products": int(figures.get("products") or 0),
+            "units": float(figures.get("units") or 0),
+            "value": float(figures.get("value") or 0),
+            "thin": int(figures.get("thin") or 0),
+            "out": int(figures.get("out") or 0),
+            "categories": len([code for code, n in counts.items() if n]),
+            "counts": counts,
+        }
+
+    @classmethod
+    def image_for(cls, item_id: str, current_user: dict = None, db: Session = None):
+        """One product's picture, fetched only when something shows it."""
+
+        _, item = cls._get_in_scope(item_id, current_user or {}, db)
+
+        return item.get("image_base64")
+
+    @classmethod
+    def update_item(cls, item_id: str, name: str, serial_number: str, product_type_code: str, category: str, attributes: dict, image_base64: str = None, company_id: str = None, company_set: bool = False, image_set: bool = False, current_user: dict = None, db: Session = None) -> dict:
         """
         Updates a dynamic inventory item, validating inputs against its template fields.
         """
@@ -334,6 +481,20 @@ class InventoryService:
                     val = str(val).strip()
                 validated_attrs[key] = val
 
+        # The model says which one it is and the specification says what it
+        # is. Both are on the proposal line a customer reads, on the sticker
+        # on the box and in the list the warehouse scans, so a product
+        # without them is one nobody downstream can identify.
+        for key, label in (
+            ("model_number", "Model Number"),
+            ("specification", "Specification"),
+        ):
+            if not str(validated_attrs.get(key) or "").strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{label} is required.",
+                )
+
         # What extending the cover costs, per term, for this product. The
         # lengths themselves are a master - everything is quoted on the same
         # three - but the price of them is not: five years on a panel and
@@ -373,9 +534,15 @@ class InventoryService:
             "product_type_code": product_type_code,
             "category": category.strip(),
             "attributes": validated_attrs,
-            "image_base64": image_base64,
             "company_id": owner_id,
         }
+
+        # The picture is only touched when the form sent one. The list no
+        # longer carries images - they are up to two megabytes each - so a
+        # form that never saw the picture must not be able to erase it by
+        # saving a change of name.
+        if image_set:
+            doc["image_base64"] = image_base64
 
         cls.items_col.update_one({"_id": obj_id}, {"$set": doc})
 

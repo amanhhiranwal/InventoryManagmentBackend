@@ -120,6 +120,9 @@ class UserController:
             "is_active": user.is_active,
             "reports_to_id": str(user.reports_to_id) if user.reports_to_id else None,
             "reports_to_name": reports_to_name,
+            # When the account was opened. Asked for on the list, where it
+            # answers "is this someone we added last week or last year".
+            "created_at": user.created_at.isoformat() if user.created_at else None,
         }
 
     @staticmethod

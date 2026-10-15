@@ -23,7 +23,14 @@ import sys
 import uuid
 from datetime import datetime, timezone
 
-from seed_sales_team import TEAM_PASSWORD, api, email_for, login, rows
+from seed_sales_team import (
+    TEAM_PASSWORD,
+    api,
+    email_for,
+    login,
+    rows,
+    sign_off_order,
+)
 
 ADMIN = ("superadmin@mailinator.com", "password123")
 ACCOUNTS = "accounts@mailinator.com"
@@ -102,6 +109,11 @@ try:
 
         order = created.json()["data"]
         created_orders.append(order["id"])
+
+        # The approval chain stands in front of confirming now, whatever
+        # the discount. This suite is about the desks that come after, so
+        # the chain is cleared rather than restated here.
+        sign_off_order(order, owner)
 
         api("put", f"/orders/{order['id']}/status", owner, json={"status": "CONFIRMED"})
 
@@ -479,6 +491,12 @@ finally:
 
             attributes = dict(item.get("attributes") or {})
             attributes["instock"] = was
+
+            if not str(attributes.get("model_number") or "").strip():
+                attributes["model_number"] = item.get("serial_number") or ""
+
+            if not str(attributes.get("specification") or "").strip():
+                attributes["specification"] = item.get("name") or ""
 
             api("put", f"/inventory/items/{item['_id']}", admin, json={
                 "name": item.get("name"),

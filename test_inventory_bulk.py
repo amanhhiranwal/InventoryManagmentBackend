@@ -61,8 +61,14 @@ HEADERS = [
 ]
 
 
-def sheet(*rows_in) -> bytes:
-    """Those rows as a .xlsx, laid out like the template: title, then heads."""
+def sheet_with(heads, *rows_in, fill=True) -> bytes:
+    """Those rows as a .xlsx, laid out like the template: title, then heads.
+
+    Every product needs a model number and a specification - they go on
+    the sticker and on the proposal line - so rows that leave them blank
+    get stand-ins, and the sections that are about those two fields pass
+    fill=False to say what they mean.
+    """
 
     from openpyxl import Workbook
 
@@ -72,14 +78,27 @@ def sheet(*rows_in) -> bytes:
 
     page.append(["Inventory data collection - one product per row"])
     page.append(["Shaded columns are required."])
-    page.append(HEADERS)
+    page.append(list(heads))
 
     for row in rows_in:
-        page.append(list(row))
+        row = list(row)
+
+        if fill:
+            if not str(row[0] or "").strip():
+                row[0] = f"MDL-{TAG}"
+
+            if not str(row[2] or "").strip():
+                row[2] = "20-point touch, Android 16"
+
+        page.append(row)
 
     buffer = io.BytesIO()
     book.save(buffer)
     return buffer.getvalue()
+
+
+def sheet(*rows_in, fill=True) -> bytes:
+    return sheet_with(HEADERS, *rows_in, fill=fill)
 
 
 def comma_separated(*rows_in) -> bytes:
@@ -88,7 +107,16 @@ def comma_separated(*rows_in) -> bytes:
     writer.writerow(HEADERS)
 
     for row in rows_in:
-        writer.writerow(list(row))
+        row = list(row)
+
+        # The same stand-ins as the Excel helper, for the same reason.
+        if not str(row[0] or "").strip():
+            row[0] = f"MDL-{TAG}"
+
+        if not str(row[2] or "").strip():
+            row[2] = "20-point touch, Android 16"
+
+        writer.writerow(row)
 
     return buffer.getvalue().encode("utf-8")
 
@@ -276,6 +304,206 @@ try:
         "they all carry the rest of the row",
         all(row["name"] == f"Bulk Trio {TAG}" for row in saved)
         and all(float((row.get("attributes") or {}).get("rate") or 0) == 5000 for row in saved),
+    )
+    check(
+        "each holds one unit, not the row's figure three times over",
+        all(
+            float((row.get("attributes") or {}).get("instock") or 0) == 1
+            for row in saved
+        ),
+        str([(row.get("attributes") or {}).get("instock") for row in saved]),
+    )
+
+    print("\n4b. A delivery written the way the warehouse writes it")
+
+    # Seventy-five panels on one line, a line break after each slash, and
+    # In-Stock Qty saying 75 - meaning the delivery, not 75 of each. The
+    # sheet this is modelled on came back from the inventory team like
+    # this, and the first rule I wrote would have made 5,625 units of it.
+    many = [f"BULK-{TAG}-D{n:03d}" for n in range(1, 76)]
+
+    delivery = sheet(
+        [
+            '65" SPX-3576',
+            f"Bulk Delivery {TAG}",
+            '65" 4K UHD, 20-point touch',
+            "/\n".join(many),
+            code,
+            "",
+            75000,
+            63000,
+            75,
+            1,
+            unit,
+            "",
+        ],
+    )
+
+    loaded = upload(admin, delivery, "products.xlsx", commit=True)
+
+    check(
+        "seventy-five serial numbers become seventy-five products",
+        data(loaded).get("created") == 75,
+        str(data(loaded).get("created") or body(loaded)),
+    )
+
+    saved = rows(api("get", f"/inventory/items?search=BULK-{TAG}-D", admin))
+    made += [row["_id"] for row in saved]
+
+    stock = [float((row.get("attributes") or {}).get("instock") or 0) for row in saved]
+
+    check(
+        "and the delivery is seventy-five units, not five thousand",
+        sum(stock) == 75,
+        f"{sum(stock)} units across {len(saved)} products",
+    )
+    check(
+        "the line breaks did not end up in a serial number",
+        all(
+            row["serial_number"].strip() == row["serial_number"]
+            and "\n" not in row["serial_number"]
+            for row in saved
+        ),
+        str([r["serial_number"] for r in saved][:2]),
+    )
+
+    # The other way the same delivery gets written down.
+    one_each = sheet(
+        [
+            "",
+            f"Bulk Each {TAG}",
+            "",
+            f"BULK-{TAG}-E1/BULK-{TAG}-E2",
+            code,
+            "",
+            100,
+            "",
+            1,
+            1,
+            unit,
+            "",
+        ],
+    )
+
+    either = upload(admin, one_each, "products.xlsx", commit=True)
+
+    check(
+        "writing 1 for 'one of each' is read the same way",
+        data(either).get("created") == 2,
+        str(data(either).get("created") or body(either)),
+    )
+
+    saved = rows(api("get", f"/inventory/items?search=BULK-{TAG}-E", admin))
+    made += [row["_id"] for row in saved]
+
+    check(
+        "and both hold one unit",
+        [float((row.get("attributes") or {}).get("instock") or 0) for row in saved] == [1, 1],
+        str([(row.get("attributes") or {}).get("instock") for row in saved]),
+    )
+
+    # Anything else is two claims about the same delivery.
+    muddled = sheet(
+        [
+            "",
+            f"Bulk Muddle {TAG}",
+            "",
+            f"BULK-{TAG}-M1/BULK-{TAG}-M2/BULK-{TAG}-M3",
+            code,
+            "",
+            100,
+            "",
+            40,
+            1,
+            unit,
+            "",
+        ],
+    )
+
+    refused = upload(admin, muddled, "products.xlsx", commit=True)
+
+    check(
+        "three serial numbers and a quantity of 40 is refused",
+        data(refused).get("created") == 0,
+        str(data(refused)),
+    )
+    check(
+        "and the refusal says what to write instead",
+        any(
+            "3 serial numbers" in e and "In-Stock Qty says 40" in e
+            for e in data(refused).get("errors", [])
+        ),
+        str(data(refused).get("errors")),
+    )
+
+    print("\n4c. What cover costs, a column per term")
+
+    terms = rows(api("get", "/warranty-terms", admin))
+    term_name = str((terms[0] or {}).get("name") or "") if terms else ""
+
+    if not term_name:
+        check("there is a warranty term to price", False, "none in Masters")
+    else:
+        with_cover = sheet_with(
+            HEADERS + [f"{term_name} Warranty Rate", f"{term_name} Rate Mode"],
+            [
+                "",
+                f"Bulk Cover {TAG}",
+                "",
+                f"BULK-{TAG}-W1",
+                code,
+                "",
+                1000,
+                "",
+                1,
+                1,
+                unit,
+                "",
+                7.5,
+                "%",
+            ],
+        )
+
+        covered = upload(admin, with_cover, "products.xlsx", commit=True)
+
+        check(
+            "the sheet loads with its warranty columns",
+            covered.status_code == 200 and data(covered).get("created") == 1,
+            str(body(covered)),
+        )
+
+        saved = rows(api("get", f"/inventory/items?search=BULK-{TAG}-W1", admin))
+        made += [row["_id"] for row in saved]
+
+        priced = ((saved[0].get("attributes") if saved else {}) or {}).get(
+            "warranty_rates"
+        ) or {}
+
+        check(
+            f"{term_name} is priced on the product",
+            priced.get(term_name, {}).get("rate") == 7.5
+            and priced.get(term_name, {}).get("mode") == "PERCENT",
+            str(priced),
+        )
+
+    print("\n4d. A product with no model or specification cannot be loaded")
+
+    # Both are on the sticker that goes on the box and on the proposal
+    # line a customer reads, so a sheet that leaves them out would load
+    # products nobody downstream could identify.
+    bare = sheet(
+        ["", f"Bulk Bare {TAG}", "", f"BULK-{TAG}-B1", code, "", 100, "", 1, 1, unit, ""],
+        fill=False,
+    )
+
+    refused = upload(admin, bare, "products.xlsx", commit=True)
+
+    check("it is refused", data(refused).get("created") == 0, str(data(refused)))
+    check(
+        "and names both fields",
+        any("Model Number is missing" in e for e in data(refused).get("errors", []))
+        and any("Specification is missing" in e for e in data(refused).get("errors", [])),
+        str(data(refused).get("errors")),
     )
 
     print("\n5. A sheet with anything wrong in it loads nothing at all")
