@@ -32,11 +32,20 @@ def create_user(
 def get_users(
     page: int = 1,
     size: int = 20,
+    search: str | None = None,
     db: Session = Depends(get_db),
     current_user=Depends(require_permission("user.read")),
 ):
+    """One page of the people this user can see.
+
+    A search is applied to everyone they can see, not to the page they are
+    looking at, so a name is found wherever it falls in the list.
+    """
+
     skip = (page - 1) * size
-    return UserController.get_all(db, skip=skip, limit=size, current_user=current_user)
+    return UserController.get_all(
+        db, skip=skip, limit=size, current_user=current_user, search=search
+    )
 
 
 @router.put("/{user_id}/role")
@@ -94,15 +103,7 @@ def reset_user_password(
     it went to, and the inbox is where it is read.
     """
 
-    user = UserService.reset_password(user_id, db, current_user)
-
-    return {
-        "success": True,
-        "message": (
-            f"A temporary password has been emailed to {user.email}. "
-            "They will choose their own when they sign in."
-        ),
-    }
+    return UserController.reset_password(user_id, db, current_user)
 
 
 @router.put("/{user_id}")

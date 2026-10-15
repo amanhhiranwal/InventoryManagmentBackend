@@ -108,15 +108,31 @@ def create_lead(
 
 @router.get("/")
 def get_leads(
+    search: str | None = None,
+    page: int | None = None,
+    size: int | None = None,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    """One page of the leads this person can see.
+
+    A search narrows every lead they can see, not the page on screen, so
+    a customer on page 3 is found by typing their name. The figures
+    across the top come back with it, counted over the whole list for the
+    same reason.
+
+    Without page and size this returns everything, which is what the
+    screens that read leads into a picker still expect.
+    """
+
     user_id = current_user["user_id"]
     is_super_admin = current_user.get("is_super_admin", False)
     role_id = current_user.get("role_id")
     role_ids = {role_id} if role_id else set()
-    
-    leads = LeadService.get_visible_leads(user_id, is_super_admin, role_ids, db)
+
+    leads, total = LeadService.get_visible_page(
+        user_id, is_super_admin, db, search, page, size
+    )
     
     # Resolve names of creators & assigned users in bulk via HTTP
     all_user_ids = set()
@@ -172,7 +188,9 @@ def get_leads(
                 "created_at": lead_row.created_at.isoformat(),
             }
             for lead_row in leads
-        ]
+        ],
+        "total": total,
+        "summary": LeadService.summarise(user_id, is_super_admin, db, search),
     }
 
 @router.get("/{lead_id}")

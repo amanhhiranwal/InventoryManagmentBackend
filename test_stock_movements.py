@@ -30,6 +30,7 @@ from seed_sales_team import (
     email_for,
     login,
     rows,
+    sign_off_order,
 )
 
 TAG = uuid.uuid4().hex[:6]
@@ -83,7 +84,11 @@ try:
         "serial_number": SERIAL,
         "product_type_code": product_type["code"],
         "category": product_type.get("category") or "General",
-        "attributes": {"rate": 50000, "unit": "Nos", "instock": 10, "case_size": 1},
+        "attributes": {
+            "rate": 50000, "unit": "Nos", "instock": 10, "case_size": 1,
+            "model_number": f"MDL-{TAG}",
+            "specification": "Seeded by the stock movement suite",
+        },
         "company_id": str(companies[0]["id"]) if companies else None,
     }
 
@@ -163,6 +168,13 @@ try:
 
     def status_now():
         return api("get", f"/orders/{order['id']}", admin).json()["data"]["status"]
+
+    # An order is not confirmed by saying so any more: the approval chain
+    # stands in front of it, whatever the discount. This suite is about
+    # what stock does afterwards, so the chain is cleared rather than
+    # restated - see sign_off_order, and test_approval_chain for the chain
+    # itself.
+    sign_off_order(order, token["am_north_1"])
 
     api("put", f"/orders/{order['id']}/status", token["am_north_1"], json={"status": "CONFIRMED"})
 

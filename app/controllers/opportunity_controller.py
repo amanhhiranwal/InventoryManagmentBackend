@@ -71,12 +71,22 @@ class OpportunityController:
         return rows
 
     @staticmethod
-    def get_all(current_user: dict, db: Session):
-        opportunities = OpportunityService.get_visible(current_user, db)
+    def get_all(
+        current_user: dict,
+        db: Session,
+        search: str | None = None,
+        page: int | None = None,
+        size: int | None = None,
+    ):
+        opportunities, total = OpportunityService.get_visible_page(
+            current_user, db, search, page, size
+        )
 
         return {
             "success": True,
             "data": OpportunityController._with_names(opportunities, db),
+            "total": total,
+            "summary": OpportunityService.summarise(current_user, db, search),
         }
 
     @staticmethod

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.fulfilment import desk_for, holds_desk
 from app.core.approvals import price_type_for
+from app.core.listing import page_of, search_clause
 from app.core.workflow_status import (
     SALES_ORDER_TRANSITIONS,
     ProformaInvoiceStatus,
@@ -12,7 +13,7 @@ from app.core.workflow_status import (
     assert_transition,
     normalize_sales_order_status,
 )
-from app.models.approval import ApprovalDocument, ApprovalStatus
+from app.models.approval import ApprovalDocument, ApprovalStatus, SalesApproval
 from app.models.opportunity_activity import OpportunityActivity
 from app.models.quotation import Quotation
 from app.models.sales_order import SalesOrder
@@ -506,10 +507,111 @@ class SalesOrderService:
     # ------------------------------------------------------------------
     # Reads
     # ------------------------------------------------------------------
+    #: What a search box looks through on the Sales Order screen.
+    SEARCHABLE = [
+        "order_number", "customer_name", "company_name", "customer_type",
+        "state", "po_number", "assigned_to", "sales_executive", "status",
+    ]
+
+    @staticmethod
+    def visible_query(
+        current_user: dict,
+        db: Session,
+        search: str | None = None,
+        status: str | None = None,
+    ):
+        """The orders this person may see, narrowed by a search."""
+
+        query = SalesOrderRepository.visible_query(
+            db, get_visible_creator_user_ids(current_user, db)
+        )
+
+        clause = search_clause(
+            search,
+            [getattr(SalesOrder, name) for name in SalesOrderService.SEARCHABLE],
+        )
+
+        if clause is not None:
+            query = query.filter(clause)
+
+        # The status tabs. Filtered here rather than over the page that
+        # came back, so "Draft 12" means twelve drafts rather than however
+        # many of them happened to land on this page.
+        if status:
+            query = query.filter(SalesOrder.status == status)
+
+        return query
+
     @staticmethod
     def get_visible(current_user: dict, db: Session) -> list[SalesOrder]:
-        visible_ids = get_visible_creator_user_ids(current_user, db)
-        return SalesOrderRepository.get_visible(db, visible_ids)
+        return SalesOrderService.visible_query(current_user, db).all()
+
+    @staticmethod
+    def summarise(
+        current_user: dict,
+        db: Session,
+        search: str | None = None,
+    ) -> dict:
+        """The four figures across the top of the Sales Order screen.
+
+        The same definitions the screen used when it counted them in the
+        browser: how many orders, what they are worth, how many are
+        waiting (draft or on hold) and how many are finished.
+        """
+
+        from sqlalchemy import or_
+
+        from app.core.listing import measure
+
+        query = SalesOrderService.visible_query(current_user, db, search)
+
+        figures = measure(
+            query,
+            SalesOrder.created_at,
+            {
+                "total": {},
+                "order_value": {"sum": SalesOrder.grand_total},
+                "pending": {
+                    "where": or_(
+                        SalesOrder.status == "DRAFT",
+                        SalesOrder.status == "ON_HOLD",
+                    )
+                },
+                "completed": {"where": SalesOrder.status == "COMPLETED"},
+            },
+        )
+
+        # One count per status, for the tabs. Raw statuses: the screen
+        # knows which label each one is shown under, and two of them share
+        # a label.
+        from sqlalchemy import func
+
+        figures["counts"] = {
+            str(status or ""): int(n)
+            for status, n in (
+                query.order_by(None)
+                .with_entities(SalesOrder.status, func.count())
+                .group_by(SalesOrder.status)
+                .all()
+            )
+        }
+
+        return figures
+
+    @staticmethod
+    def get_visible_page(
+        current_user: dict,
+        db: Session,
+        search: str | None = None,
+        page: int | None = None,
+        size: int | None = None,
+        status: str | None = None,
+    ) -> tuple[list[SalesOrder], int]:
+        """One page of them, and how many there are in all."""
+
+        return page_of(
+            SalesOrderService.visible_query(current_user, db, search, status), page, size
+        )
 
     @staticmethod
     def get_by_id(order_id: int, db: Session) -> SalesOrder:
@@ -1257,6 +1359,16 @@ class SalesOrderService:
         order = SalesOrderService.get_by_id(order_id, db)
 
         SalesOrderService.assert_can_edit(order, current_user, db)
+
+        # The approvals go with it. They were outliving the order and the
+        # ids are handed out by a sequence, so an approval left behind is
+        # one waiting to be read as the history of whatever order gets
+        # that id next - which is how an order nobody had decided came up
+        # already approved.
+        db.query(SalesApproval).filter(
+            SalesApproval.document_type == ApprovalDocument.SALES_ORDER,
+            SalesApproval.document_id == order.id,
+        ).delete(synchronize_session=False)
 
         SalesOrderRepository.delete(db, order)
 

@@ -66,7 +66,7 @@ class QuotationRepository:
         )
 
     @staticmethod
-    def get_visible(
+    def visible_query(
         db: Session,
         visible_creator_ids: list[str],
         user_id: str | None = None,
@@ -95,4 +95,12 @@ class QuotationRepository:
 
             query = query.filter(or_(*conditions))
 
-        return query.order_by(Quotation.id.desc()).all()
+        return query.order_by(Quotation.id.desc())
+
+    @staticmethod
+    def get_visible(
+        db: Session,
+        visible_creator_ids: list[str],
+        user_id: str | None = None,
+    ) -> list:
+        return QuotationRepository.visible_query(db, visible_creator_ids, user_id).all()

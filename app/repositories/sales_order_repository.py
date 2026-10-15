@@ -39,7 +39,7 @@ class SalesOrderRepository:
         )
 
     @staticmethod
-    def get_visible(
+    def visible_query(
         db: Session,
         visible_creator_ids: list[str],
     ) -> list[SalesOrder]:
@@ -66,7 +66,15 @@ class SalesOrderRepository:
                 )
             )
 
-        return query.order_by(SalesOrder.id.desc()).all()
+        return query.order_by(SalesOrder.id.desc())
+
+    @staticmethod
+    def get_visible(
+        db: Session,
+        visible_creator_ids: list[str],
+        user_id: str | None = None,
+    ) -> list:
+        return SalesOrderRepository.visible_query(db, visible_creator_ids, user_id).all()
 
     @staticmethod
     def preview_order_number(db: Session) -> str:

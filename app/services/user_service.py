@@ -154,9 +154,13 @@ class UserService:
         # Whatever it starts as, the account cannot be worked under
         # until the person has chosen their own - so a blank field is not
         # an omission to refuse, it is the ordinary case.
-        temporary = (getattr(request, "password", None) or "").strip()
+        temporary = getattr(request, "password", None) or ""
 
-        if not temporary:
+        if temporary.strip():
+            # One typed here is emailed and then signed in with, so it is
+            # held to the same rules as one chosen on the way in.
+            PasswordService.assert_strong(temporary)
+        else:
             temporary = PasswordService.temporary_password()
 
         hashed_password = PasswordService.hash_password(temporary)
@@ -224,13 +228,19 @@ class UserService:
         return created_user
 
     @staticmethod
-    def get_all(db: Session, skip: int = 0, limit: int = 100, current_user: dict | None = None) -> dict:
+    def get_all(
+        db: Session,
+        skip: int = 0,
+        limit: int = 100,
+        current_user: dict | None = None,
+        search: str | None = None,
+    ) -> dict:
         visible = (
             HierarchyService.visible_user_ids(current_user, db)
             if current_user is not None
             else None
         )
-        return UserRepository.get_all(db, skip, limit, visible)
+        return UserRepository.get_all(db, skip, limit, visible, search)
 
     @staticmethod
     def update_role(user_id: str, role_ids: list[str], company_ids: list[str], db: Session, current_user: dict | None = None) -> User:

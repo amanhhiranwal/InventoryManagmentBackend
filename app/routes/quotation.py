@@ -131,10 +131,20 @@ def get_brand_logo(
 
 @router.get("/")
 def get_quotations(
+    search: str | None = None,
+    page: int | None = None,
+    size: int | None = None,
+    status: str | None = None,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    return QuotationController.get_all(current_user, db)
+    """One page of the proposals this person can see.
+
+    A search narrows all of them rather than the page on screen. Without
+    page and size this returns everything, as the pickers expect.
+    """
+
+    return QuotationController.get_all(current_user, db, search, page, size, status)
 
 
 @router.get("/{quotation_id}")

@@ -201,6 +201,12 @@ def main() -> int:
         if spec:
             attributes["description"] = spec
 
+        # Both are required on a product. The SKU is the model this
+        # catalogue is keyed on, and the spec column is what the
+        # specification field was always for.
+        attributes["model_number"] = sku
+        attributes["specification"] = spec or name
+
         payload = {
             "name": name,
             "serial_number": sku,

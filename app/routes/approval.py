@@ -280,34 +280,6 @@ def approval_for_document(
     }
 
 
-@router.get("/document/{document_type}/{document_id}/history")
-def approval_history(
-    document_type: str,
-    document_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    """Every approval raised on this document, newest first.
-
-    The current one is the first row. The rest are what happened before
-    it - which is where a rejection and its reason live once a document
-    has been resubmitted.
-    """
-
-    if document_type not in ApprovalDocument.ALL:
-        return {"success": True, "data": []}
-
-    return {
-        "success": True,
-        "data": [
-            serialize_approval(approval, db)
-            for approval in ApprovalService.history_for(
-                document_type, document_id, db
-            )
-        ],
-    }
-
-
 @router.put("/{approval_id}/decide")
 def decide(
     approval_id: int,

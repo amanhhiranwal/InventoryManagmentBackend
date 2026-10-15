@@ -120,13 +120,11 @@ def change_password(
             detail="That is not your current password.",
         )
 
-    new_password = (request.new_password or "").strip()
+    # Not stripped: a space is refused rather than quietly removed, so the
+    # password that is stored is the one that was typed.
+    new_password = request.new_password or ""
 
-    if len(new_password) < 8:
-        raise HTTPException(
-            status_code=400,
-            detail="A password needs at least 8 characters.",
-        )
+    PasswordService.assert_strong(new_password)
 
     if PasswordService.verify_password(new_password, user.password):
         raise HTTPException(

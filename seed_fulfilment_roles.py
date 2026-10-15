@@ -46,6 +46,13 @@ PERMISSIONS = {
     # but a super admin could correct a stock figure.
     "inventory.update": ("Inventory", "Edit a product and its stock level"),
     "inventory.delete": ("Inventory", "Remove a product from the catalogue"),
+    # Loading a supplier's sheet is a different act from adding a product:
+    # one row can become forty records, so it is granted on its own rather
+    # than coming free with inventory.create.
+    "inventory.bulk_upload": (
+        "Inventory",
+        "Load a sheet of products from Excel or CSV",
+    ),
 }
 
 #: role -> what it is for, and what it is granted.
@@ -66,7 +73,7 @@ ROLES = {
         [
             "procurement_desk.read",
             "inventory.read", "inventory.create", "inventory.update",
-            "inventory.delete",
+            "inventory.delete", "inventory.bulk_upload",
             # The product type, category group and unit lookups the
             # catalogue screen needs come with inventory.read - granting
             # the Masters pages themselves would put the warehouse in
@@ -155,7 +162,39 @@ def main() -> int:
 
     for first, last, role_name, email in STAFF:
         if email in people:
-            print(f"  {email} already there")
+            # "Already there" is not the same as "set up". An account that
+            # predates the line below, or one somebody has edited, can be
+            # in no company at all - and then the warehouse cannot file a
+            # product under anything, which is their whole job. The role
+            # and the companies go back on together, because this PUT
+            # replaces the record rather than adding to it.
+            who = people[email]
+            missing = [c for c in every_company if c not in (who.get("company_ids") or [])]
+
+            if not missing:
+                print(f"  {email} already there")
+                continue
+
+            role = roles.get(role_name)
+
+            fixed = api("put", f"/users/{who['id']}", admin, json={
+                "first_name": who.get("first_name") or first,
+                "last_name": who.get("last_name") or last,
+                "email": email,
+                "phone_number": who.get("phone_number") or "9800000010",
+                "employee_id": who.get("employee_id") or f"SYN-{role_name.upper()}",
+                "location": who.get("location"),
+                "role_ids": who.get("role_ids") or ([str(role["id"])] if role else []),
+                "company_ids": every_company,
+                "reports_to_id": who.get("reports_to_id"),
+            })
+
+            print(
+                f"  {email} put into {len(missing)} more compan"
+                f"{'y' if len(missing) == 1 else 'ies'}"
+                if fixed.status_code < 400
+                else f"  {email}: {fixed.status_code} {fixed.text[:120]}"
+            )
             continue
 
         role = roles.get(role_name)
@@ -248,6 +287,10 @@ def stock(admin) -> None:
                 "unit": "Nos",
                 "instock": quantity,
                 "case_size": 1,
+                # Required on every product: the model says which one it
+                # is, the specification says what is in it.
+                "model_number": serial,
+                "specification": name,
             },
         })
 

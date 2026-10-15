@@ -1,6 +1,7 @@
 from uuid import UUID
 
-from sqlalchemy.orm import Session
+from sqlalchemy import func, or_
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.user import User
 
@@ -25,15 +26,54 @@ class UserRepository:
         skip: int = 0,
         limit: int = 100,
         visible_ids: set[str] | None = None,
+        search: str | None = None,
     ) -> dict:
-        """None for visible_ids means every user (super admin)."""
+        """None for visible_ids means every user (super admin).
+
+        A search narrows the whole list before it is cut into pages, so
+        typing a name finds the person wherever they are - searching the
+        ten rows that happen to be on screen is not searching.
+        """
 
         query = db.query(User)
         if visible_ids is not None:
             query = query.filter(User.id.in_([UUID(uid) for uid in visible_ids]))
 
+        term = (search or "").strip()
+
+        if term:
+            # % and _ are wildcards to LIKE and ordinary characters to the
+            # person typing them.
+            escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            like = f"%{escaped}%"
+
+            query = query.filter(
+                or_(
+                    User.first_name.ilike(like, escape="\\"),
+                    User.last_name.ilike(like, escape="\\"),
+                    User.email.ilike(like, escape="\\"),
+                    User.employee_id.ilike(like, escape="\\"),
+                    # "Neha Bansal" as it reads on screen. concat() treats a
+                    # missing surname as empty rather than as null.
+                    func.concat(User.first_name, " ", User.last_name).ilike(
+                        like, escape="\\"
+                    ),
+                )
+            )
+
         total = query.count()
-        data = query.order_by(User.email.asc()).offset(skip).limit(limit).all()
+
+        # Roles and companies are on every row, so they are fetched with
+        # the page - two more queries altogether, rather than two per
+        # person each time the list is drawn.
+        data = (
+            query.options(selectinload(User.roles), selectinload(User.companies))
+            .order_by(User.email.asc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+
         return {"data": data, "total": total}
 
     @staticmethod
