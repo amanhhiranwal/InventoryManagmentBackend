@@ -33,12 +33,23 @@ def _serialize_merged_activity(row: dict, names_map: dict[str, str]) -> dict:
 class SalesOrderController:
 
     @staticmethod
-    def get_all(current_user: dict, db: Session):
-        orders = SalesOrderService.get_visible(current_user, db)
+    def get_all(
+        current_user: dict,
+        db: Session,
+        search: str | None = None,
+        page: int | None = None,
+        size: int | None = None,
+        status: str | None = None,
+    ):
+        orders, total = SalesOrderService.get_visible_page(
+            current_user, db, search, page, size, status
+        )
 
         return {
             "success": True,
             "data": [serialize_sales_order(o) for o in orders],
+            "total": total,
+            "summary": SalesOrderService.summarise(current_user, db, search),
         }
 
     @staticmethod

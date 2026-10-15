@@ -98,27 +98,15 @@ class ApprovalService:
 
     @staticmethod
     def latest_for(document_type: str, document_id: int, db: Session) -> SalesApproval | None:
-        return (
-            db.query(SalesApproval)
-            .filter(
-                SalesApproval.document_type == document_type,
-                SalesApproval.document_id == document_id,
-            )
-            .order_by(SalesApproval.id.desc())
-            .first()
-        )
+        """Where this document stands now, or None if it stands nowhere.
 
-    @staticmethod
-    def history_for(
-        document_type: str, document_id: int, db: Session
-    ) -> list[SalesApproval]:
-        """Every approval ever raised on this document, newest first.
-
-        A document that was rejected and resubmitted has more than one:
-        the open request, and the ones before it. Whoever is deciding the
-        current request wants to know what was said about the last one -
-        "no" with no reason attached is what sends an order round the
-        loop a second time unchanged.
+        Withdrawn rows are not an answer to that question. When an order
+        is changed after being decided, the decision is superseded - and a
+        superseded row saying APPROVED, or a withdrawn one reading as
+        cancelled, was being shown as the order's current state. An order
+        whose only approvals are withdrawn has no standing approval at
+        all, which is the whole point of withdrawing them: it needs
+        sending for approval again.
         """
 
         return (
@@ -126,9 +114,10 @@ class ApprovalService:
             .filter(
                 SalesApproval.document_type == document_type,
                 SalesApproval.document_id == document_id,
+                SalesApproval.status != ApprovalStatus.WITHDRAWN,
             )
             .order_by(SalesApproval.id.desc())
-            .all()
+            .first()
         )
 
     @staticmethod

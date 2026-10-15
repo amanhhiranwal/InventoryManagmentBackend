@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.approvals import price_type_for
+from app.core.listing import page_of, search_clause
 from app.core.workflow_status import (
     QUOTATION_TRANSITIONS,
     OpportunityStatus,
@@ -438,14 +439,103 @@ class QuotationService:
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------
+    #: What a search box looks through on the Proposal screen.
+    SEARCHABLE = [
+        "quote_number", "organization_name", "contact_name", "email",
+        "mobile_number", "opportunity_name", "customer_type", "status",
+    ]
+
+    @staticmethod
+    def visible_query(
+        current_user: dict,
+        db: Session,
+        search: str | None = None,
+        status: str | None = None,
+    ):
+        """The proposals this person may see, narrowed by a search."""
+
+        query = QuotationRepository.visible_query(
+            db,
+            get_visible_creator_user_ids(current_user, db),
+            current_user.get("user_id"),
+        )
+
+        clause = search_clause(
+            search,
+            [getattr(Quotation, name) for name in QuotationService.SEARCHABLE],
+        )
+
+        if clause is not None:
+            query = query.filter(clause)
+
+        # The status tabs. Filtered here rather than over the page that
+        # came back, so "Draft 12" means twelve drafts rather than however
+        # many of them happened to land on this page.
+        if status:
+            query = query.filter(Quotation.status == status)
+
+        return query
+
     @staticmethod
     def get_visible(current_user: dict, db: Session) -> list[Quotation]:
-        visible_ids = get_visible_creator_user_ids(current_user, db)
+        return QuotationService.visible_query(current_user, db).all()
 
-        return QuotationRepository.get_visible(
-            db,
-            visible_ids,
-            current_user.get("user_id"),
+    @staticmethod
+    def summarise(
+        current_user: dict,
+        db: Session,
+        search: str | None = None,
+    ) -> dict:
+        """The figures across the top of the Proposal screen.
+
+        The same ones the screen counted in the browser: how many
+        altogether, what they add up to, and how many sit at each status.
+        """
+
+        from app.core.listing import measure
+
+        query = QuotationService.visible_query(current_user, db, search)
+
+        def at(status):
+            return {"where": Quotation.status == status}
+
+        return measure(
+            query,
+            Quotation.created_at,
+            {
+                "total": {},
+                "gross_value": {"sum": Quotation.total_payable},
+                "drafts": at("DRAFT"),
+                # What the drafts and the sent ones are worth, which the
+                # screen shows as the caption under each count.
+                "draft_value": {
+                    "where": Quotation.status == "DRAFT",
+                    "sum": Quotation.total_payable,
+                },
+                "sent": at("SENT"),
+                "sent_value": {
+                    "where": Quotation.status == "SENT",
+                    "sum": Quotation.total_payable,
+                },
+                "accepted": at("ACCEPTED"),
+                "expired": at("EXPIRED"),
+                "rejected": at("REJECTED"),
+            },
+        )
+
+    @staticmethod
+    def get_visible_page(
+        current_user: dict,
+        db: Session,
+        search: str | None = None,
+        page: int | None = None,
+        size: int | None = None,
+        status: str | None = None,
+    ) -> tuple[list[Quotation], int]:
+        """One page of them, and how many there are in all."""
+
+        return page_of(
+            QuotationService.visible_query(current_user, db, search, status), page, size
         )
 
     @staticmethod

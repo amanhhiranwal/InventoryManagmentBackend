@@ -1,9 +1,12 @@
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import or_
+from datetime import datetime
+
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
+from app.core.listing import page_of, search_clause
 from app.core.workflow_status import (
     LEAD_TRANSITIONS,
     LeadStatus,
@@ -230,10 +233,23 @@ class LeadService:
     def get_junior_roles_for_user(user_role_ids: set[str], db: Session) -> set[str]:
         return HierarchyService.junior_role_ids(set(user_role_ids), db)
 
+    #: What a search box looks through. The fields somebody would type
+    #: from memory - who it is, where they are, how to reach them - rather
+    #: than every column the table has.
+    SEARCHABLE = [
+        "title", "organization_name", "contact_name", "email",
+        "mobile_number", "city", "website", "office_address",
+        "gst_number", "status", "stage", "description",
+    ]
+
     @staticmethod
-    def get_visible_leads(user_id: str, is_super_admin: bool, user_role_ids: set[str], db: Session) -> list[Lead]:
+    def visible_query(user_id: str, is_super_admin: bool, db: Session):
+        """The leads this person may see, as a query still to be narrowed."""
+
+        query = db.query(Lead)
+
         if is_super_admin:
-            return db.query(Lead).order_by(Lead.created_at.desc()).all()
+            return query
 
         visible = HierarchyService.visible_user_ids(
             {"user_id": user_id, "is_super_admin": False}, db
@@ -242,13 +258,144 @@ class LeadService:
 
         # A lead belongs to whoever created it and whoever it is assigned
         # to, so a manager sees both kinds for everyone in their team.
-        query = db.query(Lead).filter(
+        return query.filter(
             or_(
                 Lead.creator_id.in_(visible_uuids),
                 Lead.assigned_to_id.in_(visible_uuids),
             )
         )
-        return query.order_by(Lead.created_at.desc()).all()
+
+    @staticmethod
+    def get_visible_leads(
+        user_id: str,
+        is_super_admin: bool,
+        user_role_ids: set[str],
+        db: Session,
+        search: str | None = None,
+        page: int | None = None,
+        size: int | None = None,
+    ) -> list[Lead]:
+        """One page of what this person can see, or all of it.
+
+        A search narrows everything they can see before the list is cut
+        into pages. Searching the ten rows on screen is not searching.
+        """
+
+        rows, _ = LeadService.get_visible_page(
+            user_id, is_super_admin, db, search, page, size
+        )
+
+        return rows
+
+    #: How the four cards on the Leads screen count a lead. The same
+    #: definitions the screen used when it counted them in the browser -
+    #: a lead is new, qualified or dead by its status or its stage.
+    @staticmethod
+    def _card_clauses():
+        return {
+            "new": or_(Lead.status == "NEW", Lead.stage == "lead"),
+            "qualified": or_(
+                Lead.status == "QUALIFIED",
+                Lead.status == "CONVERTED",
+                Lead.stage == "opportunity",
+                Lead.stage == "quotation",
+            ),
+            "dead": or_(Lead.status == "LOST", Lead.stage == "dead"),
+        }
+
+    @staticmethod
+    def summarise(
+        user_id: str,
+        is_super_admin: bool,
+        db: Session,
+        search: str | None = None,
+    ) -> dict:
+        """The figures across the top, counted over every visible lead.
+
+        Worked out by the database rather than by adding up the rows on
+        screen, which is the only way they stay true once the list is a
+        page at a time. Each card also carries this month's and last
+        month's count, which is what the little percentage is made of.
+        """
+
+        from sqlalchemy import case, func
+
+        query = LeadService.visible_query(user_id, is_super_admin, db)
+
+        clause = search_clause(
+            search, [getattr(Lead, name) for name in LeadService.SEARCHABLE]
+        )
+
+        if clause is not None:
+            query = query.filter(clause)
+
+        now = datetime.now()
+        this_month = datetime(now.year, now.month, 1)
+        last_month = (
+            datetime(now.year - 1, 12, 1)
+            if now.month == 1
+            else datetime(now.year, now.month - 1, 1)
+        )
+
+        def counted(where=None):
+            """count, this month, last month - for one card."""
+
+            def within(start, end=None):
+                window = [Lead.created_at >= start]
+
+                if end is not None:
+                    window.append(Lead.created_at < end)
+
+                condition = and_(*window) if where is None else and_(where, *window)
+
+                return func.sum(case((condition, 1), else_=0))
+
+            return (
+                func.sum(case((where, 1), else_=0)) if where is not None else func.count(),
+                within(this_month),
+                within(last_month, this_month),
+            )
+
+        cards = {"total": None, **{name: c for name, c in LeadService._card_clauses().items()}}
+
+        columns = []
+
+        for where in cards.values():
+            columns.extend(counted(where))
+
+        row = query.with_entities(*columns).one()
+
+        summary = {}
+
+        for index, name in enumerate(cards):
+            start = index * 3
+            summary[name] = {
+                "count": int(row[start] or 0),
+                "this_month": int(row[start + 1] or 0),
+                "last_month": int(row[start + 2] or 0),
+            }
+
+        return summary
+
+    @staticmethod
+    def get_visible_page(
+        user_id: str,
+        is_super_admin: bool,
+        db: Session,
+        search: str | None = None,
+        page: int | None = None,
+        size: int | None = None,
+    ) -> tuple[list[Lead], int]:
+        query = LeadService.visible_query(user_id, is_super_admin, db)
+
+        clause = search_clause(
+            search, [getattr(Lead, name) for name in LeadService.SEARCHABLE]
+        )
+
+        if clause is not None:
+            query = query.filter(clause)
+
+        return page_of(query.order_by(Lead.created_at.desc()), page, size)
 
     @staticmethod
     def create_lead(request, creator_id: UUID, db: Session) -> Lead:
