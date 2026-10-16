@@ -98,23 +98,73 @@ try:
             },
         ).json()["data"]
 
-    # Every sales order ends with the founder: the bands say who owns the
-    # discount, the founder commits the business to the order. An order at
-    # list price used to need nobody at all, which meant it was confirmed
-    # the moment it was raised.
+    # The preview is asked as somebody: who signs depends on who is
+    # asking, because a discount inside your own authority is yours to
+    # give. These are asked as an Area Manager, who owns none of it - so
+    # any discount at all goes up the whole line.
     check(
-        "an undiscounted order still goes to the founder",
-        preview(0)["chain"] == ["Founder"],
+        "an undiscounted order needs nobody",
+        preview(0)["chain"] == [],
         str(preview(0)["chain"]),
     )
-    check("5% stops at the AVP", preview(5)["chain"] == ["AVP", "Founder"], str(preview(5)["chain"]))
-    check("10% still stops at the AVP", preview(10)["chain"] == ["AVP", "Founder"], str(preview(10)["chain"]))
-    check("12% reaches the CEO", preview(12)["chain"] == ["AVP", "CEO", "Founder"], str(preview(12)["chain"]))
-    check("20% still stops at the CEO", preview(20)["chain"] == ["AVP", "CEO", "Founder"], str(preview(20)["chain"]))
     check(
-        "25% reaches the founder",
+        "an Area Manager's 5% goes up the line",
+        preview(5)["chain"] == ["AVP", "CEO", "Founder"],
+        str(preview(5)["chain"]),
+    )
+    check(
+        "and so does their 10%, because none of it is theirs to give",
+        preview(10)["chain"] == ["AVP", "CEO", "Founder"],
+        str(preview(10)["chain"]),
+    )
+    check("12% the same", preview(12)["chain"] == ["AVP", "CEO", "Founder"], str(preview(12)["chain"]))
+    check("20% the same", preview(20)["chain"] == ["AVP", "CEO", "Founder"], str(preview(20)["chain"]))
+    check(
+        "25% the same",
         preview(25)["chain"] == ["AVP", "CEO", "Founder"],
         str(preview(25)["chain"]),
+    )
+
+    # The same questions asked by the people who do own some of it.
+    def preview_as(role_token, discount, price_type="ECP"):
+        return api(
+            "get", "/approvals/preview", role_token,
+            params={
+                "price_type": price_type,
+                "discount_percent": discount,
+                "document_type": "SALES_ORDER",
+            },
+        ).json()["data"]["chain"]
+
+    check(
+        "an AVP's 8% is the AVP's own call",
+        preview_as(token["avp"], 8) == [],
+        str(preview_as(token["avp"], 8)),
+    )
+    check(
+        "past their 10% it goes to the CEO and the founder",
+        preview_as(token["avp"], 18) == ["CEO", "Founder"],
+        str(preview_as(token["avp"], 18)),
+    )
+    check(
+        "the CEO's 18% is the CEO's own call",
+        preview_as(token["ceo"], 18) == [],
+        str(preview_as(token["ceo"], 18)),
+    )
+    check(
+        "past their 20% it goes to the founder",
+        preview_as(token["ceo"], 25) == ["Founder"],
+        str(preview_as(token["ceo"], 25)),
+    )
+    check(
+        "nothing of the founder's own needs approving",
+        preview_as(token["founder"], 25) == [],
+        str(preview_as(token["founder"], 25)),
+    )
+    check(
+        "and dealer price is the founder's to set",
+        preview_as(token["founder"], 0, "DP") == [],
+        str(preview_as(token["founder"], 0, "DP")),
     )
 
     # The dealer question is not how much has been given away.
@@ -350,41 +400,29 @@ try:
     # --------------------------------------------------- no approval due
     banner("6. A proposal is not signed off, and goes out anyway")
 
-    # An order at list price gives nothing away, but it is still a
-    # commitment - so it goes to the founder and nowhere else.
+    # An order at list price gives nothing away, so there is nothing to
+    # sign for. Each level owns discount up to its own ceiling, and an
+    # Area Manager's nothing is inside their nothing.
     plain = make_order("No Discount", 0)
+
+    r = api("get", "/approvals/preview?customer_type=End Customer"
+            "&discount_percent=0&document_type=SALES_ORDER",
+            token["am_north_1"])
+
+    check(
+        "an undiscounted order needs nobody",
+        (r.json().get("data") or {}).get("chain") == [],
+        str((r.json().get("data") or {}).get("chain")),
+    )
+
     r = api("put", f"/orders/{plain['id']}/status", token["am_north_1"], json={
         "status": "CONFIRMED",
     })
     check(
-        "even an undiscounted order cannot be confirmed unapproved",
-        r.status_code == 409,
+        "so it confirms without asking anyone",
+        r.status_code == 200,
         f"{r.status_code} {r.text[:140]}",
     )
-
-    r = send_up(plain, 0)
-    check("it is sent up", r.status_code == 200, f"{r.status_code} {r.text[:140]}")
-
-    plain_approval = r.json().get("data")
-
-    if plain_approval:
-        created_approvals.append(plain_approval["id"])
-
-    check(
-        "with the founder as the only step",
-        [s["role"] for s in (plain_approval or {}).get("steps", [])] == ["Founder"],
-        str((plain_approval or {}).get("steps")),
-    )
-
-    r = api("put", f"/approvals/{plain_approval['id']}/decide", token["founder"], json={
-        "approve": True,
-    })
-    check("the founder commits it", r.status_code == 200, f"{r.status_code} {r.text[:140]}")
-
-    r = api("put", f"/orders/{plain['id']}/status", token["am_north_1"], json={
-        "status": "CONFIRMED",
-    })
-    check("and then it confirms", r.status_code == 200, f"{r.status_code} {r.text[:140]}")
 
     # A proposal at 25% - which on an order would need all three - needs
     # nothing, because the commitment is the order.
@@ -535,31 +573,17 @@ try:
         order = r.json()["data"]
         created_orders.append(order["id"])
 
-        # The founder commits every order, so the walk starts by getting
-        # that signature rather than setting Confirmed by hand.
+        # Nothing is given away on this one, so there is nothing to sign
+        # for and the walk starts at Confirmed. This section is about the
+        # fulfilment chain; the approval rules have their own.
         raised = send_up(order, 0)
+
         check(
-            "it goes up for approval first",
-            raised.status_code == 200,
+            "an order at list price needs no signature",
+            raised.status_code == 200
+            and (raised.json() or {}).get("data") is None,
             f"{raised.status_code} {raised.text[:140]}",
         )
-
-        walk_approval = raised.json().get("data")
-
-        if walk_approval:
-            created_approvals.append(walk_approval["id"])
-
-            signed = api(
-                "put",
-                f"/approvals/{walk_approval['id']}/decide",
-                token["founder"],
-                json={"approve": True},
-            )
-            check(
-                "the founder commits it",
-                signed.status_code == 200,
-                f"{signed.status_code} {signed.text[:140]}",
-            )
 
         # Who may push each step: the sales owner up to Confirmed, then the
         # desks, because once an order is approved it stops being theirs.
@@ -636,7 +660,8 @@ try:
         ("am_north_1", ["AVP", "CEO", "Founder"]),
         ("zh_north", ["AVP", "CEO", "Founder"]),
         ("avp", ["CEO", "Founder"]),
-        ("ceo", ["Founder"]),
+        # 15% is inside the CEO's own 20%, so it is theirs to give.
+        ("ceo", []),
         ("founder", []),
     ]:
         their_order = make_order(f"Desk {who}", 15, who=who)
@@ -746,6 +771,90 @@ try:
     )
 
     # ------------------------------------- changing it sends it back up
+    banner("9g. Whoever must approve it can open it")
+
+    # An approver has to be able to open what they have been asked to
+    # decide. The rule that governs editing was being used to decide who
+    # may read, and an order whose raiser sat outside the approver's line
+    # turned up in their pending list and gave them a permission error
+    # when they clicked it - the one person who could move it on was the
+    # one person who could not see it.
+    dealer_order = make_order("Approver Reads", 0, customer_type="Dealer")
+
+    up = send_up(dealer_order, 0, price_type="DP")
+    dealer_approval = (up.json() or {}).get("data")
+
+    if dealer_approval:
+        created_approvals.append(dealer_approval["id"])
+
+    check(
+        "a dealer order goes to the founder",
+        [s["role"] for s in (dealer_approval or {}).get("steps", [])] == ["Founder"],
+        str(dealer_approval and [s["role"] for s in dealer_approval["steps"]]),
+    )
+
+    waiting = [
+        row
+        for row in rows(api("get", "/approvals/pending", token["founder"]))
+        if str(row.get("document_id")) == str(dealer_order["id"])
+    ]
+
+    check("it is waiting on the founder", bool(waiting), "not in their pending list")
+
+    opened = api("get", f"/orders/{dealer_order['id']}", token["founder"])
+
+    check(
+        "who can open the order they have been asked about",
+        opened.status_code == 200,
+        f"{opened.status_code} {opened.text[:120]}",
+    )
+
+    history = api("get", f"/orders/{dealer_order['id']}/activities", token["founder"])
+
+    check(
+        "and read its history, which sits beside the Approve button",
+        history.status_code == 200,
+        str(history.status_code),
+    )
+
+    banner("9f. A deleted order does not leave its approval behind")
+
+    # Ids come from a sequence, so an approval that outlives its order is
+    # waiting to be read as the approval of whatever order is handed that
+    # id next - and a brand new order then comes up already approved with
+    # no step for the CEO or the founder in it. That is what a live
+    # database was doing after a few rounds of testing.
+    # A dealer order, so there is an approval to leave behind: an order
+    # at list price needs nobody and would record nothing.
+    doomed = make_order("Deleted After Approval", 0, customer_type="Dealer")
+    doomed_approval = (send_up(doomed, 0, price_type="DP").json() or {}).get("data")
+
+    check(
+        "an order can be sent up and then deleted",
+        doomed_approval is not None
+        and api("delete", f"/orders/{doomed['id']}", admin).status_code < 400,
+        str(doomed_approval and doomed_approval["id"]),
+    )
+
+    from app.database.postgres import SessionLocal as _Session
+    from app.models.approval import SalesApproval as _Approval
+
+    _db = _Session()
+
+    left = (
+        _db.query(_Approval)
+        .filter(_Approval.id == (doomed_approval or {}).get("id"))
+        .first()
+    )
+
+    _db.close()
+
+    check(
+        "its approval goes with it, rather than waiting for the next order",
+        left is None,
+        "the approval outlived the order",
+    )
+
     banner("9e. Changing an approved order sends it back up the chain")
 
     settled = make_order("Edited After Approval", 0)

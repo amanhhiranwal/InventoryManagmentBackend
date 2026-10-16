@@ -626,6 +626,33 @@ class SalesOrderService:
     # Authorisation
     # ------------------------------------------------------------------
     @staticmethod
+    def assert_can_view(
+        order: SalesOrder,
+        current_user: dict,
+        db: Session,
+    ) -> None:
+        """Whether this person may open the order.
+
+        Everyone who may change it, and also whoever has been asked to
+        decide on it. An approver sits outside the raiser's reporting
+        line by design - that is the point of sending it upwards - so the
+        rule that governs editing refused the one person the order was
+        waiting on, and the founder got it in their pending list and a
+        permission error when they clicked it.
+
+        Reading is not editing: this grants no more than opening it.
+        """
+
+        from app.services.approval_service import ApprovalService
+
+        if ApprovalService.is_approver_of(
+            ApprovalDocument.SALES_ORDER, order.id, current_user, db
+        ):
+            return
+
+        SalesOrderService.assert_can_edit(order, current_user, db)
+
+    @staticmethod
     def assert_can_edit(
         order: SalesOrder,
         current_user: dict,
@@ -1100,7 +1127,9 @@ class SalesOrderService:
         order = SalesOrderService.get_by_id(order_id, db)
 
         if not access_checked:
-            SalesOrderService.assert_can_edit(order, current_user, db)
+            # Reading the history is reading, so an approver gets it too -
+            # the panel sits on the same page as the Approve button.
+            SalesOrderService.assert_can_view(order, current_user, db)
 
         rows: list[dict] = [
             {
@@ -1242,16 +1271,29 @@ class SalesOrderService:
         if not _confirmed_onwards(target):
             return
 
-        from app.core.approvals import approval_chain, price_type_for
+        from app.core.approvals import price_type_for
         from app.models.approval import ApprovalDocument
+        from app.models.user import User
         from app.services.approval_service import ApprovalService
 
-        chain = approval_chain(
+        # Whether this order needs signing depends on who raised it: a
+        # discount inside their own authority is theirs to give. Asked
+        # about the creator, which is the same question raising the
+        # approval asks - otherwise an order could be refused for wanting
+        # an approval nobody was allowed to raise.
+        raiser = (
+            db.query(User).filter(User.id == order.creator_id).first()
+            if order.creator_id
+            else None
+        )
+
+        chain = ApprovalService.chain_for(
             price_type_for(order.customer_type),
             ApprovalService._deepest_discount(
                 ApprovalDocument.SALES_ORDER, order.id, db
             )
             or 0.0,
+            raiser,
             db,
             ApprovalDocument.SALES_ORDER,
         )

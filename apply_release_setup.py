@@ -134,11 +134,66 @@ def warranty_terms(db) -> str:
     return f"{after - before} added ({after} in total)" if after != before else "already there"
 
 
+def orphan_approvals(db) -> str:
+    """Approvals left behind by documents that no longer exist.
+
+    An approval used to survive the deletion of the order it was raised
+    on. Ids come from a sequence, so an approval that outlives its order
+    sits waiting to be read as the approval of whatever order is handed
+    that id next - and a brand new order then comes up already approved,
+    with no step for the CEO or the founder in it, which is exactly what
+    somebody sending one up for the first time sees.
+
+    Deleting an order takes its approvals with it now. This clears the
+    ones that were already orphaned before that was true, on whichever
+    database the release lands on, so the fix does not need anybody to
+    open a psql prompt against production.
+
+    Only rows whose document is genuinely gone. An approval on a document
+    that still exists is a record of a decision and is never touched.
+    """
+
+    from sqlalchemy import text
+
+    removed = 0
+
+    # Each document type against the table it points at. A type whose
+    # table is missing is skipped rather than guessed at.
+    for document_type, table in (
+        ("SALES_ORDER", "sales_order"),
+        ("QUOTATION", "sales_quotation"),
+    ):
+        exists = db.execute(
+            text("select to_regclass(:name)"), {"name": table}
+        ).scalar()
+
+        if not exists:
+            continue
+
+        removed += db.execute(
+            text(
+                f"""
+                delete from sales_approval a
+                 where a.document_type = :document_type
+                   and not exists (
+                       select 1 from {table} d where d.id = a.document_id
+                   )
+                """
+            ),
+            {"document_type": document_type},
+        ).rowcount
+
+    db.commit()
+
+    return f"{removed} cleared" if removed else "none left behind"
+
+
 STEPS = [
     ("Menus", menus),
     ("Warranty terms", warranty_terms),
     ("Founder role", founder_role),
     ("Discount bands", discount_bands),
+    ("Orphan approvals", orphan_approvals),
 ]
 
 
