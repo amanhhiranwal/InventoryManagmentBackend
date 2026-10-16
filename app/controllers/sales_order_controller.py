@@ -56,9 +56,12 @@ class SalesOrderController:
     def get_by_id(order_id: int, db: Session, current_user: dict | None = None):
         order = SalesOrderService.get_by_id(order_id, db)
 
-        # Opening a record by id follows the same hierarchy as the list.
+        # Opening a record follows the same hierarchy as the list, plus
+        # whoever has been asked to decide on it - an approver stands
+        # outside the raiser's line by design, which is the point of
+        # sending an order upwards.
         if current_user is not None:
-            SalesOrderService.assert_can_edit(order, current_user, db)
+            SalesOrderService.assert_can_view(order, current_user, db)
 
         return {
             "success": True,

@@ -176,7 +176,23 @@ def preview_chain(
 
     price_type = price_type or PriceType.ECP
 
-    chain = approval_chain(price_type, discount_percent, db, document_type)
+    # Who would sign depends on who is asking: a discount inside the
+    # asker's own authority needs nobody. Answering without that showed a
+    # chain on the form that the order would never actually raise.
+    from app.models.user import User
+    from app.services.approval_service import ApprovalService
+
+    asker = (
+        db.query(User)
+        .filter(User.id == current_user.get("user_id"))
+        .first()
+        if current_user and current_user.get("user_id")
+        else None
+    )
+
+    chain = ApprovalService.chain_for(
+        price_type, discount_percent, asker, db, document_type
+    )
 
     return {
         "success": True,
@@ -184,7 +200,7 @@ def preview_chain(
             "chain": chain,
             "price_type": price_type,
             "reason": describe_chain(
-                price_type, discount_percent, db, document_type
+                price_type, discount_percent, db, document_type, chain
             ),
             "needs_approval": bool(chain),
             "ceilings": {
@@ -218,7 +234,10 @@ def request_approval(
     if approval is None:
         return {
             "success": True,
-            "message": "No discount, so this needs no approval.",
+            # Not always "no discount": an AVP's 8% needs nobody because
+            # it is theirs to give, and the old wording told them there
+            # was no discount on an order that plainly had one.
+            "message": "This needs no approval - it is within your own authority.",
             "data": None,
         }
 
