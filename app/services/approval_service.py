@@ -1024,21 +1024,19 @@ class ApprovalService:
     # Telling people
     # ------------------------------------------------------------------
     @staticmethod
-    def _chain_emails(approval: SalesApproval, db: Session) -> tuple[list[str], list[str]]:
-        """Who to write to: the approver on point, then everyone above.
+    def _chain_emails(
+        approval: SalesApproval,
+        db: Session,
+        event: str | None = None,
+    ) -> tuple[list[str], list[str]]:
+        """Who to write to: the approver on point, then relevant parties.
 
-        The person the step is waiting on is the recipient. The requester
-        and their managers are copied, so the whole reporting line can see
-        where the deal has got to.
+        - While pending (event == "raised" or intermediate "approved"):
+          The actionable recipient (To) is the approver holding up the current step.
+          The requester is copied (CC) so they know their deal is progressing.
+        - When fully approved or rejected: The requester is the primary recipient
+          (To), and approvers who participated in the chain are copied (CC).
         """
-
-        to = [
-            approver.email
-            for approver in ApprovalService.approvers_for_step(approval, db)
-            if approver.email
-        ]
-
-        cc: list[str] = []
 
         requester = (
             db.query(User)
@@ -1047,17 +1045,47 @@ class ApprovalService:
             if approval.requested_by
             else None
         )
+        requester_email = requester.email.strip() if (requester and requester.email) else None
 
-        if requester and requester.email:
-            cc.append(requester.email)
+        # Fully approved or rejected: requester is in To
+        if approval.status in (ApprovalStatus.APPROVED, ApprovalStatus.REJECTED) or event == "rejected":
+            to = [requester_email] if requester_email else []
+            cc: list[str] = []
+            for step in (approval.steps or []):
+                approver_id = step.get("approver_id")
+                if approver_id:
+                    u = db.query(User).filter(User.id == UUID(str(approver_id))).first()
+                    if u and u.email:
+                        cc.append(u.email.strip())
 
-        for manager in ApprovalService._managers_of(approval.requested_by, db):
-            if manager.email:
-                cc.append(manager.email)
+            # Fallback if requester had no email
+            if not to and cc:
+                to, cc = cc[:1], cc[1:]
 
-        # Never copy someone the message is already addressed to.
-        cc = [address for address in dict.fromkeys(cc) if address not in to]
+            cc = [addr for addr in dict.fromkeys(cc) if addr not in to]
+            return list(dict.fromkeys(to)), cc
 
+        # Pending approval step:
+        # To: The approver on point for the active step
+        to = [
+            approver.email.strip()
+            for approver in ApprovalService.approvers_for_step(approval, db)
+            if approver.email
+        ]
+
+        # CC: The requester who raised it
+        cc = [requester_email] if requester_email else []
+
+        # If it's an intermediate approved step, also copy anyone who already signed
+        if event == "approved":
+            for step in (approval.steps or []):
+                approver_id = step.get("approver_id")
+                if approver_id:
+                    u = db.query(User).filter(User.id == UUID(str(approver_id))).first()
+                    if u and u.email:
+                        cc.append(u.email.strip())
+
+        cc = [addr for addr in dict.fromkeys(cc) if addr not in to]
         return list(dict.fromkeys(to)), cc
 
     @staticmethod
@@ -1080,7 +1108,7 @@ class ApprovalService:
                 id=approval.document_id
             )
 
-            to, cc = ApprovalService._chain_emails(approval, db)
+            to, cc = ApprovalService._chain_emails(approval, db, event=event)
 
             if not to and not cc:
                 return

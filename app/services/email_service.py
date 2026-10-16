@@ -34,18 +34,51 @@ class EmailService:
         blind. ``attachments`` take ``{filename, content (bytes), mime_type}``.
         """
 
-        recipients = [to] if isinstance(to, str) else list(to or [])
-        cc = list(cc or [])
-        bcc = list(bcc or [])
+        raw_to = [to] if isinstance(to, str) else list(to or [])
+        raw_cc = list(cc or [])
+        raw_bcc = list(bcc or [])
 
-        if not recipients:
-            logger.warning("Email not sent: no recipients. Subject: %s", subject)
-            return False
+        # Clean and deduplicate addresses while preserving order
+        clean_to: list[str] = []
+        seen: set[str] = set()
+
+        for addr in raw_to:
+            if not addr:
+                continue
+            normalized = str(addr).strip().lower()
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                clean_to.append(str(addr).strip())
+
+        clean_cc: list[str] = []
+        for addr in raw_cc:
+            if not addr:
+                continue
+            normalized = str(addr).strip().lower()
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                clean_cc.append(str(addr).strip())
+
+        clean_bcc: list[str] = []
+        for addr in raw_bcc:
+            if not addr:
+                continue
+            normalized = str(addr).strip().lower()
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                clean_bcc.append(str(addr).strip())
+
+        if not clean_to:
+            if clean_cc:
+                clean_to, clean_cc = clean_cc, []
+            else:
+                logger.warning("Email not sent: no recipients. Subject: %s", subject)
+                return False
 
         if not settings.SMTP_HOST:
             logger.warning(
                 "SMTP is not configured. Email to %s not sent.\nSubject: %s\n%s",
-                ", ".join(recipients),
+                ", ".join(clean_to),
                 subject,
                 text_body,
             )
@@ -62,10 +95,10 @@ class EmailService:
             if settings.SMTP_FROM_NAME
             else sender
         )
-        message["To"] = ", ".join(recipients)
+        message["To"] = ", ".join(clean_to)
 
-        if cc:
-            message["Cc"] = ", ".join(cc)
+        if clean_cc:
+            message["Cc"] = ", ".join(clean_cc)
 
         message.set_content(text_body)
 
@@ -114,9 +147,13 @@ class EmailService:
 
                 # Passing the envelope explicitly is what delivers BCC
                 # without the addresses appearing in any header.
+                # Envelope addresses are strictly deduplicated so an inbox never
+                # receives duplicate copies of the same email.
+                envelope = list(dict.fromkeys(clean_to + clean_cc + clean_bcc))
+
                 server.send_message(
                     message,
-                    to_addrs=recipients + cc + bcc,
+                    to_addrs=envelope,
                 )
 
             return True
