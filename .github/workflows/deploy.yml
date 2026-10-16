@@ -1,83 +1,64 @@
-
 name: CI/CD Pipeline - Backend
-
+ 
 on:
   push:
     branches:
       - prod
       - main
   workflow_dispatch:
-
-# Prevent overlapping deployments to the same branch.
+ 
 concurrency:
   group: deploy-backend-${{ github.ref_name }}
   cancel-in-progress: false
-
+ 
 permissions:
   contents: read
-
+ 
 jobs:
   test:
     name: Backend CI (Syntax & Compilation)
     runs-on: ubuntu-latest
-
+ 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
+ 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
+ 
       - name: Verify Python Syntax
         shell: bash
         run: |
-          set -Eeuo pipefail
-
-          echo "==> Checking Python files under app/..."
-
-          if [ ! -d app ]; then
-            echo "::error::The app directory does not exist."
-            exit 1
-          fi
-
-          mapfile -t APP_FILES < <(
-            find app -type f -name "*.py" -print | sort
-          )
-
-          if [ "${#APP_FILES[@]}" -eq 0 ]; then
-            echo "::error::No Python files found under app/."
-            exit 1
-          fi
-
-          python -m py_compile "${APP_FILES[@]}"
-
-          echo "==> Checking root-level deployment scripts..."
-
-          REQUIRED_FILES=(
-            sync_schema.py
-            apply_crm_workflow_schema.py
-            check_and_seed_db.py
+          set -euo pipefail
+ 
+          test -d app
+ 
+          find app -type f -name "*.py" -print0 |
+            xargs -0 -r python -m py_compile
+ 
+          for file in \
+            sync_schema.py \
+            apply_crm_workflow_schema.py \
+            check_and_seed_db.py \
             apply_release_setup.py
-          )
-
-          for file in "${REQUIRED_FILES[@]}"; do
-            if [ ! -f "$file" ]; then
-              echo "::error::Required file is missing: $file"
+          do
+            test -f "$file" || {
+              echo "::error::Missing required file: $file"
               exit 1
-            fi
-
+            }
+ 
             python -m py_compile "$file"
           done
-
-          echo "==> All Python syntax checks passed."
-
+ 
+          echo "All Python syntax checks passed."
+ 
   deploy:
     name: Deploy FastAPI Backend
     needs: test
     runs-on: ubuntu-latest
-
+ 
     steps:
       - name: Deploy to Server via SSH
         uses: appleboy/ssh-action@v1.2.0
@@ -87,85 +68,63 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT || 22 }}
           command_timeout: 20m
-          # script_stop is deliberately off. It makes drone-ssh run the
-          # script a piece at a time so it can stop at the first failure,
-          # which breaks every construct that spans more than one line -
-          # the branch check below is a case statement, and it arrived at
-          # bash as "case ... in ; main|prod) ; ;;", hence
-          #
-          #   bash: -c: line 36: syntax error near unexpected token `;'
-          #
-          # Stopping on an error is already handled, properly, by the
-          # set -e on the first line of the script.
           script: |
-            set -Eeuo pipefail
-
-            trap 'rc=$?; echo "ERROR: Deployment failed at line ${LINENO}, exit code ${rc}."; exit "$rc"' ERR
-
+            set -eu
+ 
             echo "=========================================="
-            echo "==> Starting FastAPI backend deployment"
+            echo "Starting FastAPI backend deployment"
             echo "=========================================="
-
+ 
             APP_DIR="/var/www/saas"
             BACKEND_DIR="$APP_DIR/backend"
             COMPOSE_FILE="$APP_DIR/docker-compose.prod.yml"
-
-            # Validate deployment directories.
+ 
             if [ ! -d "$BACKEND_DIR" ]; then
-              echo "ERROR: Backend directory does not exist: $BACKEND_DIR"
+              echo "ERROR: Backend directory does not exist."
               exit 1
             fi
-
+ 
             cd "$BACKEND_DIR"
-
+ 
             git config --global --add safe.directory "$BACKEND_DIR"
-
-            # Accept only the configured deployment branches.
+ 
             BRANCH="${{ github.ref_name }}"
-
+ 
             case "$BRANCH" in
-              main|prod)
-                ;;
+              main|prod) ;;
               *)
-                echo "ERROR: Unsupported deployment branch: $BRANCH"
+                echo "ERROR: Unsupported branch: $BRANCH"
                 exit 1
                 ;;
             esac
-
-            echo "==> Deployment branch: $BRANCH"
-
-            # Update the local checkout.
+ 
+            echo "==> Fetching branch: $BRANCH"
             git fetch origin "$BRANCH"
             git checkout -B "$BRANCH" "origin/$BRANCH"
-
-            # Use the deployment compose file from the checked-out revision.
+ 
             if [ -f "$BACKEND_DIR/deploy/docker-compose.prod.yml" ]; then
-              cp -f \
-                "$BACKEND_DIR/deploy/docker-compose.prod.yml" \
-                "$COMPOSE_FILE"
+              cp -f "$BACKEND_DIR/deploy/docker-compose.prod.yml" "$COMPOSE_FILE"
             elif [ ! -f "$COMPOSE_FILE" ]; then
-              echo "ERROR: Docker Compose production file not found."
+              echo "ERROR: Production Compose file is missing."
               exit 1
-            else
-              echo "NOTICE: Keeping the existing production Compose file."
             fi
-
+ 
             if [ ! -f "$COMPOSE_FILE" ]; then
-              echo "ERROR: Missing Compose file: $COMPOSE_FILE"
+              echo "ERROR: Compose file not found: $COMPOSE_FILE"
               exit 1
             fi
-
-            # Use an array so paths and arguments are passed correctly.
-            COMPOSE=(docker compose -f "$COMPOSE_FILE")
-
-            echo "==> Validating Docker Compose configuration..."
-            "${COMPOSE[@]}" config --quiet
-
-            # Build the new image before changing the running service.
+ 
+            # Use a function instead of Bash arrays.
+            dc() {
+              docker compose -f "$COMPOSE_FILE" "$@"
+            }
+ 
+            echo "==> Validating Docker Compose..."
+            dc config --quiet
+ 
             echo "==> Building backend image..."
-            "${COMPOSE[@]}" build saas_backend
-
-            # Ensure required deployment scripts are present.
+            dc build saas_backend
+ 
             for file in \
               sync_schema.py \
               apply_crm_workflow_schema.py \
@@ -173,163 +132,141 @@ jobs:
               apply_release_setup.py
             do
               if [ ! -f "$BACKEND_DIR/$file" ]; then
-                echo "ERROR: Required script is missing: $file"
+                echo "ERROR: Missing deployment script: $file"
                 exit 1
               fi
             done
-
-            # Read PostgreSQL role/database settings.
-            # The application .env file must contain these values.
-            APP_DB_USER="$(
-              grep -E '^[[:space:]]*POSTGRES_USER=' "$BACKEND_DIR/.env" \
-                | tail -1 \
-                | cut -d= -f2- \
-                | tr -d "\"' " || true
-            )"
-
-            APP_DB_NAME="$(
-              grep -E '^[[:space:]]*POSTGRES_DB=' "$BACKEND_DIR/.env" \
-                | tail -1 \
-                | cut -d= -f2- \
-                | tr -d "\"' " || true
-            )"
-
-            # Transfer table ownership only when local PostgreSQL
-            # superuser access is available.
+ 
+            # Optional PostgreSQL table ownership correction.
+            if [ -f "$BACKEND_DIR/.env" ]; then
+              APP_DB_USER=$(
+                sed -n 's/^[[:space:]]*POSTGRES_USER=//p' "$BACKEND_DIR/.env" |
+                tail -n 1 |
+                tr -d "\"' "
+              )
+ 
+              APP_DB_NAME=$(
+                sed -n 's/^[[:space:]]*POSTGRES_DB=//p' "$BACKEND_DIR/.env" |
+                tail -n 1 |
+                tr -d "\"' "
+              )
+            else
+              APP_DB_USER=""
+              APP_DB_NAME=""
+            fi
+ 
             if [ -z "$APP_DB_USER" ] || [ -z "$APP_DB_NAME" ]; then
               echo "NOTICE: Skipping table ownership check."
-              echo "POSTGRES_USER or POSTGRES_DB was not found in backend/.env."
-
-            elif ! sudo -n -u postgres psql \
-              -d "$APP_DB_NAME" -Atc 'SELECT 1' >/dev/null 2>&1; then
-
-              echo "NOTICE: Local PostgreSQL superuser access unavailable."
-              echo "Skipping ownership transfer."
-
-            else
-              # Quote identifiers safely using PostgreSQL format().
-              OWNED_BY_OTHERS="$(
+            elif sudo -n -u postgres psql -d "$APP_DB_NAME" -Atc \
+              'SELECT 1' >/dev/null 2>&1; then
+ 
+              echo "==> Checking PostgreSQL table ownership..."
+ 
+              OWNED_BY_OTHERS=$(
                 sudo -n -u postgres psql \
                   -d "$APP_DB_NAME" -Atc \
                   "SELECT count(*)
                    FROM pg_tables
                    WHERE schemaname = 'public'
                      AND tableowner <> '$APP_DB_USER'"
-              )"
-
-              if [ "${OWNED_BY_OTHERS:-0}" = "0" ]; then
-                echo "==> Table ownership already matches $APP_DB_USER."
-              else
-                echo "==> Transferring ownership of $OWNED_BY_OTHERS tables..."
-
+              )
+ 
+              if [ "$OWNED_BY_OTHERS" != "0" ]; then
+                echo "==> Transferring table ownership..."
+ 
                 sudo -n -u postgres psql \
                   -d "$APP_DB_NAME" -Atc \
                   "SELECT format(
-                     'ALTER TABLE %I.%I OWNER TO %I;',
-                     schemaname,
-                     tablename,
-                     '$APP_DB_USER'
-                   )
-                   FROM pg_tables
-                   WHERE schemaname = 'public'
-                     AND tableowner <> '$APP_DB_USER'" \
-                  | sudo -n -u postgres psql \
-                      -d "$APP_DB_NAME" \
-                      -v ON_ERROR_STOP=1 \
-                      -q \
-                      -f -
-
-                echo "==> Table ownership transfer completed."
+                    'ALTER TABLE %I.%I OWNER TO %I;',
+                    schemaname,
+                    tablename,
+                    '$APP_DB_USER'
+                  )
+                  FROM pg_tables
+                  WHERE schemaname = 'public'
+                    AND tableowner <> '$APP_DB_USER'" |
+                sudo -n -u postgres psql \
+                  -d "$APP_DB_NAME" \
+                  -v ON_ERROR_STOP=1 -q -f -
+              else
+                echo "==> Table ownership is already correct."
               fi
+            else
+              echo "NOTICE: Local PostgreSQL superuser access unavailable."
             fi
-
-            # Run database migrations before starting the new application.
+ 
             echo "=========================================="
             echo "==> Running database migrations"
             echo "=========================================="
-
-            echo "==> Step 1/2: sync_schema.py"
-            "${COMPOSE[@]}" run --rm --no-deps -T \
-              saas_backend python -u sync_schema.py
-
-            echo "==> Step 2/2: apply_crm_workflow_schema.py"
-            "${COMPOSE[@]}" run --rm --no-deps -T \
-              saas_backend python -u apply_crm_workflow_schema.py
-
-            echo "==> Database migration commands completed."
-
-            # Start or recreate the backend using the new image.
-            echo "==> Starting backend container..."
-            "${COMPOSE[@]}" up -d --no-deps saas_backend
-
-            # Confirm that the service is running.
-            echo "==> Checking backend container status..."
-
+ 
+            echo "==> Running sync_schema.py"
+            dc run --rm --no-deps -T saas_backend \
+              python -u sync_schema.py
+ 
+            echo "==> Running CRM workflow schema migration"
+            dc run --rm --no-deps -T saas_backend \
+              python -u apply_crm_workflow_schema.py
+ 
+            echo "==> Database migrations completed."
+ 
+            echo "==> Starting backend..."
+            dc up -d --no-deps saas_backend
+ 
+            echo "==> Waiting for backend container..."
+            ATTEMPT=1
             RUNNING=""
-
-            for attempt in $(seq 1 15); do
-              RUNNING="$(
-                "${COMPOSE[@]}" ps --status running -q saas_backend
-              )"
-
+ 
+            while [ "$ATTEMPT" -le 15 ]; do
+              RUNNING=$(dc ps --status running -q saas_backend)
+ 
               if [ -n "$RUNNING" ]; then
-                echo "==> Backend container is running."
                 break
               fi
-
-              echo "Waiting for backend container ($attempt/15)..."
+ 
+              echo "Waiting for container ($ATTEMPT/15)..."
               sleep 2
+              ATTEMPT=$((ATTEMPT + 1))
             done
-
+ 
             if [ -z "$RUNNING" ]; then
-              echo "ERROR: Backend container did not start."
-              "${COMPOSE[@]}" ps -a
-              "${COMPOSE[@]}" logs --tail=100 saas_backend
+              echo "ERROR: Backend container failed to start."
+              dc ps -a
+              dc logs --tail=100 saas_backend
               exit 1
             fi
-
-            # Run the existing seed and release setup scripts.
-            echo "==> Running database seeding..."
-            "${COMPOSE[@]}" exec -T saas_backend \
+ 
+            echo "==> Running database seed..."
+            dc exec -T saas_backend \
               python -u check_and_seed_db.py
-
+ 
             echo "==> Applying release setup..."
-            "${COMPOSE[@]}" exec -T saas_backend \
+            dc exec -T saas_backend \
               python -u apply_release_setup.py
-
-            # Validate the application using its existing health endpoint.
-            echo "=========================================="
-            echo "==> Waiting for backend health check"
-            echo "=========================================="
-
+ 
+            echo "==> Checking backend health..."
             HEALTH_URL="http://127.0.0.1:8050/api/v1/health"
-            HEALTHY=false
-
-            for attempt in $(seq 1 15); do
+            HEALTHY=0
+            ATTEMPT=1
+ 
+            while [ "$ATTEMPT" -le 15 ]; do
               if curl --connect-timeout 3 --max-time 5 \
-                --silent --show-error --fail \
-                "$HEALTH_URL" >/dev/null 2>&1; then
-
-                HEALTHY=true
-                echo "==> Backend health check passed."
+                -fsS "$HEALTH_URL" >/dev/null 2>&1; then
+                HEALTHY=1
                 break
               fi
-
-              echo "Waiting for health check ($attempt/15)..."
+ 
+              echo "Waiting for health check ($ATTEMPT/15)..."
               sleep 2
+              ATTEMPT=$((ATTEMPT + 1))
             done
-
-            if [ "$HEALTHY" != "true" ]; then
+ 
+            if [ "$HEALTHY" -ne 1 ]; then
               echo "ERROR: Backend health check failed."
-              echo "==> Container status:"
-              "${COMPOSE[@]}" ps -a
-
-              echo "==> Recent backend logs:"
-              "${COMPOSE[@]}" logs --tail=100 saas_backend
-
+              dc ps -a
+              dc logs --tail=100 saas_backend
               exit 1
             fi
-
+ 
             echo "=========================================="
-            echo "==> Backend deployment completed successfully."
+            echo "Backend deployment completed successfully."
             echo "=========================================="
