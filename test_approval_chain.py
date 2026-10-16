@@ -746,6 +746,42 @@ try:
     )
 
     # ------------------------------------- changing it sends it back up
+    banner("9f. A deleted order does not leave its approval behind")
+
+    # Ids come from a sequence, so an approval that outlives its order is
+    # waiting to be read as the approval of whatever order is handed that
+    # id next - and a brand new order then comes up already approved with
+    # no step for the CEO or the founder in it. That is what a live
+    # database was doing after a few rounds of testing.
+    doomed = make_order("Deleted After Approval", 0)
+    doomed_approval = (send_up(doomed, 0).json() or {}).get("data")
+
+    check(
+        "an order can be sent up and then deleted",
+        doomed_approval is not None
+        and api("delete", f"/orders/{doomed['id']}", admin).status_code < 400,
+        str(doomed_approval and doomed_approval["id"]),
+    )
+
+    from app.database.postgres import SessionLocal as _Session
+    from app.models.approval import SalesApproval as _Approval
+
+    _db = _Session()
+
+    left = (
+        _db.query(_Approval)
+        .filter(_Approval.id == (doomed_approval or {}).get("id"))
+        .first()
+    )
+
+    _db.close()
+
+    check(
+        "its approval goes with it, rather than waiting for the next order",
+        left is None,
+        "the approval outlived the order",
+    )
+
     banner("9e. Changing an approved order sends it back up the chain")
 
     settled = make_order("Edited After Approval", 0)
