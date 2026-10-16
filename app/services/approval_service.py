@@ -647,24 +647,15 @@ class ApprovalService:
         )
 
     @staticmethod
-    def decide_by_link(
+    def validate_link(
         approval_id: int,
         user_id: str,
         step: int,
-        approve: bool,
         db: Session,
-    ) -> SalesApproval:
-        """Decide from the email link, with the link standing in for a login.
+    ) -> tuple[SalesApproval, User]:
+        """Verify that this step is still pending and waiting on this user.
 
-        Everything the token claims is checked against the database
-        before anything happens, because the token says what it was
-        issued for and the database says what is actually true now.
-
-        The step matters most. A link is issued for one step; once that
-        step has been decided the approval has moved on, so the link is
-        spent. That is what stops a forwarded mail being a second
-        signature, and what stops the AVP's link being used after it has
-        reached the CEO.
+        Raises HTTPException if the link cannot be used, without mutating state.
         """
 
         approval = (
@@ -724,6 +715,31 @@ class ApprovalService:
                     "CRM to decide this one."
                 ),
             )
+
+        return approval, user
+
+    @staticmethod
+    def decide_by_link(
+        approval_id: int,
+        user_id: str,
+        step: int,
+        approve: bool,
+        db: Session,
+    ) -> SalesApproval:
+        """Decide from the email link, with the link standing in for a login.
+
+        Everything the token claims is checked against the database
+        before anything happens, because the token says what it was
+        issued for and the database says what is actually true now.
+
+        The step matters most. A link is issued for one step; once that
+        step has been decided the approval has moved on, so the link is
+        spent. That is what stops a forwarded mail being a second
+        signature, and what stops the AVP's link being used after it has
+        reached the CEO.
+        """
+
+        approval, user = ApprovalService.validate_link(approval_id, user_id, step, db)
 
         return ApprovalService.decide(
             approval_id,

@@ -970,10 +970,19 @@ try:
         if len(links) == 2:
             approve_link, reject_link = links
 
-            # Opened the way a mail client would: no session, no header.
-            landed = requests.get(approve_link, timeout=20)
+            # Opening the link shows confirmation (does not decide yet, protecting against email bots)
+            preview = requests.get(approve_link, timeout=20)
             check(
-                "opening the link decides it",
+                "opening the link shows confirmation page",
+                preview.status_code == 200
+                and "Confirm Approve" in preview.text,
+                f"{preview.status_code} {preview.text[:120]}",
+            )
+
+            # Submitting the confirmation decides it
+            landed = requests.post(approve_link, timeout=20)
+            check(
+                "submitting confirmation decides it",
                 landed.status_code == 200
                 and "has been approved" in landed.text,
                 f"{landed.status_code} {landed.text[:120]}",
@@ -993,7 +1002,7 @@ try:
                 f"current step {after.current_step}",
             )
 
-            again = requests.get(approve_link, timeout=20)
+            again = requests.post(approve_link, timeout=20)
             check(
                 "the same link cannot be used twice",
                 "cannot be used" in again.text,
@@ -1001,7 +1010,7 @@ try:
             )
             check(
                 "and neither can the Reject half of a spent mail",
-                "cannot be used" in requests.get(reject_link, timeout=20).text,
+                "cannot be used" in requests.post(reject_link, timeout=20).text,
             )
 
             tampered = approve_link[:-2] + ("aa" if approve_link[-2:] != "aa" else "bb")
