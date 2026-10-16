@@ -15,7 +15,13 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.approvals import FOUNDER, PriceType, approval_chain, describe_chain
+from app.core.approvals import (
+    FOUNDER,
+    PriceType,
+    approval_chain,
+    chain_for_raiser,
+    describe_chain,
+)
 from app.models.approval import ApprovalDocument, ApprovalStatus, SalesApproval
 from app.models.user import User
 from app.core.config import settings
@@ -49,6 +55,46 @@ def _name(user: User | None) -> str:
     if user is None:
         return "Someone"
     return f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email
+
+
+def _header_discount(row) -> float:
+    """The document-level discount, as a percentage of what was sold.
+
+    Entered either way round - a percentage or a rupee figure - so an
+    amount is turned back into the percentage it represents. Zero when
+    there is nothing to go on, because a discount that cannot be measured
+    must not quietly read as a deep one or as none at all.
+    """
+
+    mode = str(getattr(row, "discount_mode", "") or "").upper()
+
+    try:
+        entered = float(getattr(row, "discount_input", 0) or 0)
+    except (TypeError, ValueError):
+        entered = 0.0
+
+    if mode == "PERCENT":
+        return max(0.0, entered)
+
+    try:
+        amount = float(getattr(row, "discount_amount", 0) or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+
+    if amount <= 0:
+        return 0.0
+
+    # What the discount came off: the goods before it was taken.
+    for field in ("total_amount", "taxable_amount"):
+        try:
+            base = float(getattr(row, field, 0) or 0)
+        except (TypeError, ValueError):
+            continue
+
+        if base > 0:
+            return max(0.0, min(100.0, (amount / (base + amount)) * 100.0))
+
+    return 0.0
 
 
 def _role_names(user: User) -> set[str]:
@@ -200,6 +246,13 @@ class ApprovalService:
             except (TypeError, ValueError):
                 continue
 
+        # And the discount taken off the whole document, which the form
+        # offers beside the per-line one. Reading only the lines meant a
+        # 30% cut entered at the foot of the order was a discount nobody
+        # had to sign for: the chain was worked out from a deepest line
+        # discount of nothing.
+        deepest = max(deepest, _header_discount(row))
+
         return deepest
 
     @staticmethod
@@ -258,14 +311,22 @@ class ApprovalService:
 
         chain = approval_chain(price_type, discount_percent, db, document_type)
 
-        # The chain starts above whoever raised it. The bands say who owns
-        # how much discount, so a role the requester already holds is
-        # their own to give - an AVP's 5% is an AVP's decision, and asking
-        # for it sent the request to every AVP in the business, the
-        # requester included, where any of them could sign it off.
-        chain = ApprovalService._above_requester(chain, requester, db)
+        # Who actually has to sign, given who is asking. Each level owns
+        # discount up to its own ceiling, and anything past that goes to
+        # everyone above them, finishing with the founder.
+        above = ApprovalService.chain_for(
+            price_type, discount_percent, requester, db, document_type
+        )
+
+        chain = above
 
         if not chain:
+            # Nobody to ask: the discount is inside the raiser's own
+            # authority, or there is no discount at all. No record is
+            # written, and the guard that stops an order being confirmed
+            # asks the same question of the same person - so an order
+            # needing nobody is simply confirmable rather than stuck
+            # waiting for an approval it was never allowed to raise.
             return None
 
         existing = ApprovalService.open_for(document_type, document_id, db)
@@ -403,6 +464,32 @@ class ApprovalService:
         chain = HierarchyService.manager_chain(str(requester_id or ""), managers)
 
         return [by_id[uid] for uid in chain if uid in by_id]
+
+    @staticmethod
+    def chain_for(
+        price_type: str,
+        discount_percent: float,
+        requester,
+        db: Session,
+        document_type: str | None = None,
+    ) -> list[str]:
+        """Who must approve this, given who raised it.
+
+        The single answer to that question. The guard that stops an order
+        being confirmed asks it about the order's creator, and raising an
+        approval asks it about the person raising - and if those two ever
+        disagreed, an order would be refused for wanting an approval it
+        was not allowed to raise.
+        """
+
+        return chain_for_raiser(
+            price_type,
+            discount_percent,
+            _role_names(requester) if requester is not None else set(),
+            bool(getattr(requester, "is_super_admin", False)),
+            db,
+            document_type,
+        )
 
     @staticmethod
     def _above_requester(chain: list[str], requester, db: Session) -> list[str]:
@@ -850,6 +937,59 @@ class ApprovalService:
         return [a for a in pending if ApprovalService.can_decide(a, user, db)]
 
     @staticmethod
+    def is_approver_of(
+        document_type: str,
+        document_id: int,
+        current_user: dict,
+        db: Session,
+    ) -> bool:
+        """Whether this user has been asked to decide on this document.
+
+        Being asked to approve something is being entitled to read it. The
+        founder was getting an order in their pending list and a refusal
+        when they opened it, because the order had been raised by somebody
+        outside their reporting line - so the one person who could move it
+        on was the one person who could not see it.
+
+        Asked through can_decide, the same question the pending list asks,
+        so "it is waiting on me" and "I may open it" cannot drift apart.
+        """
+
+        user = db.query(User).filter(
+            User.id == UUID(str(current_user.get("user_id")))
+        ).first()
+
+        if user is None:
+            return False
+
+        standing = (
+            db.query(SalesApproval)
+            .filter(
+                SalesApproval.document_type == document_type,
+                SalesApproval.document_id == document_id,
+                SalesApproval.status != ApprovalStatus.WITHDRAWN,
+            )
+            .order_by(SalesApproval.id.desc())
+            .all()
+        )
+
+        for approval in standing:
+            if ApprovalService.can_decide(approval, user, db):
+                return True
+
+            # Somebody who has already decided a step keeps being able to
+            # open what they signed. A decision you cannot look up again
+            # is one you cannot answer a question about.
+            if any(
+                step.get("approver_id")
+                and str(step["approver_id"]) == str(user.id)
+                for step in (approval.steps or [])
+            ):
+                return True
+
+        return False
+
+    @staticmethod
     def raised_by_team(current_user: dict, db: Session) -> list[SalesApproval]:
         """Every request from someone this user can see, decided or not."""
 
@@ -942,6 +1082,8 @@ class ApprovalService:
                         approval.discount_percent,
                         db,
                         approval.document_type,
+                        [step["role"] for step in (approval.steps or [])],
+                        approval.requested_by_name,
                     ),
                 ]
                 note = None
@@ -972,6 +1114,8 @@ class ApprovalService:
                         approval.discount_percent,
                         db,
                         approval.document_type,
+                        [step["role"] for step in (approval.steps or [])],
+                        approval.requested_by_name,
                     ),
                 ]
                 note = None
@@ -1174,10 +1318,16 @@ def serialize_approval(approval: SalesApproval, db=None) -> dict:
         "requested_at": approval.requested_at.isoformat() if approval.requested_at else None,
         "decided_at": approval.decided_at.isoformat() if approval.decided_at else None,
         "remarks": approval.remarks,
+        # Described from the request's own steps, so the sentence always
+        # names the people on the chips beside it. Recomputing the chain
+        # in general said "it goes to the AVP" on an order the AVP had
+        # raised and the CEO was holding.
         "reason": describe_chain(
-                        approval.price_type,
-                        approval.discount_percent,
-                        db,
-                        approval.document_type,
-                    ),
+            approval.price_type,
+            approval.discount_percent,
+            db,
+            approval.document_type,
+            [step["role"] for step in (approval.steps or [])],
+            approval.requested_by_name,
+        ),
     }
