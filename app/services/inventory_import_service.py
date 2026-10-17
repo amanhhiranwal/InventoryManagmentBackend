@@ -68,7 +68,7 @@ COLUMNS: list[dict] = [
     {
         "key": "serial_number",
         "header": "Hardware Serial Number",
-        "required": True,
+        "required": False,
         "aliases": [
             "hardware serial number",
             "serial number",
@@ -77,8 +77,8 @@ COLUMNS: list[dict] = [
             "sku",
         ],
         "help": (
-            "One per product. Several on one row, separated by / , are "
-            "loaded as that many products."
+            "Optional. Several on one row, separated by / or comma, are "
+            "loaded as that many products. Leave blank for non-serialized stock."
         ),
     },
     {
@@ -334,14 +334,14 @@ def _find_header(rows: list[list[str]]) -> tuple[int, dict[int, str], dict[int, 
             elif not key:
                 extra[position] = label
 
-        if "name" in mapping.values() and "serial_number" in mapping.values():
+        if "name" in mapping.values():
             return index, mapping, extra
 
     raise HTTPException(
         status_code=400,
         detail=(
             "No headings were found in that file. It needs a row with at "
-            "least Product Name and Hardware Serial Number - download the "
+            "least Product Name - download the "
             "template to see the columns."
         ),
     )
@@ -562,11 +562,12 @@ def plan(
     taken: set[tuple[str | None, str]] = {
         (
             str(row.get("company_id")) if row.get("company_id") else None,
-            str(row.get("serial_number") or "").upper(),
+            str(row.get("serial_number") or "").upper().strip(),
         )
         for row in InventoryService.items_col.find(
             {}, {"serial_number": 1, "company_id": 1}
         )
+        if str(row.get("serial_number") or "").strip()
     }
 
     for values in rows:
@@ -602,9 +603,6 @@ def plan(
         ):
             if not str(values.get(key, "")).strip():
                 errors.append(f"Row {row}: {label} is missing.")
-
-        if not serial_raw:
-            errors.append(f"Row {row}: Hardware Serial Number is missing.")
 
         code = str(values.get("product_type_code", "")).strip().upper()
 
@@ -680,16 +678,39 @@ def plan(
             # but do not plan a product out of it.
             continue
 
-        # One product per serial number. This is the whole reason a row can
-        # carry several: seventy-five panels delivered together are
-        # seventy-five records, each with the serial printed on its own box.
-        #
-        # Split on the slash and then stripped, because a cell holding
-        # seventy-five of them has a line break after every one.
-        serials = [s.strip().upper() for s in serial_raw.split("/") if s.strip()]
+        # One product per serial number. If none are provided, a single
+        # non-serialized product record is created with the full in-stock count.
+        serials = [
+            s.strip().upper()
+            for s in re.split(r"[/,\n]+", serial_raw)
+            if s.strip()
+        ]
 
         if not serials:
-            errors.append(f"Row {row}: Hardware Serial Number is missing.")
+            drafts.append(
+                Draft(
+                    row=row,
+                    name=name,
+                    serial_number="",
+                    product_type_code=code,
+                    category=types[code].category,
+                    company_id=company_id,
+                    company_name=names.get(str(company_id)) if company_id else None,
+                    attributes={
+                        "model_number": str(values.get("model_number", "")).strip(),
+                        "specification": str(values.get("specification", "")).strip(),
+                        "hsn_code": str(values.get("hsn_code", "")).strip(),
+                        "unit": units.get(unit_raw.lower(), unit_raw),
+                        "rate": rate,
+                        "rate_per_unit": rate,
+                        "dtp_rate": dtp_rate,
+                        "instock": instock,
+                        "stock": instock,
+                        "case_size": case_size,
+                        **({"warranty_rates": cover} if cover else {}),
+                    },
+                )
+            )
             continue
 
         # A serial number names one physical thing. So on a row carrying
@@ -944,10 +965,10 @@ def template_workbook(db: Session, current_user: dict) -> bytes:
     guide.append([
         "Serial numbers",
         "",
-        "Several on one row, separated by / , are loaded as that many "
-        "products - each with its own serial number, and 1 in stock, "
-        "because a serial number names one physical thing. Line breaks "
-        "between them are fine.",
+        "Optional. Several on one row, separated by / or comma, are loaded as "
+        "that many products - each with its own serial number, and 1 in stock, "
+        "because a serial number names one physical thing. Leave blank for "
+        "non-serialized stock.",
     ])
     guide.append([
         "Warranty rates",

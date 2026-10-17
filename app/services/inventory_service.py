@@ -70,8 +70,10 @@ class InventoryService:
     @classmethod
     def _serial_clash(cls, serial: str, company_id: str | None, exclude=None) -> bool:
         """Whether that serial is already used inside the same company."""
+        if not serial or not str(serial).strip():
+            return False
 
-        query: dict = {"serial_number": serial, "company_id": company_id}
+        query: dict = {"serial_number": str(serial).strip().upper(), "company_id": company_id}
         if exclude is not None:
             query["_id"] = {"$ne": exclude}
         return cls.items_col.find_one(query) is not None
@@ -241,14 +243,14 @@ class InventoryService:
         # Support multiple serial numbers (separated by / , or newline)
         raw_serials = [
             s.strip().upper()
-            for s in re.split(r"[/,\n]+", serial_number)
+            for s in re.split(r"[/,\n]+", serial_number or "")
             if s.strip()
         ]
         if not raw_serials:
-            raise HTTPException(status_code=400, detail="Hardware Serial Number is required.")
+            raw_serials = [""]
 
         for s in raw_serials:
-            if cls._serial_clash(s, owner_id):
+            if s and cls._serial_clash(s, owner_id):
                 raise HTTPException(
                     status_code=400,
                     detail=f"Inventory item with serial number '{s}' already exists for this company.",
@@ -717,8 +719,8 @@ class InventoryService:
         )
 
         # Check duplicate serial number within the same company
-        serial_upper = serial_number.strip().upper()
-        if cls._serial_clash(serial_upper, owner_id, exclude=obj_id):
+        serial_upper = (serial_number or "").strip().upper()
+        if serial_upper and cls._serial_clash(serial_upper, owner_id, exclude=obj_id):
             raise HTTPException(status_code=400, detail=f"Inventory item with serial number '{serial_number}' already exists for this company.")
 
         # Update document

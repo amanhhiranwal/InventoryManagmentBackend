@@ -55,12 +55,66 @@ def run_check():
         raw_items = InventoryService.get_items(search=tag, current_user=current_user, db=db, grouped=False)
         assert len(raw_items) == 3, f"Expected 3 raw items, got {len(raw_items)}"
 
-        # 4. Clean up
+        # 4. Clean up multi-serial test
         InventoryService.delete_item(item["_id"], all_units=True, current_user=current_user, db=db)
         remaining = InventoryService.get_items(search=tag, current_user=current_user, db=db, grouped=False)
         assert len(remaining) == 0, f"Expected 0 items after delete, got {len(remaining)}"
 
-        print("All inventory grouping checks PASSED.")
+        # 5. Direct creation without serial number
+        non_serial = InventoryService.create_item(
+            name=f"NonSerial {tag}",
+            serial_number="",
+            product_type_code="COMPUTE",
+            category="Hardware Solutions",
+            attributes={
+                "model_number": f"MDL-NS-{tag}",
+                "specification": "No serial batch",
+                "rate": 500.0,
+                "unit": "Nos",
+                "instock": 25.0,
+                "case_size": 1.0,
+            },
+            current_user=current_user,
+            db=db,
+        )
+        assert non_serial["serial_number"] == ""
+
+        # 6. Bulk upload CSV without Hardware Serial Number column
+        from app.services import inventory_import_service
+        csv_without_serial = (
+            "Model Number,Product Name,Specification,Product Type Code,Unit,ECP Rate,In-Stock Qty,Case Size\n"
+            f"MDL-CSV1-{tag},CSV Item 1 {tag},No serial column,COMPUTE,Nos,250,50,1\n"
+            f"MDL-CSV2-{tag},CSV Item 2 {tag},Blank serial row,COMPUTE,Nos,300,10,1\n"
+        ).encode("utf-8")
+
+        res_csv = inventory_import_service.load(
+            content=csv_without_serial,
+            filename="test_upload.csv",
+            current_user=current_user,
+            db=db,
+            commit=True,
+        )
+        assert len(res_csv["errors"]) == 0, f"Bulk upload failed with errors: {res_csv['errors']}"
+        assert res_csv["created"] == 2, f"Expected 2 created products, got {res_csv['created']}"
+
+        # 7. Verify both imported items exist without duplicate clashes
+        csv_items = InventoryService.get_items(search=tag, current_user=current_user, db=db, grouped=True)
+        # Total 3 items: non_serial, CSV Item 1, CSV Item 2
+        assert len(csv_items) == 3, f"Expected 3 items with tag, got {len(csv_items)}"
+        for ci in csv_items:
+            assert ci["serial_number"] == ""
+            assert ci["serials_count"] == 0
+            assert ci["serial_numbers"] == []
+
+        # 8. Clean up all tag items
+        sync_mongo_db["inventory_items"].delete_many({
+            "$or": [
+                {"name": {"$regex": tag}},
+                {"attributes.model_number": {"$regex": tag}},
+            ]
+        })
+
+        print("All inventory grouping & optional serial checks PASSED.")
 
     finally:
         db.close()
