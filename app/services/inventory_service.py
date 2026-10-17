@@ -238,23 +238,51 @@ class InventoryService:
             current_user or {}, company_id, db
         )
 
-        doc = {
-            "name": name.strip(),
-            "serial_number": serial_number.strip().upper(),
-            "product_type_code": product_type_code,
-            "category": category.strip(),
-            "attributes": validated_attrs,
-            "image_base64": image_base64,
-            "company_id": owner_id,
-        }
+        # Support multiple serial numbers (separated by / , or newline)
+        raw_serials = [
+            s.strip().upper()
+            for s in re.split(r"[/,\n]+", serial_number)
+            if s.strip()
+        ]
+        if not raw_serials:
+            raise HTTPException(status_code=400, detail="Hardware Serial Number is required.")
 
-        # The same serial may exist under another company - this is the same
-        # product stocked twice, not a duplicate.
-        if cls._serial_clash(doc["serial_number"], owner_id):
-            raise HTTPException(status_code=400, detail=f"Inventory item with serial number '{serial_number}' already exists for this company.")
+        for s in raw_serials:
+            if cls._serial_clash(s, owner_id):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Inventory item with serial number '{s}' already exists for this company.",
+                )
 
-        cls.items_col.insert_one(doc)
-        return cls._decorate(doc, CompanyScopeService.company_names(db))
+        initial_stock = float(validated_attrs.get("instock", 0.0) or 0.0)
+        stock_each = 1.0 if len(raw_serials) > 1 and initial_stock in (float(len(raw_serials)), 1.0, 0.0) else (initial_stock / len(raw_serials) if len(raw_serials) > 1 else initial_stock)
+
+        names = CompanyScopeService.company_names(db) if db else {}
+        docs = []
+        for s in raw_serials:
+            item_attrs = dict(validated_attrs)
+            if len(raw_serials) > 1:
+                item_attrs["instock"] = stock_each
+                item_attrs["stock"] = stock_each
+            docs.append({
+                "name": name.strip(),
+                "serial_number": s,
+                "product_type_code": product_type_code,
+                "category": category.strip(),
+                "attributes": item_attrs,
+                "image_base64": image_base64,
+                "company_id": owner_id,
+            })
+
+        if len(docs) > 1:
+            cls.items_col.insert_many(docs)
+            primary_doc = dict(docs[0])
+            primary_doc["attributes"]["instock"] = initial_stock if initial_stock > 0 else float(len(raw_serials))
+            primary_doc["attributes"]["stock"] = primary_doc["attributes"]["instock"]
+            return cls._decorate(primary_doc, names)
+        else:
+            cls.items_col.insert_one(docs[0])
+            return cls._decorate(docs[0], names)
 
     #: How many units a product holds, whichever field it was written to.
     _HELD = {
@@ -307,13 +335,13 @@ class InventoryService:
         db: Session = None,
         page: int = None,
         size: int = None,
+        grouped: bool = True,
     ) -> list:
         """One page of the catalogue, or all of it when no page is asked for.
 
-        The image is left out. It is a data: URI of up to two megabytes
-        sitting on every record, and a hundred of them is a hundred
-        megabytes crossing the wire to draw thumbnails forty pixels wide.
-        The screen fetches the one product it is showing.
+        When grouped is True (default), items sharing the same product model,
+        name, category and company are merged into a single product row with
+        aggregate in-stock count and the complete list of hardware serial numbers.
         """
 
         query = cls._scope(search, company_id, current_user, db)
@@ -321,17 +349,106 @@ class InventoryService:
         if product_type_code:
             query["product_type_code"] = product_type_code.upper().strip()
 
-        names = CompanyScopeService.company_names(db)
+        names = CompanyScopeService.company_names(db) if db else {}
 
-        cursor = cls.items_col.find(query, {"image_base64": 0}).sort("_id", -1)
+        if not grouped:
+            cursor = cls.items_col.find(query, {"image_base64": 0}).sort("_id", -1)
+            if page and size:
+                cursor = cursor.skip((max(1, page) - 1) * size).limit(size)
+            return [
+                {**cls._decorate(doc, names), "has_image": True}
+                for doc in cursor
+            ]
+
+        pipeline = [
+            {"$match": query},
+            {
+                "$group": {
+                    "_id": {
+                        "company_id": "$company_id",
+                        "product_type_code": "$product_type_code",
+                        "model_number": {
+                            "$toLower": {
+                                "$trim": {
+                                    "input": {
+                                        "$toString": {
+                                            "$ifNull": ["$attributes.model_number", ""]
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "name": {
+                            "$toLower": {
+                                "$trim": {
+                                    "input": {
+                                        "$toString": {
+                                            "$ifNull": ["$name", ""]
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                    },
+                    "doc_id": {"$first": "$_id"},
+                    "item_ids": {"$push": {"$toString": "$_id"}},
+                    "name": {"$first": "$name"},
+                    "product_type_code": {"$first": "$product_type_code"},
+                    "category": {"$first": "$category"},
+                    "company_id": {"$first": "$company_id"},
+                    "attributes": {"$first": "$attributes"},
+                    "serial_numbers": {"$addToSet": "$serial_number"},
+                    "primary_serial": {"$first": "$serial_number"},
+                    "total_stock": {"$sum": cls._HELD},
+                    "max_id": {"$max": "$_id"},
+                    "has_image": {
+                        "$max": {
+                            "$cond": [
+                                {
+                                    "$and": [
+                                        {"$ne": ["$image_base64", None]},
+                                        {"$ne": ["$image_base64", ""]},
+                                    ]
+                                },
+                                True,
+                                False,
+                            ]
+                        }
+                    },
+                }
+            },
+            {"$sort": {"max_id": -1}},
+        ]
 
         if page and size:
-            cursor = cursor.skip((max(1, page) - 1) * size).limit(size)
+            cursor_agg = pipeline + [
+                {"$skip": (max(1, page) - 1) * size},
+                {"$limit": size},
+            ]
+        else:
+            cursor_agg = pipeline
 
-        return [
-            {**cls._decorate(doc, names), "has_image": True}
-            for doc in cursor
-        ]
+        cursor = cls.items_col.aggregate(cursor_agg)
+
+        items = []
+        for doc in cursor:
+            doc["_id"] = str(doc.pop("doc_id"))
+            doc["serial_number"] = doc.pop("primary_serial") or ""
+            serials = [
+                str(s).strip() for s in (doc.get("serial_numbers") or []) if s
+            ]
+            doc["serial_numbers"] = sorted(serials)
+            doc["serials_count"] = len(doc["serial_numbers"])
+            attrs = dict(doc.get("attributes") or {})
+            total_stock = float(doc.pop("total_stock", 0.0) or 0.0)
+            attrs["instock"] = total_stock
+            attrs["stock"] = total_stock
+            doc["attributes"] = attrs
+            has_image = doc.pop("has_image", False)
+            doc.pop("max_id", None)
+            items.append({**cls._decorate(doc, names), "has_image": bool(has_image)})
+
+        return items
 
     @classmethod
     def summarise(
@@ -340,6 +457,7 @@ class InventoryService:
         company_id: str = None,
         current_user: dict = None,
         db: Session = None,
+        grouped: bool = True,
     ) -> dict:
         """The figures across the top, and a count per product type.
 
@@ -350,44 +468,120 @@ class InventoryService:
 
         query = cls._scope(search, company_id, current_user, db)
 
-        totals = list(
-            cls.items_col.aggregate([
-                {"$match": query},
-                {
-                    "$group": {
-                        "_id": None,
-                        "products": {"$sum": 1},
-                        "units": {"$sum": cls._HELD},
-                        "value": {"$sum": {"$multiply": [cls._HELD, cls._RATE]}},
-                        "thin": {
-                            "$sum": {
-                                "$cond": [
-                                    {
-                                        "$and": [
-                                            {"$gt": [cls._HELD, 0]},
-                                            {"$lte": [cls._HELD, 3]},
-                                        ]
-                                    },
-                                    1,
-                                    0,
-                                ]
+        if not grouped:
+            totals = list(
+                cls.items_col.aggregate([
+                    {"$match": query},
+                    {
+                        "$group": {
+                            "_id": None,
+                            "products": {"$sum": 1},
+                            "units": {"$sum": cls._HELD},
+                            "value": {"$sum": {"$multiply": [cls._HELD, cls._RATE]}},
+                            "thin": {
+                                "$sum": {
+                                    "$cond": [
+                                        {
+                                            "$and": [
+                                                {"$gt": [cls._HELD, 0]},
+                                                {"$lte": [cls._HELD, 3]},
+                                            ]
+                                        },
+                                        1,
+                                        0,
+                                    ]
+                                }
+                            },
+                            "out": {
+                                "$sum": {"$cond": [{"$lte": [cls._HELD, 0]}, 1, 0]}
+                            },
+                        }
+                    },
+                ])
+            )
+
+            counts = {
+                str(row["_id"] or ""): row["n"]
+                for row in cls.items_col.aggregate([
+                    {"$match": query},
+                    {"$group": {"_id": "$product_type_code", "n": {"$sum": 1}}},
+                ])
+            }
+        else:
+            group_product = {
+                "$group": {
+                    "_id": {
+                        "company_id": "$company_id",
+                        "product_type_code": "$product_type_code",
+                        "model_number": {
+                            "$toLower": {
+                                "$trim": {
+                                    "input": {
+                                        "$toString": {
+                                            "$ifNull": ["$attributes.model_number", ""]
+                                        }
+                                    }
+                                }
                             }
                         },
-                        "out": {
-                            "$sum": {"$cond": [{"$lte": [cls._HELD, 0]}, 1, 0]}
+                        "name": {
+                            "$toLower": {
+                                "$trim": {
+                                    "input": {
+                                        "$toString": {
+                                            "$ifNull": ["$name", ""]
+                                        }
+                                    }
+                                }
+                            }
                         },
-                    }
-                },
-            ])
-        )
+                    },
+                    "product_type_code": {"$first": "$product_type_code"},
+                    "stock": {"$sum": cls._HELD},
+                    "value": {"$sum": {"$multiply": [cls._HELD, cls._RATE]}},
+                }
+            }
 
-        counts = {
-            str(row["_id"] or ""): row["n"]
-            for row in cls.items_col.aggregate([
-                {"$match": query},
-                {"$group": {"_id": "$product_type_code", "n": {"$sum": 1}}},
-            ])
-        }
+            totals = list(
+                cls.items_col.aggregate([
+                    {"$match": query},
+                    group_product,
+                    {
+                        "$group": {
+                            "_id": None,
+                            "products": {"$sum": 1},
+                            "units": {"$sum": "$stock"},
+                            "value": {"$sum": "$value"},
+                            "thin": {
+                                "$sum": {
+                                    "$cond": [
+                                        {
+                                            "$and": [
+                                                {"$gt": ["$stock", 0]},
+                                                {"$lte": ["$stock", 3]},
+                                            ]
+                                        },
+                                        1,
+                                        0,
+                                    ]
+                                }
+                            },
+                            "out": {
+                                "$sum": {"$cond": [{"$lte": ["$stock", 0]}, 1, 0]}
+                            },
+                        }
+                    },
+                ])
+            )
+
+            counts = {
+                str(row["_id"] or ""): row["n"]
+                for row in cls.items_col.aggregate([
+                    {"$match": query},
+                    group_product,
+                    {"$group": {"_id": "$product_type_code", "n": {"$sum": 1}}},
+                ])
+            }
 
         figures = totals[0] if totals else {}
 
@@ -546,14 +740,67 @@ class InventoryService:
 
         cls.items_col.update_one({"_id": obj_id}, {"$set": doc})
 
+        # Synchronize common product attributes across sibling serial units if any exist
+        existing_model = str((existing.get("attributes") or {}).get("model_number") or "").strip().lower()
+        existing_name = str(existing.get("name") or "").strip().lower()
+        existing_company = existing.get("company_id")
+        existing_type = existing.get("product_type_code")
+
+        sibling_query: dict = {
+            "_id": {"$ne": obj_id},
+            "company_id": existing_company,
+            "product_type_code": existing_type,
+            "name": {"$regex": f"^{re.escape(existing_name)}$", "$options": "i"},
+        }
+        if existing_model:
+            sibling_query["attributes.model_number"] = {
+                "$regex": f"^{re.escape(existing_model)}$", "$options": "i"
+            }
+
+        shared_attrs = {
+            f"attributes.{k}": v
+            for k, v in validated_attrs.items()
+            if k not in ["instock", "stock"]
+        }
+        update_siblings = {
+            "name": name.strip(),
+            "product_type_code": product_type_code,
+            "category": category.strip(),
+            "company_id": owner_id,
+            **shared_attrs,
+        }
+        if image_set:
+            update_siblings["image_base64"] = image_base64
+
+        cls.items_col.update_many(sibling_query, {"$set": update_siblings})
+
         return cls._decorate(
-            {**doc, "_id": obj_id}, CompanyScopeService.company_names(db)
+            {**doc, "_id": obj_id}, CompanyScopeService.company_names(db) if db else {}
         )
 
     @classmethod
-    def delete_item(cls, item_id: str, current_user: dict = None, db: Session = None) -> None:
+    def delete_item(cls, item_id: str, all_units: bool = False, current_user: dict = None, db: Session = None) -> None:
         """
         Removes an inventory document item by ID.
+        If all_units is True, removes all serial units belonging to that product model.
         """
-        obj_id, _ = cls._get_in_scope(item_id, current_user or {}, db)
-        cls.items_col.delete_one({"_id": obj_id})
+        obj_id, existing = cls._get_in_scope(item_id, current_user or {}, db)
+
+        if all_units:
+            existing_model = str((existing.get("attributes") or {}).get("model_number") or "").strip().lower()
+            existing_name = str(existing.get("name") or "").strip().lower()
+            existing_company = existing.get("company_id")
+            existing_type = existing.get("product_type_code")
+
+            del_query: dict = {
+                "company_id": existing_company,
+                "product_type_code": existing_type,
+                "name": {"$regex": f"^{re.escape(existing_name)}$", "$options": "i"},
+            }
+            if existing_model:
+                del_query["attributes.model_number"] = {
+                    "$regex": f"^{re.escape(existing_model)}$", "$options": "i"
+                }
+            cls.items_col.delete_many(del_query)
+        else:
+            cls.items_col.delete_one({"_id": obj_id})
