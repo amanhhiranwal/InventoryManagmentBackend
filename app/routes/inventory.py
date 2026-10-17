@@ -20,7 +20,7 @@ class SaveTemplateRequest(BaseModel):
 
 class CreateItemRequest(BaseModel):
     name: str
-    serial_number: str
+    serial_number: Optional[str] = ""
     product_type_code: str
     category: str
     attributes: dict = {}
