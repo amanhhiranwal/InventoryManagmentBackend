@@ -33,6 +33,7 @@ from app.database.postgres import SessionLocal
 
 #: Children before parents, so a foreign key never has to be argued with.
 PIPELINE = [
+    "sales_attachment",
     "sales_approval",
     "sales_proforma_invoice_activity",
     "sales_proforma_invoice",
@@ -50,39 +51,69 @@ PIPELINE = [
 #: Kept, and listed here so the choice is visible rather than implied.
 KEPT = [
     "users, roles, permissions and who holds what",
-    "the product catalogue and its stock",
+    "workflows and the hierarchy chart",
     "masters: states, customer types, lead sources, product types, groups",
     "companies, locations, menus and app settings",
     "document counters, which only ever go forward",
 ]
+
+#: Said separately, because whether it is true depends on the flag.
+CATALOGUE_KEPT = "the product catalogue and its stock"
+CATALOGUE_GONE = (
+    "the product catalogue is emptied too; the units and the per-type "
+    "field layouts stay"
+)
 
 #: An account a test run opened and did not close. Real people do not have
 #: a unix timestamp in their address.
 TEST_ACCOUNT = re.compile(r"(@example\.com$|\.[0-9a-f]{6}@|\d{9,})")
 
 
-def clear_mongo(dry_run):
+#: What lives in Mongo rather than Postgres, and whether it is the team's
+#: work or the shelf they work from.
+#:
+#: inventory_templates and inventory_units are masters - the field layout
+#: each product type carries, and the units master - so they stay however
+#: much else goes. counters only ever move forward: a quotation number a
+#: customer has seen must never be handed out twice.
+MONGO_PIPELINE = ["customers", "customer_activities"]
+MONGO_INVENTORY = ["inventory_items", "inventory_movements"]
+
+
+def clear_mongo(dry_run, collections, label):
     try:
         from app.database.mongodb import sync_mongo_db as db
     except Exception as error:
-        print(f"  customers: cannot reach Mongo ({str(error)[:60]})")
-        return
+        print(f"  {label}: cannot reach Mongo ({str(error)[:60]})")
+        return 0
 
-    try:
-        count = db["customers"].count_documents({})
+    cleared = 0
 
-        if not dry_run and count:
-            db["customers"].delete_many({})
+    for name in collections:
+        try:
+            count = db[name].count_documents({})
 
-        print(f"  {'would clear' if dry_run else 'cleared'} customers: {count}")
-    except Exception as error:
-        print(f"  customers: cannot reach Mongo ({str(error)[:60]})")
+            if not dry_run and count:
+                db[name].delete_many({})
+
+            cleared += count
+
+            print(f"  {'would clear' if dry_run else 'cleared'} {name:34s} {count}")
+        except Exception as error:
+            print(f"  {name}: cannot reach Mongo ({str(error)[:60]})")
+
+    return cleared
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--dry-run", action="store_true", help="count it all, delete nothing"
+    )
+    parser.add_argument(
+        "--include-inventory",
+        action="store_true",
+        help="also empty the product catalogue and its stock movements",
     )
     parser.add_argument(
         "--include-test-accounts",
@@ -105,7 +136,15 @@ def main():
 
         print(f"  {'would clear' if args.dry_run else 'cleared'} {table:34s} {count}")
 
-    clear_mongo(args.dry_run)
+    total += clear_mongo(args.dry_run, MONGO_PIPELINE, "customers")
+
+    # The catalogue is a separate decision from the pipeline: a team
+    # starting fresh on their own deals usually keeps the products they
+    # sell, so emptying the shelf has to be asked for.
+    if args.include_inventory:
+        print("\nInventory\n")
+
+        total += clear_mongo(args.dry_run, MONGO_INVENTORY, "inventory")
 
     if args.include_test_accounts:
         print("\nLeft behind by test runs\n")
@@ -158,6 +197,12 @@ def main():
     print("\nKept:")
     for line in KEPT:
         print(f"  - {line}")
+
+    print(
+        f"  - {CATALOGUE_GONE}"
+        if args.include_inventory
+        else f"  - {CATALOGUE_KEPT}"
+    )
 
 
 if __name__ == "__main__":
