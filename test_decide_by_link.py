@@ -153,7 +153,7 @@ def run_checks() -> int:
 
     mock_db.query.side_effect = user_lookup
 
-    # Pending step: To is active approver, CC is requester
+    # Pending step: To is active approver, CC does NOT include requester
     appr_pending = MagicMock(spec=SalesApproval)
     appr_pending.status = ApprovalStatus.PENDING
     appr_pending.requested_by = requester_uuid
@@ -162,8 +162,8 @@ def run_checks() -> int:
 
     to, cc = ApprovalService._chain_emails(appr_pending, mock_db, event="raised")
     assert to == ["avp@test.com"]
-    assert cc == ["requester@test.com"]
-    print("  PASS  Pending approval routes To active approver, CC to requester")
+    assert cc == []
+    print("  PASS  Pending approval routes To active approver ONLY (requester is not sent approval ask)")
 
     # Fully approved: To is requester, CC is approvers who signed
     appr_approved = MagicMock(spec=SalesApproval)

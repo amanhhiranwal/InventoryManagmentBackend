@@ -3,7 +3,6 @@ name: CI/CD Pipeline - Backend
 on:
   push:
     branches:
-      - prod
       - main
   workflow_dispatch:
  
