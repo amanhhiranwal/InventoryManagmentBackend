@@ -622,7 +622,11 @@ class ApprovalService:
 
         return (
             db.query(User)
-            .filter(User.is_super_admin.is_(True), User.is_active.is_(True))
+            .filter(
+                User.is_super_admin.is_(True),
+                User.is_active.is_(True),
+                User.id != approval.requested_by,
+            )
             .all()
         )
 
@@ -1073,10 +1077,11 @@ class ApprovalService:
             if approver.email
         ]
 
-        # CC: The requester who raised it
-        cc = [requester_email] if requester_email else []
+        # The requester is NOT copied on the approver's action email because it carries
+        # the approver's one-click decision buttons and asks for approval.
+        cc: list[str] = []
 
-        # If it's an intermediate approved step, also copy anyone who already signed
+        # If it's an intermediate approved step, copy approvers who already signed
         if event == "approved":
             for step in (approval.steps or []):
                 approver_id = step.get("approver_id")
