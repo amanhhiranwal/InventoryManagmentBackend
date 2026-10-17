@@ -189,6 +189,7 @@ def get_items(
     company_id: Optional[str] = None,
     page: Optional[int] = None,
     size: Optional[int] = None,
+    grouped: Optional[bool] = True,
     current_user=Depends(require_permission("inventory.read")),
     db: Session = Depends(get_db),
 ):
@@ -198,8 +199,8 @@ def get_items(
     database over the whole catalogue - a total that only adds up the
     hundred rows on screen is not a total.
 
-    Without page and size this returns everything, which is what the
-    screens that read the catalogue into a picker still expect.
+    When grouped is True (default), items with multiple serial numbers
+    are represented as a single product row with aggregate stock.
     """
 
     items = InventoryService.get_items(
@@ -210,6 +211,7 @@ def get_items(
         db=db,
         page=page,
         size=size,
+        grouped=grouped if grouped is not None else True,
     )
 
     summary = InventoryService.summarise(
@@ -217,6 +219,7 @@ def get_items(
         company_id=company_id,
         current_user=current_user,
         db=db,
+        grouped=grouped if grouped is not None else True,
     )
 
     counts = summary.pop("counts", {})
@@ -259,6 +262,7 @@ def get_item_image(
 @router.get("/items/{item_id}/label")
 def item_label(
     item_id: str,
+    serial: Optional[str] = None,
     current_user=Depends(require_permission("inventory.read")),
     db: Session = Depends(get_db),
 ):
@@ -268,46 +272,28 @@ def item_label(
     the screen can show the same markup it prints.
     """
 
-    from fastapi import HTTPException
     from fastapi.responses import Response
 
     from app.services.product_label_service import label_svg
 
-    # Read through the same list the screen reads, so a label can only be
-    # printed for a product the caller is allowed to see at all.
-    item = next(
-        (
-            row for row in InventoryService.get_items(
-                current_user=current_user, db=db
-            )
-            if str(row.get("_id")) == str(item_id)
-        ),
-        None,
+    obj_id, item = InventoryService._get_in_scope(
+        item_id, current_user=current_user, db=db
     )
-
-    if item is None:
-        raise HTTPException(status_code=404, detail="Product not found")
 
     attributes = item.get("attributes") or {}
 
-    # Where the QR sends a phone: this product, on the Inventory screen,
-    # opened on its details. Scanning the sticker on the box and pressing
-    # the eye on the row land in the same place.
     from urllib.parse import quote
-
     from app.services.company_profile_service import app_url
 
+    sku = (serial or item.get("serial_number") or "").strip()
+
     try:
-        link = app_url(
-            f"/inventory?product={quote(str(item.get('serial_number') or ''))}", db
-        )
+        link = app_url(f"/inventory?product={quote(sku)}", db)
     except Exception:
-        # No address configured is a reason for the QR to carry plain
-        # text, not a reason to fail printing a label.
         link = ""
 
     svg = label_svg(
-        sku=item.get("serial_number") or "",
+        sku=sku,
         name=item.get("name") or "",
         hsn=str(attributes.get("hsn_code") or ""),
         model=str(attributes.get("model_number") or ""),
@@ -321,7 +307,7 @@ def item_label(
         media_type="image/svg+xml",
         headers={
             "Content-Disposition":
-                f'inline; filename="{item.get("serial_number") or "label"}.svg"'
+                f'inline; filename="{sku or "label"}.svg"'
         },
     )
 
@@ -360,10 +346,11 @@ def update_item(
 @router.delete("/items/{item_id}")
 def delete_item(
     item_id: str,
+    all_units: bool = True,
     current_user=Depends(require_permission("inventory.delete")),
     db: Session = Depends(get_db),
 ):
-    InventoryService.delete_item(item_id, current_user=current_user, db=db)
+    InventoryService.delete_item(item_id, all_units=all_units, current_user=current_user, db=db)
     return {
         "success": True,
         "message": "Inventory item deleted successfully."
