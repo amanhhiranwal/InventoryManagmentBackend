@@ -1,3 +1,4 @@
+
 services:
   backend_app:
     build:
@@ -13,16 +14,19 @@ services:
     env_file:
       - .env
     environment:
-      - POSTGRES_HOST=${POSTGRES_HOST:-192.168.1.173}
-      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
-      - POSTGRES_USER=${POSTGRES_USER:-crm_admin}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-Masters@123}
-      - POSTGRES_DB=${POSTGRES_DB:-solutions}
-      - MONGO_URI=${MONGO_URI:-mongodb://192.168.1.173:27017}
-      - MONGO_DB=${MONGO_DB:-solutions}
-      - REDIS_HOST=${REDIS_HOST:-192.168.1.173}
-      - REDIS_PORT=${REDIS_PORT:-6379}
-      - PYTHONPATH=/app
+      APP_NAME: ${APP_NAME:-Enterprise SaaS API}
+      APP_VERSION: ${APP_VERSION:-1.0.0}
+      ENV: ${ENV:-development}
+      POSTGRES_HOST: ${POSTGRES_HOST:-192.168.1.173}
+      POSTGRES_PORT: "${POSTGRES_PORT:-5432}"
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-solutions}
+      MONGO_URI: ${MONGO_URI:-mongodb://192.168.1.173:27017/}
+      MONGO_DB: ${MONGO_DB:-solutions}
+      REDIS_HOST: ${REDIS_HOST:-192.168.1.173}
+      REDIS_PORT: "${REDIS_PORT:-6379}"
+      PYTHONPATH: /app
 
   auth_service:
     build:
@@ -38,13 +42,19 @@ services:
     env_file:
       - .env
     environment:
-      - POSTGRES_HOST=${POSTGRES_HOST:-192.168.1.173}
-      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
-      - POSTGRES_DB=${AUTH_DB:-auth_db}
-      - MONGO_URI=${MONGO_URI:-mongodb://192.168.1.173:27017/}
-      - REDIS_HOST=${REDIS_HOST:-192.168.1.173}
-      - REDIS_PORT=${REDIS_PORT:-6379}
-      - PYTHONPATH=/app
+      APP_NAME: ${APP_NAME:-Enterprise SaaS API}
+      APP_VERSION: ${APP_VERSION:-1.0.0}
+      ENV: ${ENV:-development}
+      POSTGRES_HOST: ${POSTGRES_HOST:-192.168.1.173}
+      POSTGRES_PORT: "${POSTGRES_PORT:-5432}"
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${AUTH_DB:-auth_db}
+      MONGO_URI: ${MONGO_URI:-mongodb://192.168.1.173:27017/}
+      MONGO_DB: ${MONGO_DB:-solutions}
+      REDIS_HOST: ${REDIS_HOST:-192.168.1.173}
+      REDIS_PORT: "${REDIS_PORT:-6379}"
+      PYTHONPATH: /app
 
   crm_service:
     build:
@@ -60,13 +70,19 @@ services:
     env_file:
       - .env
     environment:
-      - POSTGRES_HOST=${POSTGRES_HOST:-192.168.1.173}
-      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
-      - POSTGRES_DB=${CRM_DB:-crm_db}
-      - MONGO_URI=${MONGO_URI:-mongodb://192.168.1.173:27017/}
-      - REDIS_HOST=${REDIS_HOST:-192.168.1.173}
-      - REDIS_PORT=${REDIS_PORT:-6379}
-      - PYTHONPATH=/app
+      APP_NAME: ${APP_NAME:-Enterprise SaaS API}
+      APP_VERSION: ${APP_VERSION:-1.0.0}
+      ENV: ${ENV:-development}
+      POSTGRES_HOST: ${POSTGRES_HOST:-192.168.1.173}
+      POSTGRES_PORT: "${POSTGRES_PORT:-5432}"
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${CRM_DB:-crm_db}
+      MONGO_URI: ${MONGO_URI:-mongodb://192.168.1.173:27017/}
+      MONGO_DB: ${MONGO_DB:-solutions}
+      REDIS_HOST: ${REDIS_HOST:-192.168.1.173}
+      REDIS_PORT: "${REDIS_PORT:-6379}"
+      PYTHONPATH: /app
 
   inventory_service:
     build:
@@ -82,13 +98,19 @@ services:
     env_file:
       - .env
     environment:
-      - POSTGRES_HOST=${POSTGRES_HOST:-192.168.1.173}
-      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
-      - POSTGRES_DB=${INVENTORY_DB:-inventory_db}
-      - MONGO_URI=${MONGO_URI:-mongodb://192.168.1.173:27017/}
-      - REDIS_HOST=${REDIS_HOST:-192.168.1.173}
-      - REDIS_PORT=${REDIS_PORT:-6379}
-      - PYTHONPATH=/app
+      APP_NAME: ${APP_NAME:-Enterprise SaaS API}
+      APP_VERSION: ${APP_VERSION:-1.0.0}
+      ENV: ${ENV:-development}
+      POSTGRES_HOST: ${POSTGRES_HOST:-192.168.1.173}
+      POSTGRES_PORT: "${POSTGRES_PORT:-5432}"
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${INVENTORY_DB:-inventory_db}
+      MONGO_URI: ${MONGO_URI:-mongodb://192.168.1.173:27017/}
+      MONGO_DB: ${MONGO_DB:-solutions}
+      REDIS_HOST: ${REDIS_HOST:-192.168.1.173}
+      REDIS_PORT: "${REDIS_PORT:-6379}"
+      PYTHONPATH: /app
 
   sales_service:
     build:
@@ -104,13 +126,19 @@ services:
     env_file:
       - .env
     environment:
-      - POSTGRES_HOST=${POSTGRES_HOST:-192.168.1.173}
-      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
-      - POSTGRES_DB=${SALES_DB:-sales_db}
-      - MONGO_URI=${MONGO_URI:-mongodb://192.168.1.173:27017/}
-      - REDIS_HOST=${REDIS_HOST:-192.168.1.173}
-      - REDIS_PORT=${REDIS_PORT:-6379}
-      - PYTHONPATH=/app
+      APP_NAME: ${APP_NAME:-Enterprise SaaS API}
+      APP_VERSION: ${APP_VERSION:-1.0.0}
+      ENV: ${ENV:-development}
+      POSTGRES_HOST: ${POSTGRES_HOST:-192.168.1.173}
+      POSTGRES_PORT: "${POSTGRES_PORT:-5432}"
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${SALES_DB:-sales_db}
+      MONGO_URI: ${MONGO_URI:-mongodb://192.168.1.173:27017/}
+      MONGO_DB: ${MONGO_DB:-solutions}
+      REDIS_HOST: ${REDIS_HOST:-192.168.1.173}
+      REDIS_PORT: "${REDIS_PORT:-6379}"
+      PYTHONPATH: /app
 
   gateway:
     image: nginx:alpine
@@ -125,3 +153,4 @@ services:
       - crm_service
       - inventory_service
       - sales_service
+
