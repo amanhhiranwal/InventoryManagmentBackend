@@ -18,16 +18,22 @@ def _terminal() -> set[str]:
 # Lead
 # ---------------------------------------------------------------------------
 class LeadStatus:
+    #: Written down but not finished. A draft is nobody's to work yet: it
+    #: does not count towards the pipeline and the sales team is not
+    #: expected to act on it. It exists so a half-filled form survives
+    #: being closed, and so the person who started it can find it again.
+    DRAFT = "DRAFT"
     NEW = "NEW"
     CONTACTED = "CONTACTED"
     QUALIFIED = "QUALIFIED"
     CONVERTED = "CONVERTED"
     LOST = "LOST"
 
-    ALL = [NEW, CONTACTED, QUALIFIED, CONVERTED, LOST]
+    ALL = [DRAFT, NEW, CONTACTED, QUALIFIED, CONVERTED, LOST]
 
 
-#: The order a lead walks, before it is converted or lost.
+#: The order a lead walks, before it is converted or lost. A draft is not
+#: on it: it is what comes before a lead is a lead.
 LEAD_PIPELINE = [LeadStatus.NEW, LeadStatus.CONTACTED, LeadStatus.QUALIFIED]
 
 
@@ -53,6 +59,10 @@ def _lead_forward_from(status: str) -> set[str]:
 
 
 LEAD_TRANSITIONS: dict[str, set[str]] = {
+    # Finishing a draft makes it a lead; abandoning it marks it lost. It
+    # cannot skip ahead - a draft has not been contacted or qualified,
+    # because nobody has worked it yet.
+    LeadStatus.DRAFT: {LeadStatus.NEW, LeadStatus.LOST},
     **{status: _lead_forward_from(status) for status in LEAD_PIPELINE},
     LeadStatus.CONVERTED: _terminal(),
     LeadStatus.LOST: _terminal(),
@@ -359,6 +369,7 @@ class PaymentApprovalStatus:
 # ---------------------------------------------------------------------------
 #: Lowercase/legacy lead values that predate the canonical vocabulary.
 LEGACY_LEAD_STATUS_MAP: dict[str, str] = {
+    "draft": LeadStatus.DRAFT,
     "new": LeadStatus.NEW,
     "contacted": LeadStatus.CONTACTED,
     "qualified": LeadStatus.QUALIFIED,

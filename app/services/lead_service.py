@@ -21,6 +21,7 @@ from app.services.notification_service import NotificationService
 #: Headline written onto the activity entry when a lead reaches a status.
 #: Phrased as what the user did, because that is what the timeline reads as.
 LEAD_STATUS_ACTIONS: dict[str, str] = {
+    LeadStatus.DRAFT: "Draft Saved",
     LeadStatus.NEW: "Lead Created",
     LeadStatus.CONTACTED: "Marked as Contacted",
     LeadStatus.QUALIFIED: "Marked as Qualified",
@@ -32,6 +33,7 @@ LEAD_STATUS_ACTIONS: dict[str, str] = {
 #: kept in step here so callers no longer have to send both and risk them
 #: disagreeing.
 LEAD_STATUS_STAGES: dict[str, str] = {
+    LeadStatus.DRAFT: "lead",
     LeadStatus.NEW: "lead",
     LeadStatus.CONTACTED: "lead",
     LeadStatus.QUALIFIED: "lead",
@@ -293,7 +295,15 @@ class LeadService:
     @staticmethod
     def _card_clauses():
         return {
-            "new": or_(Lead.status == "NEW", Lead.stage == "lead"),
+            # A draft carries stage "lead" so it files with the leads, but
+            # it is not a new one: nobody has started working it. Without
+            # excluding it here, saving a half-filled form would raise the
+            # New count and the team would go looking for a lead that is
+            # not ready.
+            "new": and_(
+                Lead.status != LeadStatus.DRAFT,
+                or_(Lead.status == "NEW", Lead.stage == "lead"),
+            ),
             "qualified": or_(
                 Lead.status == "QUALIFIED",
                 Lead.status == "CONVERTED",
