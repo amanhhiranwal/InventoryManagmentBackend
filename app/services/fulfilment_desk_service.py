@@ -16,6 +16,7 @@ from datetime import datetime
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.timezone import iso
 from app.core.fulfilment import (
     ACCOUNTS,
     DESK_STAGES,
@@ -194,7 +195,7 @@ class FulfilmentDeskService:
             "advance_expected": expected,
             "advance_received": paid,
             "outstanding_balance": round(grand_total - paid, 2),
-            "order_date": order.order_date.isoformat() if order.order_date else None,
+            "order_date": iso(order.order_date) if order.order_date else None,
             "waiting_days": _waiting_days(order),
             "items": order.items or [],
             "proforma_invoice": (

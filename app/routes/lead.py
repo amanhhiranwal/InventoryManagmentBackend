@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.core.timezone import iso
 from app.controllers.opportunity_controller import OpportunityController
 from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
@@ -46,7 +47,7 @@ def serialize_activity(activity, names_map: dict[str, str] | None = None) -> dic
         "to_status": activity.to_status,
         "created_by": created_by,
         "created_by_name": names_map.get(created_by) if created_by else None,
-        "created_at": activity.created_at.isoformat(),
+        "created_at": iso(activity.created_at),
     }
 
 
@@ -102,7 +103,7 @@ def create_lead(
             "creator_id": str(lead.creator_id),
             "creator_name": creator_name,
             "assigned_to_id": str(lead.assigned_to_id) if lead.assigned_to_id else None,
-            "created_at": lead.created_at.isoformat(),
+            "created_at": iso(lead.created_at),
         }
     }
 
@@ -185,7 +186,7 @@ def get_leads(
                 "assigned_to_name": names_map.get(str(lead_row.assigned_to_id), None) if lead_row.assigned_to_id else None,
                 "assigned_by_id": str(lead_row.assigned_by_id) if lead_row.assigned_by_id else None,
                 "assigned_by_name": names_map.get(str(lead_row.assigned_by_id), None) if lead_row.assigned_by_id else None,
-                "created_at": lead_row.created_at.isoformat(),
+                "created_at": iso(lead_row.created_at),
             }
             for lead_row in leads
         ],
@@ -265,7 +266,7 @@ def get_lead(
                 if lead.assigned_to_id
                 else None
             ),
-            "created_at": lead.created_at.isoformat(),
+            "created_at": iso(lead.created_at),
         },
     }
 
@@ -388,7 +389,7 @@ def progress_lead(
             "quotation_type": lead.quotation_type,
             "quotation_items": lead.quotation_items,
             "creator_id": str(lead.creator_id),
-            "created_at": lead.created_at.isoformat(),
+            "created_at": iso(lead.created_at),
         }
     }
 
@@ -436,7 +437,7 @@ def update_lead(
             "lead_source_name": lead.lead_source.name if lead.lead_source else None,
             "creator_id": str(lead.creator_id),
             "assigned_to_id": str(lead.assigned_to_id) if lead.assigned_to_id else None,
-            "created_at": lead.created_at.isoformat(),
+            "created_at": iso(lead.created_at),
         }
     }
 

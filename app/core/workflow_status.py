@@ -217,33 +217,35 @@ class QuotationStatus:
     ALL = [DRAFT, PENDING_APPROVAL, SENT, ACCEPTED, REJECTED, EXPIRED]
 
 
+# A proposal has two states anybody sets by hand - it is a draft, or it
+# has been sent - and one that happens to it: it expires when its
+# validity date passes.
+#
+# Accepted and Rejected were on this map and offered from the row menu,
+# which asked a salesperson to keep a second record of something the
+# system already knows. Nothing is held for approval either: a proposal
+# is a price put in front of a customer to see what they say, and the
+# signature the business asks for is on the sales order. What says a
+# customer agreed is that a sales order exists.
+#
+# All four constants stay on the enum so proposals raised under the old
+# flow still read back, and both are still terminal; nothing moves to
+# them now.
 QUOTATION_TRANSITIONS: dict[str, set[str]] = {
-    # A draft is sent to the customer, marked accepted once they agree,
-    # or allowed to lapse past its validity date.
-    #
-    # Not held for approval: a proposal is a price put in front of a
-    # customer to see what they say, and the signature the business asks
-    # for is on the sales order. The status stays on the enum for
-    # proposals raised under the old flow, but nothing moves to it now.
     QuotationStatus.DRAFT: {
         QuotationStatus.SENT,
-        QuotationStatus.ACCEPTED,
         QuotationStatus.EXPIRED,
     },
-    # Approval either releases the quotation to be sent or hands it back.
     QuotationStatus.PENDING_APPROVAL: {
         QuotationStatus.SENT,
         QuotationStatus.DRAFT,
         QuotationStatus.EXPIRED,
     },
-    # Once with the client it is theirs to accept or reject; it can also
-    # expire while they sit on it.
+    # Sitting with the client, it can only lapse.
     QuotationStatus.SENT: {
-        QuotationStatus.ACCEPTED,
-        QuotationStatus.REJECTED,
         QuotationStatus.EXPIRED,
     },
-    QuotationStatus.ACCEPTED: _terminal(),
+    QuotationStatus.ACCEPTED: {QuotationStatus.EXPIRED},
     QuotationStatus.REJECTED: _terminal(),
     # An expired quotation is superseded by a new revision rather than
     # being revived in place.

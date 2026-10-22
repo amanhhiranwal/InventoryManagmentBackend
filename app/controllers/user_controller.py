@@ -1,3 +1,4 @@
+from app.core.timezone import iso
 from app.services.user_service import UserService
 
 
@@ -122,7 +123,7 @@ class UserController:
             "reports_to_name": reports_to_name,
             # When the account was opened. Asked for on the list, where it
             # answers "is this someone we added last week or last year".
-            "created_at": user.created_at.isoformat() if user.created_at else None,
+            "created_at": iso(user.created_at) if user.created_at else None,
         }
 
     @staticmethod

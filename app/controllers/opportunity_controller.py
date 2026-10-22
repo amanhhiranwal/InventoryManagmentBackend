@@ -2,6 +2,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.core.timezone import iso
 from app.services.opportunity_service import (
     OpportunityService,
     serialize_opportunity,
@@ -23,7 +24,7 @@ def serialize_activity(activity, names_map: dict[str, str] | None = None) -> dic
         "to_status": activity.to_status,
         "created_by": created_by,
         "created_by_name": names_map.get(created_by) if created_by else None,
-        "created_at": activity.created_at.isoformat(),
+        "created_at": iso(activity.created_at),
     }
 
 

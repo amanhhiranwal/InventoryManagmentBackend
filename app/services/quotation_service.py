@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.timezone import iso, today_ist
 from app.core.approvals import price_type_for
 from app.core.listing import page_of, search_clause
 from app.core.workflow_status import (
@@ -329,12 +330,12 @@ def serialize_quotation(quotation: Quotation) -> dict:
         "customer_type": quotation.customer_type,
 
         "quotation_date": (
-            quotation.quotation_date.isoformat()
+            iso(quotation.quotation_date)
             if quotation.quotation_date
             else None
         ),
         "validation_date": (
-            quotation.validation_date.isoformat()
+            iso(quotation.validation_date)
             if quotation.validation_date
             else None
         ),
@@ -367,7 +368,7 @@ def serialize_quotation(quotation: Quotation) -> dict:
         "terms": quotation.terms or [],
         "remarks": quotation.remarks,
 
-        "sent_at": quotation.sent_at.isoformat() if quotation.sent_at else None,
+        "sent_at": iso(quotation.sent_at) if quotation.sent_at else None,
         "sent_to": quotation.sent_to,
         "sent_cc": quotation.sent_cc,
         #: Both carried so the Send dialog can bring a saved draft back
@@ -393,10 +394,10 @@ def serialize_quotation(quotation: Quotation) -> dict:
         "assigned_to_name": assigned_to_name,
 
         "created_at": (
-            quotation.created_at.isoformat() if quotation.created_at else None
+            iso(quotation.created_at) if quotation.created_at else None
         ),
         "updated_at": (
-            quotation.updated_at.isoformat() if quotation.updated_at else None
+            iso(quotation.updated_at) if quotation.updated_at else None
         ),
     }
 
@@ -550,6 +551,60 @@ class QuotationService:
         )
 
     @staticmethod
+    def expire_overdue(db: Session) -> int:
+        """Lapse every proposal whose validity date has gone by.
+
+        Expiry is not something a salesperson should have to remember to
+        record - the proposal says on its face how long the price holds,
+        and once that day is past it has lapsed whether anybody marked it
+        or not. Marking it by hand meant the Expired tab only ever
+        counted the ones somebody got round to.
+
+        Swept here, on the way to reading the list, rather than from a
+        scheduled job: the list is read constantly, so a proposal is
+        never seen stale, and there is nothing extra to keep running.
+        Only Draft and Sent lapse; a proposal already finished with is
+        left where it is.
+        """
+
+        today = today_ist()
+
+        overdue = (
+            db.query(Quotation)
+            .filter(
+                Quotation.validation_date.isnot(None),
+                Quotation.validation_date < today,
+                Quotation.status.in_(
+                    [QuotationStatus.DRAFT, QuotationStatus.SENT]
+                ),
+            )
+            .all()
+        )
+
+        for quotation in overdue:
+            previous = quotation.status
+
+            quotation.status = QuotationStatus.EXPIRED
+
+            QuotationService.record_activity(
+                db,
+                quotation,
+                "Proposal Expired",
+                (
+                    "The validity date "
+                    f"{quotation.validation_date:%d %b %Y} has passed."
+                ),
+                from_status=previous,
+                to_status=QuotationStatus.EXPIRED,
+                commit=False,
+            )
+
+        if overdue:
+            db.commit()
+
+        return len(overdue)
+
+    @staticmethod
     def get_visible_page(
         current_user: dict,
         db: Session,
@@ -559,6 +614,8 @@ class QuotationService:
         status: str | None = None,
     ) -> tuple[list[Quotation], int]:
         """One page of them, and how many there are in all."""
+
+        QuotationService.expire_overdue(db)
 
         return page_of(
             QuotationService.visible_query(current_user, db, search, status), page, size

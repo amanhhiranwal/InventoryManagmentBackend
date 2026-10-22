@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 
+from app.core.timezone import iso
 from app.services.proforma_invoice_service import (
     ProformaInvoiceService,
     serialize_proforma_invoice,
@@ -21,7 +22,7 @@ def _serialize_activity(row: dict, names_map: dict[str, str]) -> dict:
         "created_by": created_by,
         "created_by_name": names_map.get(created_by) if created_by else None,
         "created_at": (
-            created_at.isoformat() if hasattr(created_at, "isoformat") else created_at
+            iso(created_at) if hasattr(created_at, "isoformat") else created_at
         ),
     }
 

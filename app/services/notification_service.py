@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.timezone import iso
 from app.models.notification import Notification
 from app.models.user import User
 
@@ -351,5 +352,5 @@ def serialize_notification(
         "link": notification.link,
         "actor_name": notification.actor_name,
         "is_read": notification.is_read,
-        "created_at": notification.created_at.isoformat() if notification.created_at else None,
+        "created_at": iso(notification.created_at) if notification.created_at else None,
     }
