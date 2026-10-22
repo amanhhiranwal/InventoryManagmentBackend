@@ -126,7 +126,7 @@ class QuotationController:
 
         return {
             "success": True,
-            "message": f"Quotation {quotation.quote_number} created successfully.",
+            "message": f"Proposal {quotation.quote_number} created successfully.",
             "data": serialize_quotation(quotation),
         }
 
@@ -141,7 +141,7 @@ class QuotationController:
 
         return {
             "success": True,
-            "message": "Quotation updated successfully.",
+            "message": "Proposal updated successfully.",
             "data": serialize_quotation(quotation),
         }
 
@@ -161,7 +161,7 @@ class QuotationController:
 
         return {
             "success": True,
-            "message": f"Quotation marked as {quotation.status}.",
+            "message": f"Proposal marked as {quotation.status}.",
             "data": serialize_quotation(quotation),
         }
 
@@ -177,9 +177,9 @@ class QuotationController:
         recipients = ", ".join(result["recipients"])
 
         message = (
-            f"Test quotation email sent to {recipients}."
+            f"Test proposal email sent to {recipients}."
             if result["test_only"]
-            else f"Quotation emailed to {recipients}."
+            else f"Proposal emailed to {recipients}."
         )
 
         return {
