@@ -812,7 +812,7 @@ class OpportunityService:
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    f"Quotation {quotation.quote_number or quotation.id} was "
+                    f"Proposal {quotation.quote_number or quotation.id} was "
                     "raised on this opportunity. Delete that first, or mark the "
                     "opportunity Lost instead."
                 ),

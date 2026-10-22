@@ -775,7 +775,7 @@ class QuotationPDFService:
 
         if len(rows) == 1:
             rows.append(
-                [Paragraph("No items on this quotation.", s["cell"])]
+                [Paragraph("No items on this proposal.", s["cell"])]
                 + [Paragraph("", s["cell"])] * 8
             )
 

@@ -729,8 +729,8 @@ class QuotationService:
         raise HTTPException(
             status_code=403,
             detail=(
-                "Only the quotation creator, assigned user, and their "
-                "reporting superiors can modify this quotation"
+                "Only the proposal creator, assigned user, and their "
+                "reporting superiors can modify this proposal"
             ),
         )
 
@@ -785,7 +785,7 @@ class QuotationService:
                     status_code=404,
                     detail=(
                         f"Opportunity {request.opportunity_id} was not found, "
-                        "so a quotation cannot be raised against it."
+                        "so a proposal cannot be raised against it."
                     ),
                 )
 
@@ -920,7 +920,7 @@ class QuotationService:
             quotation,
             action=QUOTATION_STATUS_ACTIONS.get(
                 quotation.status,
-                "Quotation Drafted",
+                "Proposal Drafted",
             ),
             description=f"Proposal {quotation.quote_number} created.",
             to_status=quotation.status,
@@ -1130,7 +1130,7 @@ class QuotationService:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "Nothing has been sent for approval on this quotation. "
+                    "Nothing has been sent for approval on this proposal. "
                     "Open it and use Send For Approval, which works out who "
                     "has to sign for the discount and asks them."
                 ),
@@ -1222,7 +1222,7 @@ class QuotationService:
         if not recipients:
             raise HTTPException(
                 status_code=400,
-                detail="At least one recipient is required to send this quotation.",
+                detail="At least one recipient is required to send this proposal.",
             )
 
         cc = [address.strip() for address in (request.cc or []) if address.strip()]
@@ -1294,7 +1294,7 @@ class QuotationService:
             raise HTTPException(
                 status_code=502,
                 detail=(
-                    "The quotation could not be emailed. Check the SMTP "
+                    "The proposal could not be emailed. Check the SMTP "
                     "settings in the backend environment and try again."
                 ),
             )
@@ -1346,7 +1346,7 @@ class QuotationService:
         lines = [
             f"Dear {quotation.contact_name or 'Sir/Madam'},",
             "",
-            f"Please find attached the official quotation "
+            f"Please find attached the official proposal "
             f"({quotation.quote_number}) for the proposed "
             f"{quotation.opportunity_name or 'requirement'}.",
             "",
@@ -1379,7 +1379,7 @@ class QuotationService:
             f"  - This offer is valid until "
             f"{quotation.validation_date.strftime('%d %b %Y') if quotation.validation_date else 'the date stated on the proposal'}.",
             "",
-            "Kindly review the attached quotation and let us know if you "
+            "Kindly review the attached proposal and let us know if you "
             "require any adjustments or technical clarifications.",
             "",
             "Warm regards,",
@@ -1454,7 +1454,7 @@ class QuotationService:
                 status_code=409,
                 detail=(
                     f"Sales order {order.order_number or order.id} was raised from "
-                    "this quotation. It cannot be deleted while that order exists."
+                    "this proposal. It cannot be deleted while that order exists."
                 ),
             )
 
@@ -1479,7 +1479,7 @@ class QuotationService:
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "A discount on this quotation is still waiting on the "
+                    "A discount on this proposal is still waiting on the "
                     f"{waiting_on or 'approver'}. Withdraw the approval request "
                     "first."
                 ),

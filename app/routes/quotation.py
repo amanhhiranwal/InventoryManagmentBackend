@@ -28,7 +28,7 @@ from app.schemas.quotation import (
 # likewise open to anyone who can see the record.
 router = APIRouter(
     prefix="/quotations",
-    tags=["Quotations"],
+    tags=["Proposals"],
 )
 
 

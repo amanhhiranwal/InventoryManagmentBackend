@@ -148,7 +148,7 @@ def save_matrix(
 
     return {
         "success": True,
-        "message": "Approval bands saved. New quotations use them straight away.",
+        "message": "Approval bands saved. New proposals use them straight away.",
         "data": get_matrix(db, current_user)["data"],
     }
 

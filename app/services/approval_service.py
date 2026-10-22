@@ -1144,7 +1144,7 @@ class ApprovalService:
                 paragraphs = [
                     f"{actor} has given the final approval. You can go ahead "
                     + (
-                        "and send this quotation to the client."
+                        "and send this proposal to the client."
                         if approval.document_type == ApprovalDocument.QUOTATION
                         else "and move this order into fulfilment."
                     ),
