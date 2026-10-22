@@ -295,6 +295,23 @@ def serialize_quotation(quotation: Quotation) -> dict:
     except Exception:  # noqa: BLE001 - a read must not fail on this
         approved = False
 
+    assigned_to_name = None
+
+    if quotation.assigned_to_id:
+        try:
+            from sqlalchemy.orm import object_session
+
+            from app.utils.user_names import get_user_names_helper
+
+            session = object_session(quotation)
+
+            if session is not None:
+                assigned_to_name = get_user_names_helper(
+                    [str(quotation.assigned_to_id)], session
+                ).get(str(quotation.assigned_to_id))
+        except Exception:  # noqa: BLE001 - a name must not fail the read
+            assigned_to_name = None
+
     return {
         "is_approved": approved,
         "id": quotation.id,
@@ -353,7 +370,11 @@ def serialize_quotation(quotation: Quotation) -> dict:
         "sent_at": quotation.sent_at.isoformat() if quotation.sent_at else None,
         "sent_to": quotation.sent_to,
         "sent_cc": quotation.sent_cc,
+        #: Both carried so the Send dialog can bring a saved draft back
+        #: exactly as it was typed, not approximately.
+        "sent_bcc": quotation.sent_bcc,
         "sent_subject": quotation.sent_subject,
+        "sent_body": quotation.sent_body,
         "send_options": quotation.send_options or {},
         "rejected_reason": quotation.rejected_reason,
 
@@ -365,6 +386,11 @@ def serialize_quotation(quotation: Quotation) -> dict:
         "assigned_to_id": (
             str(quotation.assigned_to_id) if quotation.assigned_to_id else None
         ),
+        #: Who it is assigned to, by name. Sent with the id because the
+        #: detail page had no list of users to look one up in and fell
+        #: back to the opportunity's owner - so a proposal assigned to one
+        #: person was shown under another's name.
+        "assigned_to_name": assigned_to_name,
 
         "created_at": (
             quotation.created_at.isoformat() if quotation.created_at else None
@@ -1189,6 +1215,64 @@ class QuotationService:
         except Exception as exc:  # pragma: no cover - defensive
             print("Proposal PDF could not be built:", exc)
             return []
+
+    @staticmethod
+    def save_email_draft(
+        quotation_id: int,
+        request,
+        current_user: dict,
+        db: Session,
+    ) -> dict:
+        """Keep a composed email without sending it.
+
+        Save as Draft in the Send dialog used to close the dialog and
+        throw the message away - recipients, subject, body, which
+        annexures to attach, the clauses ticked - which looked exactly
+        like a save. It is written to the same columns the send writes,
+        so what comes back is what was typed.
+
+        What it deliberately does not write is sent_at: that column is
+        what says the customer has it. A draft has a subject and no
+        sent_at, which is how the dialog tells a saved draft from a
+        record of something already sent, and the proposal's status is
+        left exactly where it was.
+        """
+
+        quotation = QuotationService.get_by_id(quotation_id, db)
+        QuotationService.assert_can_modify(quotation, current_user, db)
+
+        recipients = [a.strip() for a in (request.to or []) if a and a.strip()]
+        cc = [a.strip() for a in (request.cc or []) if a and a.strip()]
+        bcc = [a.strip() for a in (request.bcc or []) if a and a.strip()]
+
+        quotation.sent_to = (", ".join(recipients)[:500]) or None
+        quotation.sent_cc = (", ".join(cc)[:500]) or None
+        quotation.sent_bcc = (", ".join(bcc)[:500]) or None
+        quotation.sent_subject = (request.subject or "")[:500] or None
+        quotation.sent_body = (
+            getattr(request, "body_html", None) or request.body or ""
+        )[:8000] or None
+
+        quotation.send_options = {
+            "track_opens": bool(request.track_opens),
+            "alert_on_download": bool(request.alert_on_download),
+            "attach_gst_audit_trail": bool(request.attach_gst_audit_trail),
+            "notify_lead_owner": bool(request.notify_lead_owner),
+            "attachment_keys": list(request.attachment_keys or []),
+        }
+
+        db.commit()
+        db.refresh(quotation)
+
+        QuotationService.record_activity(
+            db,
+            quotation,
+            "Email Draft Saved",
+            "The message to the client was saved without being sent.",
+            user_id=current_user.get("user_id"),
+        )
+
+        return serialize_quotation(quotation)
 
     @staticmethod
     def send(
