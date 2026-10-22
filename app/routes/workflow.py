@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.core.timezone import iso
 from app.database.dependencies import get_db
 from app.middleware.permission_middleware import require_granted, require_super_admin
 from app.schemas.workflow import CreateWorkflowRequest
@@ -25,7 +26,7 @@ def _serialize(wf) -> dict:
         "description": get("description"),
         "nodes": get("nodes"),
         "edges": get("edges"),
-        "created_at": created.isoformat() if created else None,
+        "created_at": iso(created) if created else None,
     }
 
 

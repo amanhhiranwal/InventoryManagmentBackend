@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, object_session
 
+from app.core.timezone import iso
 from app.core.config import settings
 from app.services.attachment_access import files_for_email
 from app.services.company_profile_service import CompanyProfileService
@@ -1048,9 +1049,6 @@ def serialize_proforma_invoice(invoice: ProformaInvoice) -> dict:
     )
     grand_total = invoice.grand_total or 0.0
     advance_expected = round(grand_total * advance_percent / 100.0, 2)
-
-    def iso(value):
-        return value.isoformat() if value else None
 
     # The tax, worked out once here rather than again in the browser. A
     # document that recomputes its own GST is a document that can disagree

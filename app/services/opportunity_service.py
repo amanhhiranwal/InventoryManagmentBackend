@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.timezone import iso
 from app.core.listing import page_of, search_clause
 from app.core.workflow_status import (
     LEAD_TRANSITIONS,
@@ -864,7 +865,7 @@ def serialize_opportunity(opportunity: Opportunity) -> dict:
         "deal_value": opportunity.deal_value,
         "priority": opportunity.priority,
         "expected_closing_date": (
-            opportunity.expected_closing_date.isoformat()
+            iso(opportunity.expected_closing_date)
             if opportunity.expected_closing_date
             else None
         ),
@@ -908,14 +909,14 @@ def serialize_opportunity(opportunity: Opportunity) -> dict:
         "assigned_to_id": (
             str(opportunity.assigned_to_id) if opportunity.assigned_to_id else None
         ),
-        "won_at": opportunity.won_at.isoformat() if opportunity.won_at else None,
+        "won_at": iso(opportunity.won_at) if opportunity.won_at else None,
         "won_by": str(opportunity.won_by) if opportunity.won_by else None,
         "won_reason": opportunity.won_reason,
         "lost_reason": opportunity.lost_reason,
         "created_at": (
-            opportunity.created_at.isoformat() if opportunity.created_at else None
+            iso(opportunity.created_at) if opportunity.created_at else None
         ),
         "updated_at": (
-            opportunity.updated_at.isoformat() if opportunity.updated_at else None
+            iso(opportunity.updated_at) if opportunity.updated_at else None
         ),
     }

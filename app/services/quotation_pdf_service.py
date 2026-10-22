@@ -16,7 +16,7 @@ from io import BytesIO
 from pathlib import Path
 
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
+from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
@@ -296,6 +296,20 @@ def _styles() -> dict:
             "cell_left", parent=base["Normal"], fontSize=7.8, leading=10.8,
             textColor=INK,
         ),
+        #: A part code is one thing, not a run of letters to break where
+        #: the column happens to end. SG-IFP-65-SPX-V100 was coming out
+        #: as "SG-IFP-65-SPX-V1 / 00", which is not the code any more.
+        "cell_code": ParagraphStyle(
+            "cell_code", parent=base["Normal"], fontSize=7.2, leading=10,
+            textColor=INK, alignment=TA_CENTER, splitLongWords=0,
+            wordWrap=None,
+        ),
+        #: Figures stay on one line: "INR / 1,54,580.00" over two lines
+        #: reads as two numbers.
+        "cell_money": ParagraphStyle(
+            "cell_money", parent=base["Normal"], fontSize=7.8, leading=10.8,
+            textColor=INK, alignment=TA_RIGHT, splitLongWords=0,
+        ),
         "cell_serial": ParagraphStyle(
             "cell_serial", parent=base["Normal"], fontSize=8, leading=11,
             textColor=colors.white, fontName="Helvetica-Bold",
@@ -514,7 +528,7 @@ class QuotationPDFService:
             canvas.circle(-46 * mm, -30 * mm, 78 * mm, stroke=0, fill=1)
 
         QuotationPDFService._logo(
-            canvas, MARGIN, PAGE_H - 14 * mm, 42 * mm, company["logo_path"]
+            canvas, MARGIN, PAGE_H - MARGIN, 42 * mm, company["logo_path"]
         )
         canvas.restoreState()
 
@@ -540,8 +554,12 @@ class QuotationPDFService:
         """Logo top-right, navy footer bar with the website."""
 
         canvas.saveState()
+        # The logo hangs from its top edge, and that edge sat 10mm from
+        # the paper's - inside the non-printable margin of most office
+        # printers, which is where the clipped mark came from. It now
+        # starts at the same 18mm the text does.
         QuotationPDFService._logo(
-            canvas, PAGE_W - MARGIN - 34 * mm, PAGE_H - 10 * mm, 34 * mm,
+            canvas, PAGE_W - MARGIN - 34 * mm, PAGE_H - MARGIN, 34 * mm,
             company["logo_path"],
         )
 
@@ -743,8 +761,12 @@ class QuotationPDFService:
         header = [
             Paragraph(text, s["cell_head"])
             # HSN sits beside the description, as a tax invoice has it.
+            # The currency is said once, in the heading. Repeated on
+            # every figure it pushed the larger amounts onto a second
+            # line - "INR" over "1,54,580.00", which reads as two numbers.
             for text in ("Sr. No", "Category", "Model", "Description",
-                         "HSN / SAC", "Qty", "Price", "GST", "Amount")
+                         "HSN / SAC", "Qty", "Price (INR)", "GST",
+                         "Amount (INR)")
         ]
 
         rows = [header]
@@ -765,12 +787,16 @@ class QuotationPDFService:
                 Paragraph(str(index), s["cell_serial"]),
                 Paragraph(str(item.get("product") or "-"), s["cell"]),
                 Paragraph(str(item.get("model") or "-"), s["cell"]),
-                Paragraph(str(item.get("sku") or item.get("description") or "-"), s["cell_left"]),
+                Paragraph(str(item.get("sku") or item.get("description") or "-"), s["cell_code"]),
                 Paragraph(str(item.get("hsn") or "-"), s["cell"]),
                 Paragraph(f"{quantity:g}", s["cell"]),
-                Paragraph(f"INR {_money(unit_price)}", s["cell"]),
-                Paragraph(_money(tax_amount), s["cell"]),
-                Paragraph(f"INR {_money(net + tax_amount)}", s["cell"]),
+                Paragraph(_money(unit_price), s["cell_money"]),
+                # The rate, not the rupees. The column is headed GST and
+                # carried the tax amount, which the Amount column already
+                # includes - so the same money was printed twice and the
+                # rate, which is what a buyer checks, was nowhere.
+                Paragraph(f"{tax:g}%", s["cell"]),
+                Paragraph(_money(net + tax_amount), s["cell_money"]),
             ])
 
         if len(rows) == 1:
@@ -781,10 +807,13 @@ class QuotationPDFService:
 
         table = Table(
             rows,
-            # Sums to the text area: any wider and the last columns wrap
-            # their figures onto a second line.
-            colWidths=[10 * mm, 24 * mm, 21 * mm, 29 * mm, 17 * mm, 9 * mm,
-                       22 * mm, 18 * mm, 24 * mm],
+            # Sums to the 174mm text area. Model carries the longest
+            # text on the row - '65" Interactive Flat Panel SPX (Lango
+            # V100)' - and had 21mm, which broke it over four lines; GST
+            # now holds "18%" and needs almost none, so the room goes
+            # where the words are.
+            colWidths=[9 * mm, 20 * mm, 36 * mm, 26 * mm, 18 * mm, 10 * mm,
+                       22 * mm, 11 * mm, 22 * mm],
             repeatRows=1,
         )
         table.setStyle(TableStyle([

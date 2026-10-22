@@ -15,6 +15,7 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.timezone import iso
 from app.core.approvals import (
     FOUNDER,
     PriceType,
@@ -1364,8 +1365,8 @@ def serialize_approval(approval: SalesApproval, db=None) -> dict:
         "steps": approval.steps or [],
         "requested_by": str(approval.requested_by) if approval.requested_by else None,
         "requested_by_name": approval.requested_by_name,
-        "requested_at": approval.requested_at.isoformat() if approval.requested_at else None,
-        "decided_at": approval.decided_at.isoformat() if approval.decided_at else None,
+        "requested_at": iso(approval.requested_at) if approval.requested_at else None,
+        "decided_at": iso(approval.decided_at) if approval.decided_at else None,
         "remarks": approval.remarks,
         # Described from the request's own steps, so the sentence always
         # names the people on the chips beside it. Recomputing the chain

@@ -2,6 +2,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.core.timezone import iso
 from app.services.quotation_service import (
     QuotationService,
     serialize_quotation,
@@ -28,7 +29,7 @@ def _serialize_merged_activity(row: dict, names_map: dict[str, str]) -> dict:
         "to_status": row.get("to_status"),
         "created_by": created_by,
         "created_by_name": names_map.get(created_by) if created_by else None,
-        "created_at": created_at.isoformat() if created_at else None,
+        "created_at": iso(created_at) if created_at else None,
     }
 
 

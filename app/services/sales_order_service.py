@@ -3,6 +3,7 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.timezone import iso
 from app.core.fulfilment import desk_for, holds_desk
 from app.core.approvals import price_type_for
 from app.core.listing import page_of, search_clause
@@ -502,6 +503,32 @@ def compute_order_totals(
     }
 
 
+def _assert_po_not_after_order(po_date, order_date) -> None:
+    """A purchase order cannot be dated after the order raised against it.
+
+    The two dates were taken on trust, so an order created on the 16th
+    could carry a PO dated the 18th - and the order's own process
+    timeline then said "Customer PO Received" two days into the future,
+    on a step that had supposedly already happened.
+    """
+
+    if not po_date or not order_date:
+        return
+
+    def day(value):
+        return value.date() if hasattr(value, "date") else value
+
+    if day(po_date) > day(order_date):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "The customer's PO is dated after the sales order raised "
+                "against it. A PO comes first, so the order date cannot "
+                "be earlier than the PO date."
+            ),
+        )
+
+
 class SalesOrderService:
 
     # ------------------------------------------------------------------
@@ -794,6 +821,8 @@ class SalesOrderService:
                 ),
             )
 
+        _assert_po_not_after_order(request.po_date, request.order_date)
+
         first_name = current_user.get("first_name", "")
         last_name = current_user.get("last_name", "")
         creator_name = f"{first_name} {last_name}".strip() or "User"
@@ -927,6 +956,10 @@ class SalesOrderService:
             value = getattr(request, field, None)
             if value is not None:
                 setattr(order, field, value)
+
+        # Checked after the fields are applied, so a change to either
+        # date is measured against the other as it now stands.
+        _assert_po_not_after_order(order.po_date, order.order_date)
 
         if (
             getattr(request, "quotation_id", None) is not None
@@ -1433,10 +1466,10 @@ def serialize_sales_order(order: SalesOrder) -> dict:
         "company_name": order.company_name,
         "customer_type": order.customer_type,
         "state": order.state,
-        "order_date": order.order_date.isoformat() if order.order_date else None,
+        "order_date": iso(order.order_date) if order.order_date else None,
         "quotation_id": order.quotation_id,
         "po_number": order.po_number,
-        "po_date": order.po_date.isoformat() if order.po_date else None,
+        "po_date": iso(order.po_date) if order.po_date else None,
         "assigned_to": order.assigned_to,
         "sales_executive": order.sales_executive,
         "customer_information": order.customer_information,
@@ -1504,6 +1537,6 @@ def serialize_sales_order(order: SalesOrder) -> dict:
         "attachments": order.attachments or [],
         "creator_id": str(order.creator_id) if order.creator_id else None,
         "creator_name": order.creator_name,
-        "created_at": order.created_at.isoformat() if order.created_at else None,
-        "updated_at": order.updated_at.isoformat() if order.updated_at else None,
+        "created_at": iso(order.created_at) if order.created_at else None,
+        "updated_at": iso(order.updated_at) if order.updated_at else None,
     }
