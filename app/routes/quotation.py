@@ -245,6 +245,26 @@ def download_quotation_pdf(
     )
 
 
+@router.post("/{quotation_id}/email-draft")
+def save_quotation_email_draft(
+    quotation_id: int,
+    request: SendQuotationRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_permission("quotation.write")),
+):
+    """Keep the composed email without sending it."""
+
+    from app.services.quotation_service import QuotationService
+
+    return {
+        "success": True,
+        "message": "Email draft saved.",
+        "data": QuotationService.save_email_draft(
+            quotation_id, request, current_user, db
+        ),
+    }
+
+
 @router.post("/{quotation_id}/send")
 def send_quotation(
     quotation_id: int,
