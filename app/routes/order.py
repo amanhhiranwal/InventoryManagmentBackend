@@ -83,6 +83,38 @@ def get_order(
     return SalesOrderController.get_by_id(order_id, db, current_user)
 
 
+@router.get("/{order_id}/pdf")
+def download_order_pdf(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """The sales order as a PDF - for the raiser's AVP, the CEO, the
+    Founder and Accounts (and a super admin). Everyone else is refused."""
+
+    from fastapi import HTTPException
+    from fastapi.responses import Response
+
+    from app.services.sales_order_pdf_service import SalesOrderPDFService, can_download
+    from app.services.sales_order_service import SalesOrderService
+
+    order = SalesOrderService.get_by_id(order_id, db)
+
+    if not can_download(order, current_user, db):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the AVP, the CEO, the Founder and Accounts can download a sales order.",
+        )
+
+    filename = SalesOrderPDFService.filename(order)
+
+    return Response(
+        content=SalesOrderPDFService.render(order, db),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/{order_id}/activities")
 def get_order_activities(
     order_id: int,

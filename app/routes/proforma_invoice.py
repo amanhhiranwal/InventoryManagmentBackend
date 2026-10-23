@@ -93,6 +93,48 @@ def get_proforma_invoice(
     return ProformaInvoiceController.get_by_id(invoice_id, db, current_user)
 
 
+@router.get("/{invoice_id}/pdf")
+def download_proforma_invoice_pdf(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """The proforma invoice as a PDF, the same file the customer is sent.
+
+    For the fulfilment desks - Inventory takes the order through
+    procurement and dispatch and needs the invoice it was paid against,
+    without being able to open the sales order - and for everyone who can
+    already open the invoice.
+    """
+
+    from fastapi import HTTPException
+    from fastapi.responses import Response
+
+    from app.core.fulfilment import ACCOUNTS, INVENTORY
+    from app.models.user import User
+    from app.services.approval_service import _role_names
+    from app.services.proforma_invoice_pdf_service import ProformaInvoicePDFService
+
+    invoice = ProformaInvoiceService.get_by_id(invoice_id, db)
+
+    user = db.query(User).filter(User.id == current_user.get("user_id")).first()
+    desk = user is not None and bool(_role_names(user) & {INVENTORY, ACCOUNTS})
+
+    if not desk:
+        try:
+            ProformaInvoiceService.assert_can_edit(invoice, current_user, db)
+        except HTTPException:
+            raise HTTPException(status_code=403, detail="You cannot download this proforma invoice.")
+
+    filename = ProformaInvoicePDFService.filename(invoice)
+
+    return Response(
+        content=ProformaInvoicePDFService.render(invoice, db),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.put("/{invoice_id}")
 def update_proforma_invoice(
     invoice_id: int,

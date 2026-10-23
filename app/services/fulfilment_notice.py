@@ -269,6 +269,18 @@ def announce_stage(
 
         addresses = [u.email for u in recipients if u.email]
 
+        # Confirmed is the mail Accounts acts on - collect the advance -
+        # so it carries the sales order itself.
+        attachments = None
+
+        if stage == SalesOrderStatus.CONFIRMED:
+            try:
+                from app.services.sales_order_pdf_service import sales_order_attachment
+
+                attachments = sales_order_attachment(order.id, db)
+            except Exception:  # noqa: BLE001 - the mail still goes without it
+                logger.exception("Could not attach sales order %s", order.id)
+
         if addresses:
             EmailService.send(
                 to=addresses[:1],
@@ -276,6 +288,7 @@ def announce_stage(
                 text_body=letter.text(),
                 html_body=letter.html(),
                 cc=addresses[1:],
+                attachments=attachments,
             )
     except Exception:  # noqa: BLE001 - never block the move being reported
         logger.exception(
@@ -404,12 +417,23 @@ def announce_processing(order, invoice, db: Session, actor_name: str | None) -> 
             sign_off_name=actor_name,
         )
 
+        # The letter Accounts act on, so it carries the sales order itself.
+        attachments = None
+
+        try:
+            from app.services.sales_order_pdf_service import sales_order_attachment
+
+            attachments = sales_order_attachment(order.id, db)
+        except Exception:  # noqa: BLE001 - the mail still goes without it
+            logger.exception("Could not attach sales order %s", order.id)
+
         EmailService.send(
             to=addresses[:1],
             subject=f"Sales order {reference} is ready to process",
             text_body=letter.text(),
             html_body=letter.html(),
             cc=addresses[1:],
+            attachments=attachments,
         )
     except Exception:  # noqa: BLE001 - the order is already on its way
         logger.exception("Could not announce processing for order %s", getattr(order, "id", "?"))
