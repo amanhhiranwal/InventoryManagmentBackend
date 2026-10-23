@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -28,6 +28,10 @@ class CreateItemRequest(BaseModel):
     # The company that stocks this product. Left out, the product is shared
     # with every company.
     company_id: Optional[str] = None
+    # On an edit, the product's whole list of serial numbers: any left out
+    # are removed and any new ones added. Left out, serial_number names the
+    # one record being edited, as before.
+    serial_numbers: Optional[List[str]] = None
 
 @router.post("/templates")
 def save_template(
@@ -336,6 +340,7 @@ def update_item(
         image_set="image_base64" in request.model_fields_set,
         current_user=current_user,
         db=db,
+        serial_numbers=request.serial_numbers,
     )
     return {
         "success": True,
