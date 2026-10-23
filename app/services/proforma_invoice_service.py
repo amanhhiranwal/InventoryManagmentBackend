@@ -824,6 +824,20 @@ class ProformaInvoiceService:
             db,
         )
 
+        # The invoice itself goes first, drawn to the same form the Preview
+        # shows. It used to go nowhere: the letter said "please find
+        # attached the Proforma Invoice" over only the annexures.
+        from app.services.proforma_invoice_pdf_service import ProformaInvoicePDFService
+
+        message_files.insert(
+            0,
+            {
+                "filename": ProformaInvoicePDFService.filename(invoice),
+                "content": ProformaInvoicePDFService.render(invoice, db),
+                "mime_type": "application/pdf",
+            },
+        )
+
         if request.test_only:
             address = current_user.get("email")
 
