@@ -606,7 +606,7 @@ class InventoryService:
         return item.get("image_base64")
 
     @classmethod
-    def update_item(cls, item_id: str, name: str, serial_number: str, product_type_code: str, category: str, attributes: dict, image_base64: str = None, company_id: str = None, company_set: bool = False, image_set: bool = False, current_user: dict = None, db: Session = None) -> dict:
+    def update_item(cls, item_id: str, name: str, serial_number: str, product_type_code: str, category: str, attributes: dict, image_base64: str = None, company_id: str = None, company_set: bool = False, image_set: bool = False, current_user: dict = None, db: Session = None, serial_numbers: list[str] | None = None) -> dict:
         """
         Updates a dynamic inventory item, validating inputs against its template fields.
         """
@@ -718,31 +718,9 @@ class InventoryService:
             else existing.get("company_id")
         )
 
-        # Check duplicate serial number within the same company
-        serial_upper = (serial_number or "").strip().upper()
-        if serial_upper and cls._serial_clash(serial_upper, owner_id, exclude=obj_id):
-            raise HTTPException(status_code=400, detail=f"Inventory item with serial number '{serial_number}' already exists for this company.")
-
-        # Update document
-        doc = {
-            "name": name.strip(),
-            "serial_number": serial_upper,
-            "product_type_code": product_type_code,
-            "category": category.strip(),
-            "attributes": validated_attrs,
-            "company_id": owner_id,
-        }
-
-        # The picture is only touched when the form sent one. The list no
-        # longer carries images - they are up to two megabytes each - so a
-        # form that never saw the picture must not be able to erase it by
-        # saving a change of name.
-        if image_set:
-            doc["image_base64"] = image_base64
-
-        cls.items_col.update_one({"_id": obj_id}, {"$set": doc})
-
-        # Synchronize common product attributes across sibling serial units if any exist
+        # The product's units: the record being edited and every sibling
+        # sharing its model, name, type and company. The list shows them as
+        # one row, so the form's In Stock is their total.
         existing_model = str((existing.get("attributes") or {}).get("model_number") or "").strip().lower()
         existing_name = str(existing.get("name") or "").strip().lower()
         existing_company = existing.get("company_id")
@@ -759,6 +737,39 @@ class InventoryService:
                 "$regex": f"^{re.escape(existing_model)}$", "$options": "i"
             }
 
+        siblings = list(cls.items_col.find(sibling_query, {"image_base64": 0}))
+
+        plan = cls._plan_units(
+            existing, siblings, serial_number, serial_numbers,
+            validated_attrs.get("instock"), owner_id,
+        )
+
+        primary_serial = plan["primary_serial"]
+
+        # Update document
+        doc = {
+            "name": name.strip(),
+            "serial_number": primary_serial,
+            "product_type_code": product_type_code,
+            "category": category.strip(),
+            "attributes": {
+                **validated_attrs,
+                "instock": plan["primary_stock"],
+                "stock": plan["primary_stock"],
+            },
+            "company_id": owner_id,
+        }
+
+        # The picture is only touched when the form sent one. The list no
+        # longer carries images - they are up to two megabytes each - so a
+        # form that never saw the picture must not be able to erase it by
+        # saving a change of name.
+        if image_set:
+            doc["image_base64"] = image_base64
+
+        cls.items_col.update_one({"_id": obj_id}, {"$set": doc})
+
+        # Synchronize common product attributes across sibling serial units if any exist
         shared_attrs = {
             f"attributes.{k}": v
             for k, v in validated_attrs.items()
@@ -776,9 +787,207 @@ class InventoryService:
 
         cls.items_col.update_many(sibling_query, {"$set": update_siblings})
 
+        # Then the units themselves: serials renamed, removed and added,
+        # and the stock left where the plan put it.
+        for unit_id, serial in plan["renames"]:
+            cls.items_col.update_one({"_id": unit_id}, {"$set": {"serial_number": serial}})
+
+        # New serials copy the edited record, so they are added before it
+        # can be removed.
+        if plan["adds"]:
+            template = cls.items_col.find_one({"_id": obj_id}) or doc
+            cls.items_col.insert_many([
+                {
+                    **{k: v for k, v in template.items() if k != "_id"},
+                    "serial_number": serial,
+                    "attributes": {
+                        **(template.get("attributes") or {}),
+                        "instock": plan["first_add_stock"] if index == 0 else 1.0,
+                        "stock": plan["first_add_stock"] if index == 0 else 1.0,
+                    },
+                }
+                for index, serial in enumerate(plan["adds"])
+            ])
+
+        if plan["deletes"]:
+            cls.items_col.delete_many({"_id": {"$in": plan["deletes"]}})
+
+        for unit_id, quantity in plan["stock"]:
+            cls.items_col.update_one(
+                {"_id": unit_id},
+                {"$set": {"attributes.instock": quantity, "attributes.stock": quantity}},
+            )
+
         return cls._decorate(
             {**doc, "_id": obj_id}, CompanyScopeService.company_names(db) if db else {}
         )
+
+    @classmethod
+    def _plan_units(cls, primary, siblings, serial_number, serial_numbers, total, owner_id) -> dict:
+        """Work out every change to a product's units before writing any.
+
+        ``total`` is the product's In Stock as the form shows it - the sum
+        over all its units. It used to be written onto the one record being
+        edited while the siblings kept their own counts, so each save added
+        the rest of the stock on top again. The record being edited now
+        takes whatever the others do not hold.
+
+        ``serial_numbers``, when sent, is the product's whole list: serials
+        missing from it are removed, new ones added, and a removed one is
+        reused for an added one when a typo is corrected. The count must then
+        equal the list - one unit per serial - and each record is set to one.
+        Left out, the single ``serial_number`` names the edited record as
+        before.
+
+        Nothing is written here, so a refusal leaves the product untouched.
+        """
+
+        def held(unit) -> float:
+            attributes = unit.get("attributes") or {}
+            value = attributes.get("instock", attributes.get("stock"))
+            try:
+                return float(value or 0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        primary_id = primary["_id"]
+        group_ids = [primary_id] + [unit["_id"] for unit in siblings]
+
+        def clash(serial: str) -> bool:
+            return cls.items_col.find_one({
+                "serial_number": serial,
+                "company_id": owner_id,
+                "_id": {"$nin": group_ids},
+            }) is not None
+
+        renames: list = []
+        deletes: list = []
+        adds: list[str] = []
+        primary_serial = str(primary.get("serial_number") or "").strip().upper()
+        primary_kept = True
+
+        if serial_numbers is None:
+            primary_serial = (serial_number or "").strip().upper()
+
+            if primary_serial and cls._serial_clash(primary_serial, owner_id, exclude=primary_id):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Inventory item with serial number '{serial_number}' already exists for this company.",
+                )
+
+            remaining = [(unit["_id"], held(unit)) for unit in siblings]
+        else:
+            wanted: list[str] = []
+            for raw in serial_numbers:
+                for piece in re.split(r"[/,\n]+", str(raw or "")):
+                    serial = piece.strip().upper()
+                    if serial and serial not in wanted:
+                        wanted.append(serial)
+
+            if not wanted:
+                raise HTTPException(status_code=400, detail="Keep at least one serial number on the product.")
+
+            for serial in wanted:
+                if clash(serial):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Serial number '{serial}' already belongs to another product in this company.",
+                    )
+
+            units = [primary] + siblings
+            have = {str(u.get("serial_number") or "").strip().upper() for u in units}
+            to_add = [serial for serial in wanted if serial not in have]
+            dropped = [
+                u for u in units
+                if str(u.get("serial_number") or "").strip()
+                and str(u.get("serial_number") or "").strip().upper() not in wanted
+            ]
+
+            # A removed serial is reused for an added one before anything
+            # is deleted or created.
+            while dropped and to_add:
+                unit, serial = dropped.pop(0), to_add.pop(0)
+                if unit["_id"] == primary_id:
+                    primary_serial = serial
+                else:
+                    renames.append((unit["_id"], serial))
+
+            for unit in dropped:
+                if unit["_id"] == primary_id:
+                    primary_kept = False
+                else:
+                    deletes.append(unit["_id"])
+
+            adds = to_add
+            remaining = [
+                (unit["_id"], held(unit)) for unit in siblings if unit["_id"] not in deletes
+            ]
+
+        primary_stock = held(primary)
+        stock: list = []
+        first_add_stock = 1.0
+
+        if serial_numbers is not None:
+            # A serialised product holds one unit per serial number, so the
+            # count and the list must agree. A count above the list is
+            # stock nobody can name; below it, serials with nothing behind
+            # them.
+            if total is not None and float(total) != len(wanted):
+                difference = int(abs(float(total) - len(wanted)))
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"In stock is {float(total):g} but {len(wanted)} serial number"
+                        f"{'' if len(wanted) == 1 else 's'} are listed. "
+                        + (
+                            f"Add {difference} more serial number{'' if difference == 1 else 's'}"
+                            if float(total) > len(wanted)
+                            else f"Remove {difference} serial number{'' if difference == 1 else 's'}"
+                        )
+                        + f", or set In stock to {len(wanted)}."
+                    ),
+                )
+
+            # Every unit then holds exactly one; a record left without a
+            # serial holds none.
+            primary_stock = 1.0
+            stock = [
+                (unit["_id"], 1.0 if str(unit.get("serial_number") or "").strip() else 0.0)
+                for unit in siblings
+                if unit["_id"] not in deletes
+            ]
+            if not primary_kept:
+                stock = [entry for entry in stock if entry[0] != primary_id]
+
+        elif total is not None:
+            total = float(total)
+            others = sum(quantity for _, quantity in remaining)
+
+            # The record being edited takes whatever its siblings do not
+            # hold, so the product's total is what was typed.
+            primary_stock = total - others
+
+            if primary_stock < 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"In stock can't be lower than {others:g}: that many units are "
+                        "recorded under this product's other serial numbers."
+                    ),
+                )
+
+        if not primary_kept:
+            deletes.append(primary_id)
+
+        return {
+            "primary_serial": primary_serial,
+            "primary_stock": primary_stock,
+            "renames": renames,
+            "deletes": deletes,
+            "adds": adds,
+            "stock": stock,
+            "first_add_stock": first_add_stock,
+        }
 
     @classmethod
     def delete_item(cls, item_id: str, all_units: bool = False, current_user: dict = None, db: Session = None) -> None:
