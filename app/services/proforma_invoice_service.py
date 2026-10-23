@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime, timedelta
 from uuid import UUID
 
@@ -33,6 +34,9 @@ from app.services.sales_order_service import (
 from app.services.notification_service import NotificationService
 
 logger = logging.getLogger(__name__)
+
+#: The same shape the send dialog accepts: something@domain.tld, no spaces.
+_EMAIL = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")
 
 #: Headline written onto the activity entry when an invoice reaches a status.
 PROFORMA_INVOICE_STATUS_ACTIONS: dict[str, str] = {
@@ -872,6 +876,18 @@ class ProformaInvoiceService:
 
         cc = [a.strip() for a in (request.cc or []) if a and a.strip()]
         bcc = [a.strip() for a in (request.bcc or []) if a and a.strip()]
+
+        # The dialog refuses these too; checked here so an address that is
+        # not one never reaches the mail server from any caller.
+        invalid = next(
+            (a for a in recipients + cc + bcc if not _EMAIL.fullmatch(a)), None
+        )
+
+        if invalid:
+            raise HTTPException(
+                status_code=400,
+                detail=f'"{invalid}" is not a valid email address.',
+            )
 
         delivered = EmailService.send(
             to=recipients,
