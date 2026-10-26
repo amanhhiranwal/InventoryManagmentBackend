@@ -1280,6 +1280,7 @@ class ApprovalService:
                 text_body=letter.text(),
                 html_body=letter.html(),
                 cc=cc if to else [],
+                attachments=ApprovalService._order_pdf(approval, event, db),
             )
         except Exception:  # noqa: BLE001 - never block the decision
             logger.exception(
@@ -1288,6 +1289,30 @@ class ApprovalService:
                 approval.document_id,
             )
 
+
+    @staticmethod
+    def _order_pdf(approval: SalesApproval, event: str, db: Session) -> list[dict] | None:
+        """The sales order itself, attached to the mail asking for approval.
+
+        Only for a sales order, and only on the ask - raised, or passed up
+        to the next approver - so each approver has the whole order in
+        hand. The decision notices go without it. A PDF that cannot be
+        drawn leaves the mail as it was.
+        """
+
+        if approval.document_type != ApprovalDocument.SALES_ORDER:
+            return None
+
+        if event not in ("raised", "approved") or approval.status != ApprovalStatus.PENDING:
+            return None
+
+        try:
+            from app.services.sales_order_pdf_service import sales_order_attachment
+
+            return sales_order_attachment(approval.document_id, db)
+        except Exception:  # noqa: BLE001 - the mail still goes without it
+            logger.exception("Could not attach the sales order to approval %s", approval.id)
+            return None
 
     @staticmethod
     def _notify_in_app(

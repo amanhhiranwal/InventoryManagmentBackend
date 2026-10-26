@@ -64,9 +64,17 @@ class SalesOrderController:
         if current_user is not None:
             SalesOrderService.assert_can_view(order, current_user, db)
 
+        from app.services.sales_order_pdf_service import can_download
+
         return {
             "success": True,
-            "data": serialize_sales_order(order),
+            "data": {
+                **serialize_sales_order(order),
+                # Whether this reader gets Download Sales Order.
+                "can_download_pdf": bool(
+                    current_user is not None and can_download(order, current_user, db)
+                ),
+            },
         }
 
     @staticmethod
