@@ -24,8 +24,14 @@ mkdir -p "$APP_DIR/deploy"
 
 # 3. Setup PostgreSQL Database and User
 echo "==> Configuring PostgreSQL user & database..."
+APP_PG_PASS="${POSTGRES_PASSWORD:-}"
+if [ -z "$APP_PG_PASS" ]; then
+  echo -n "Enter PostgreSQL password for crm_admin: "
+  read -rs APP_PG_PASS
+  echo
+fi
 sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname = 'crm_admin'" | grep -q 1 || \
-  sudo -u postgres psql -c "CREATE USER crm_admin WITH ENCRYPTED PASSWORD 'Masters@123';"
+  sudo -u postgres psql -c "CREATE USER crm_admin WITH ENCRYPTED PASSWORD '$APP_PG_PASS';"
 
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = 'solutions'" | grep -q 1 || \
   sudo -u postgres psql -c "CREATE DATABASE solutions OWNER crm_admin;"

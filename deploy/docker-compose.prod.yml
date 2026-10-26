@@ -20,7 +20,7 @@ services:
       - REDIS_PORT=6379
       # Only the fallback: Masters > Company Profile > CRM Address wins
       # when it is set, which is where to change this without a deploy.
-      - FRONTEND_URL=https://synergy-sync.com
+      - FRONTEND_URL=${FRONTEND_URL:-https://synergy-sync.com}
       - PYTHONPATH=/app
     extra_hosts:
       - "host.docker.internal:host-gateway"
