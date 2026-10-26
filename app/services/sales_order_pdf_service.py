@@ -113,13 +113,11 @@ def _number(value) -> float:
 
 
 def _rs(value) -> str:
-    """Rs.82,600 - the page's figures. The PDF fonts have no rupee sign."""
+    """Rs.82,600 - in whole rupees, as the order page shows every figure.
+    The PDF fonts have no rupee sign."""
 
-    amount = _number(value)
-    text = _money(abs(amount))
-    if text.endswith(".00"):
-        text = text[:-3]
-    return f"{'-' if amount < 0 else ''}Rs.{text}"
+    amount = round(_number(value))
+    return f"{'-' if amount < 0 else ''}Rs.{_money(abs(amount))[:-3]}"
 
 
 class SalesOrderPDFService:
