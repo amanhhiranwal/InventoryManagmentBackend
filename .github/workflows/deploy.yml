@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - prod
   workflow_dispatch:
  
 concurrency:
@@ -59,13 +60,27 @@ jobs:
     runs-on: ubuntu-latest
  
     steps:
+      - name: Prepare Backend Environment Secret
+        id: env_prep
+        env:
+          BACKEND_ENV_SECRET: ${{ secrets.Backend_env || secrets.BACKEND_ENV }}
+        run: |
+          if [ -n "$BACKEND_ENV_SECRET" ]; then
+            echo "b64=$(echo -n "$BACKEND_ENV_SECRET" | base64 -w 0)" >> "$GITHUB_OUTPUT"
+          else
+            echo "b64=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Deploy to Server via SSH
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          BACKEND_ENV_B64: ${{ steps.env_prep.outputs.b64 }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT || 22 }}
+          envs: BACKEND_ENV_B64
           command_timeout: 20m
           script: |
             set -eu
@@ -100,6 +115,29 @@ jobs:
             echo "==> Fetching branch: $BRANCH"
             git fetch origin "$BRANCH"
             git checkout -B "$BRANCH" "origin/$BRANCH"
+
+            if [ -n "${BACKEND_ENV_B64:-}" ]; then
+              echo "==> Syncing all environment variables from GitHub Secret (Backend_env) to backend/.env..."
+              touch "$BACKEND_DIR/.env"
+              DECODED=$(echo "$BACKEND_ENV_B64" | base64 -d)
+              while IFS= read -r line || [ -n "$line" ]; do
+                [[ "$line" =~ ^[[:space:]]*# ]] && continue
+                [[ "$line" != *"="* ]] && continue
+                key="${line%%=*}"
+                val="${line#*=}"
+                key=$(echo "$key" | xargs)
+                if grep -q "^[[:space:]]*${key}=" "$BACKEND_DIR/.env"; then
+                  if sed --version >/dev/null 2>&1; then
+                    sed -i "s|^[[:space:]]*${key}=.*|${key}=${val}|" "$BACKEND_DIR/.env"
+                  else
+                    sed -i "" "s|^[[:space:]]*${key}=.*|${key}=${val}|" "$BACKEND_DIR/.env"
+                  fi
+                else
+                  echo "${key}=${val}" >> "$BACKEND_DIR/.env"
+                fi
+              done <<< "$DECODED"
+              chmod 600 "$BACKEND_DIR/.env"
+            fi
  
             if [ -f "$BACKEND_DIR/deploy/docker-compose.prod.yml" ]; then
               cp -f "$BACKEND_DIR/deploy/docker-compose.prod.yml" "$COMPOSE_FILE"
