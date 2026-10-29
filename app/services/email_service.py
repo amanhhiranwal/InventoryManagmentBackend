@@ -161,6 +161,6 @@ class EmailService:
         except Exception:
             logger.exception(
                 "Failed to send email to %s",
-                ", ".join(recipients),
+                ", ".join(clean_to + clean_cc + clean_bcc),
             )
             return False
