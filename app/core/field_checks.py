@@ -153,3 +153,12 @@ def check_required(value: str | None, field: str) -> str:
         _fail(f"{field} is required.")
 
     return text
+
+
+def check_pin_for(country: str | None, value: str | None, *, field: str = "PIN code") -> str:
+    """A PIN held to six digits in India; a foreign postcode is left alone."""
+
+    if str(country or "").strip().lower() not in ("", "india"):
+        return str(value or "").strip()
+
+    return check_pin(value, field=field)

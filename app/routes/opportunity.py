@@ -2,6 +2,13 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.controllers.opportunity_controller import OpportunityController
+from app.core.field_checks import (
+    check_email,
+    check_gstin,
+    check_mobile,
+    check_pan,
+    check_pin_for,
+)
 from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.middleware.permission_middleware import require_permission
@@ -56,12 +63,33 @@ def get_opportunity(
     return OpportunityController.get_by_id(opportunity_id, db, current_user)
 
 
+def _check_fields(request) -> None:
+    """The same shapes the form checks, for anything that skips the form.
+
+    Only what was sent is checked; an update that leaves a field out
+    leaves it as it was.
+    """
+
+    check_mobile(request.mobile_number)
+    check_email(request.email)
+    check_gstin(request.gst_number)
+    check_pan(request.pan_number)
+    check_pin_for(request.country, request.zip_code, field="Billing PIN code")
+    check_pin_for(
+        request.shipping_country or request.country,
+        request.shipping_zip_code,
+        field="Shipping PIN code",
+    )
+
+
 @router.post("/")
 def create_opportunity(
     request: CreateOpportunityRequest,
     db: Session = Depends(get_db),
     current_user=Depends(require_permission("opportunity.write")),
 ):
+    _check_fields(request)
+
     return OpportunityController.create(request, current_user, db)
 
 
@@ -105,6 +133,8 @@ def update_opportunity(
     db: Session = Depends(get_db),
     current_user=Depends(require_permission("opportunity.write")),
 ):
+    _check_fields(request)
+
     return OpportunityController.update(
         opportunity_id,
         request,

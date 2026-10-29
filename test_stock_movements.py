@@ -8,8 +8,10 @@ This covers both sides of putting that right:
     stock figure, remove it again, and see the totals - and a salesperson,
     who may still add a product for their own company, cannot correct a
     count or delete one;
-  * stock leaves the shelf when an order is dispatched, not before, and
-    comes back if a dispatched order is cancelled;
+  * a bulk record - one serial standing for many units - cannot be
+    issued by serial, so production cannot mark its order ready; a super
+    admin moving the order on counts it down by quantity instead, at
+    ready, and it comes back if the order is held afterwards;
   * the deduction is written down and cannot happen twice.
 
 Run seed_sales_team.py and seed_fulfilment_roles.py first. Everything it
@@ -27,6 +29,7 @@ from seed_sales_team import (
     ADMIN_PASSWORD,
     TEAM_PASSWORD,
     api,
+    coordinate_order,
     email_for,
     login,
     rows,
@@ -64,10 +67,14 @@ try:
     admin = login(ADMIN_EMAIL, ADMIN_PASSWORD)
     token["inventory"] = login("inventory@mailinator.com", TEAM_PASSWORD)
     token["accounts"] = login("accounts@mailinator.com", TEAM_PASSWORD)
+    token["production"] = login("production@mailinator.com", TEAM_PASSWORD)
+    token["logistics"] = login("logistics@mailinator.com", TEAM_PASSWORD)
     token["am_north_1"] = login(email_for("am_north_1"), TEAM_PASSWORD)
 
     inventory = token["inventory"]
-    print("Signed in as the super admin, both desks and a salesperson.")
+    production = token["production"]
+    logistics = token["logistics"]
+    print("Signed in as the super admin, the catalogue, the desks and a salesperson.")
 
     types = {t["code"]: t for t in rows(api("get", "/product-types/", admin))}
     product_type = types.get("DISPLAY") or next(iter(types.values()), None)
@@ -131,7 +138,7 @@ try:
         )
 
     # The desk reports what is on the shelf.
-    desk = api("get", "/fulfilment/procurement", inventory).json()["data"]
+    desk = api("get", "/fulfilment/production", production).json()["data"]
     kpis = {k["key"]: k["value"] for k in desk["kpis"]}
 
     check("the desk counts the units on hand", kpis["units_in_stock"] >= 12, str(kpis.get("units_in_stock")))
@@ -192,6 +199,10 @@ try:
         "amount_paid": round(float(invoice["grand_total"]) * 0.3, 2),
     })
 
+    # The business coordinator accepts the advance and processes the
+    # order before accounts see it.
+    coordinate_order(order["id"])
+
     api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
         "approve": True, "remarks": "Paid.",
     })
@@ -202,32 +213,31 @@ try:
     # ================================================== picking it
     banner("3. Picking does not move stock")
 
-    api("put", f"/fulfilment/orders/{order['id']}/decide", inventory, json={
+    api("put", f"/fulfilment/orders/{order['id']}/decide", production, json={
         "approve": True, "remarks": "Taken in.",
     })
     check("it goes into procurement", status_now() == "PROCUREMENT", status_now())
     check("the shelf is still untouched", stock_now() == 12, str(stock_now()))
 
-    api("put", f"/fulfilment/orders/{order['id']}/decide", inventory, json={
+    # One serial on a record holding twelve cannot name four units.
+    refused = api("put", f"/fulfilment/orders/{order['id']}/decide", production, json={
         "approve": True, "remarks": "Picked and packed.",
+        "serials": [{"line": 0, "serial": SERIAL}],
     })
+    check("production cannot mark it ready without a serial per unit", refused.status_code == 400, f"{refused.status_code} {refused.text[:120]}")
+    check("and the shelf is still untouched", stock_now() == 12, str(stock_now()))
+
+    # ================================================== the fallback
+    banner("4. Moved on by a super admin, it is counted down by quantity at ready")
+
+    api("put", f"/orders/{order['id']}/status", admin, json={"status": "READY"})
     check("it is ready to dispatch", status_now() == "READY", status_now())
-    check(
-        "a picked order has still not taken the stock",
-        stock_now() == 12,
-        str(stock_now()),
-    )
-
-    # ================================================== dispatching it
-    banner("4. Dispatch takes it off the shelf")
-
-    api("put", f"/fulfilment/orders/{order['id']}/decide", inventory, json={
-        "approve": True, "remarks": "Gone out.",
-    })
-    check("it is dispatched", status_now() == "DISPATCHED", status_now())
     check("four have come off the shelf", stock_now() == 8, str(stock_now()))
 
-    desk = api("get", "/fulfilment/procurement", inventory).json()["data"]
+    api("put", f"/orders/{order['id']}/status", admin, json={"status": "DISPATCHED"})
+    check("dispatching it does not take them again", stock_now() == 8, str(stock_now()))
+
+    desk = api("get", "/fulfilment/logistics", logistics).json()["data"]
     mine = next((o for o in desk["orders"] if o["id"] == order["id"]), None)
     movements = (mine or {}).get("stock_movements") or []
 
@@ -242,7 +252,7 @@ try:
     # ================================================== not twice
     banner("5. It cannot happen twice")
 
-    api("put", f"/orders/{order['id']}/status", inventory, json={"status": "ON_HOLD", "remarks": "Recalled."})
+    api("put", f"/orders/{order['id']}/status", logistics, json={"status": "ON_HOLD", "remarks": "Recalled."})
     check("the order goes on hold", status_now() == "ON_HOLD", status_now())
     check("and the stock comes back", stock_now() == 12, str(stock_now()))
 

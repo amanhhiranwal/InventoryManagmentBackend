@@ -131,6 +131,11 @@ class SalesOrderStatus:
     #: Waiting on the discount approval chain (AVP, then the CEO, then the
     #: founder) before anything is committed to it.
     PENDING_APPROVAL = "PENDING_APPROVAL"
+    #: The business coordinator has checked the advance against the
+    #: payment terms and accepted it. The order can now be processed.
+    ADVANCE_ACCEPTED = "ADVANCE_ACCEPTED"
+    #: Processed by the business coordinator and with accounts to verify.
+    ORDER_PROCESSED = "ORDER_PROCESSED"
     #: Accounts have seen the money against the proforma invoice.
     PAYMENT_VERIFIED = "PAYMENT_VERIFIED"
     #: With inventory: either picked from stock or on order.
@@ -138,21 +143,24 @@ class SalesOrderStatus:
     #: Stock is in hand and the order can go out.
     READY = "READY"
     DISPATCHED = "DISPATCHED"
+    #: With the courier on the last leg to the client.
+    OUT_FOR_DELIVERY = "OUT_FOR_DELIVERY"
     DELIVERED = "DELIVERED"
     INSTALLED = "INSTALLED"
 
     ALL = [
-        DRAFT, PENDING_APPROVAL, CONFIRMED, PAYMENT_VERIFIED, PROCUREMENT,
-        READY, DISPATCHED, RELEASED, DELIVERED, INSTALLED, COMPLETED,
-        ON_HOLD, CANCELLED,
+        DRAFT, PENDING_APPROVAL, CONFIRMED, ADVANCE_ACCEPTED, ORDER_PROCESSED,
+        PAYMENT_VERIFIED, PROCUREMENT, READY, DISPATCHED, OUT_FOR_DELIVERY,
+        RELEASED, DELIVERED, INSTALLED, COMPLETED, ON_HOLD, CANCELLED,
     ]
 
     #: The fulfilment chain in order, for a progress strip. CONFIRMED is
     #: what "approved" means here - the approvals are held separately, on
     #: sales_approval.
     PIPELINE = [
-        DRAFT, PENDING_APPROVAL, CONFIRMED, PAYMENT_VERIFIED, PROCUREMENT,
-        READY, DISPATCHED, DELIVERED, INSTALLED, COMPLETED,
+        DRAFT, PENDING_APPROVAL, CONFIRMED, ADVANCE_ACCEPTED, ORDER_PROCESSED,
+        PAYMENT_VERIFIED, PROCUREMENT, READY, DISPATCHED, OUT_FOR_DELIVERY,
+        DELIVERED, INSTALLED, COMPLETED,
     ]
 
 

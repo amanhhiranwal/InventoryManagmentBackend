@@ -156,12 +156,34 @@ def get_quotation(
     return QuotationController.get_by_id(quotation_id, db, current_user)
 
 
+def _check_fields(request) -> None:
+    """The same shapes the form checks, for anything that skips the form."""
+
+    from app.core.field_checks import check_email, check_mobile, check_pin_for
+
+    check_mobile(request.mobile_number)
+    check_email(request.email)
+
+    for label, address in (
+        ("Billing", request.billing_address),
+        ("Shipping", request.shipping_address),
+    ):
+        if isinstance(address, dict):
+            check_pin_for(
+                address.get("country"),
+                address.get("zip_code") or address.get("pin"),
+                field=f"{label} PIN code",
+            )
+
+
 @router.post("/")
 def create_quotation(
     request: CreateQuotationRequest,
     db: Session = Depends(get_db),
     current_user=Depends(require_permission("quotation.write")),
 ):
+    _check_fields(request)
+
     return QuotationController.create(request, current_user, db)
 
 
@@ -204,6 +226,8 @@ def update_quotation(
     db: Session = Depends(get_db),
     current_user=Depends(require_permission("quotation.write")),
 ):
+    _check_fields(request)
+
     return QuotationController.update(quotation_id, request, current_user, db)
 
 

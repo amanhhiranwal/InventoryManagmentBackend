@@ -90,7 +90,8 @@ def download_order_pdf(
     current_user=Depends(get_current_user),
 ):
     """The sales order as a PDF - for the raiser's AVP, the CEO, the
-    Founder and Accounts (and a super admin). Everyone else is refused."""
+    Founder, Accounts and the business coordinator (and a super admin).
+    Everyone else is refused."""
 
     from fastapi import HTTPException
     from fastapi.responses import Response
@@ -103,7 +104,10 @@ def download_order_pdf(
     if not can_download(order, current_user, db):
         raise HTTPException(
             status_code=403,
-            detail="Only the AVP, the CEO, the Founder and Accounts can download a sales order.",
+            detail=(
+                "Only the AVP, the CEO, the Founder, Accounts and the business "
+                "coordinator can download a sales order."
+            ),
         )
 
     filename = SalesOrderPDFService.filename(order)

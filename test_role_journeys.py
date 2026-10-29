@@ -40,6 +40,7 @@ from seed_sales_team import (
     ADMIN_PASSWORD,
     TEAM_PASSWORD,
     api,
+    coordinate_order,
     email_for,
     login,
     rows,
@@ -48,6 +49,8 @@ from seed_sales_team import (
 
 ACCOUNTS_EMAIL = "accounts@mailinator.com"
 INVENTORY_EMAIL = "inventory@mailinator.com"
+PRODUCTION_EMAIL = "production@mailinator.com"
+LOGISTICS_EMAIL = "logistics@mailinator.com"
 
 TAG = uuid.uuid4().hex[:6]
 
@@ -77,11 +80,12 @@ SIDEBARS = {
     "admin": [
         ("Dashboard", []),
         ("Sales", ["Leads", "Opportunity", "Proposal", "Sales Order"]),
+        ("Business Coordinator", ["Sales Order"]),
         ("Users", []),
-        ("Inventory", []),
+        ("Technology", ["Production"]),
+        ("SCM", ["Inventory", "Logistics"]),
         ("Customers", []),
         ("Accounts", ["Accounts Desk"]),
-        ("Procurement", ["Procurement Desk"]),
         ("Reports", []),
         ("Masters", [
             "Companies", "Locations", "Customer Type", "Product Type",
@@ -103,7 +107,6 @@ SIDEBARS = {
         ("Dashboard", []),
         ("Sales", ["Leads", "Opportunity", "Proposal", "Sales Order"]),
         ("Users", []),
-        ("Inventory", []),
         ("Customers", []),
         ("Reports", []),
         ("Masters", ["Reporting Chart"]),
@@ -115,7 +118,6 @@ SIDEBARS = {
         ("Dashboard", []),
         ("Sales", ["Leads", "Opportunity", "Proposal", "Sales Order"]),
         ("Users", []),
-        ("Inventory", []),
         ("Customers", []),
         ("Reports", []),
         ("Masters", [
@@ -130,9 +132,18 @@ SIDEBARS = {
     "accounts": [
         ("Accounts", ["Accounts Desk"]),
     ],
+    # The warehouse keeps the catalogue and works no desk.
     "inventory": [
-        ("Inventory", []),
-        ("Procurement", ["Procurement Desk"]),
+        ("SCM", ["Inventory"]),
+    ],
+    "production": [
+        ("Technology", ["Production"]),
+    ],
+    "coordinator": [
+        ("Business Coordinator", ["Sales Order"]),
+    ],
+    "logistics": [
+        ("SCM", ["Logistics"]),
     ],
 }
 
@@ -148,6 +159,9 @@ WHO = [
     ("am_south_1", email_for("am_south_1"), TEAM_PASSWORD, "sales"),
     ("accounts", ACCOUNTS_EMAIL, TEAM_PASSWORD, "accounts"),
     ("inventory", INVENTORY_EMAIL, TEAM_PASSWORD, "inventory"),
+    ("production", PRODUCTION_EMAIL, TEAM_PASSWORD, "production"),
+    ("coordinator", "coordinator@mailinator.com", TEAM_PASSWORD, "coordinator"),
+    ("logistics", LOGISTICS_EMAIL, TEAM_PASSWORD, "logistics"),
 ]
 
 token = {}
@@ -235,20 +249,25 @@ try:
     admin = token["admin"]
     owner = token["am_north_1"]
 
-    # An accounts person must not be able to open the warehouse's desk, and
-    # the warehouse must not be able to open accounts'.
+    # Each desk opens its own and nobody else's. The warehouse keeps the
+    # catalogue and opens none of them.
     check(
-        "accounts are refused the procurement desk",
-        api("get", "/fulfilment/procurement", token["accounts"]).status_code == 403,
+        "accounts are refused the production desk",
+        api("get", "/fulfilment/production", token["accounts"]).status_code == 403,
     )
     check(
-        "the warehouse is refused the accounts desk",
-        api("get", "/fulfilment/accounts", token["inventory"]).status_code == 403,
+        "the warehouse is refused every desk",
+        all(
+            api("get", f"/fulfilment/{desk}", token["inventory"]).status_code == 403
+            for desk in ("accounts", "production", "logistics")
+        ),
     )
     check(
-        "a salesperson is refused both desks",
-        api("get", "/fulfilment/accounts", owner).status_code == 403
-        and api("get", "/fulfilment/procurement", owner).status_code == 403,
+        "a salesperson is refused every desk",
+        all(
+            api("get", f"/fulfilment/{desk}", owner).status_code == 403
+            for desk in ("accounts", "production", "logistics")
+        ),
     )
 
     # ============================================ 2. the Area Manager
@@ -464,7 +483,22 @@ try:
     )
 
     # ============================================ 5. accounts
-    banner("5. Accounts verify the advance, and nobody else can")
+    banner("5. The coordinator processes it, then accounts verify, and nobody else can")
+
+    for key in ("am_north_1", "accounts", "production"):
+        r = api("post", f"/orders/{order['id']}/process", token[key])
+        check(f"{key} cannot process the order", r.status_code == 403, f"got {r.status_code} {r.text[:110]}")
+
+    r = api("put", f"/fulfilment/orders/{order['id']}/decide", token["coordinator"], json={
+        "approve": True,
+        "advance_amount": float(order_now().get("advance_received") or 0),
+        "remarks": "Advance matches the terms.",
+    })
+    check("the coordinator accepts the advance", r.status_code == 200, f"{r.status_code} {r.text[:160]}")
+
+    r = api("post", f"/orders/{order['id']}/process", token["coordinator"])
+    check("the coordinator processes the order", r.status_code == 200, f"{r.status_code} {r.text[:160]}")
+    check("it is with accounts", order_now()["status"] == "ORDER_PROCESSED", order_now()["status"])
 
     for key in ("am_north_1", "zh_north", "avp", "ceo", "inventory"):
         r = api("put", f"/orders/{order['id']}/status", token[key], json={"status": "PAYMENT_VERIFIED"})
@@ -494,18 +528,18 @@ try:
     check(
         "and it has left their desk",
         not any(
-            o["id"] == order["id"] and o["status"] == "CONFIRMED"
+            o["id"] == order["id"] and o["status"] == "ORDER_PROCESSED"
             for o in api("get", "/fulfilment/accounts", token["accounts"]).json()["data"]["orders"]
         ),
     )
 
     # ============================================ 6. the warehouse
-    banner("6. Inventory take it through, and nobody else can")
+    banner("6. Production and logistics take it through, and nobody else can")
 
-    queue = api("get", "/fulfilment/procurement", token["inventory"]).json()["data"]
+    queue = api("get", "/fulfilment/production", token["production"]).json()["data"]
     mine = next((o for o in queue["orders"] if o["id"] == order["id"]), None)
 
-    check("the order lands on the procurement desk", mine is not None)
+    check("the order lands on the production desk", mine is not None)
 
     lines = (mine or {}).get("stock") or []
     check("the desk reads the shelf for the order's line", len(lines) == 1, str(lines))
@@ -529,32 +563,48 @@ try:
     stock_before_run["SG-IFP-75-SPX-3576"] = shelf("SG-IFP-75-SPX-3576")
     opening = stock_before_run["SG-IFP-75-SPX-3576"]
 
-    for stage, label in (
-        ("PROCUREMENT", "taken into procurement"),
-        ("READY", "picked and ready"),
-        ("DISPATCHED", "sent out"),
-        ("DELIVERED", "delivered"),
+    # Ready and dispatched carry serials and documents, collected on the
+    # desks' own screens (test_order_journey walks those). A bulk record
+    # has no serial per unit, so the super admin stands in, and the shelf
+    # is counted down by quantity at ready.
+    token["admin"] = admin
+
+    for stage, label, desk in (
+        ("PROCUREMENT", "taken into procurement", "production"),
+        ("READY", "picked and ready", "admin"),
+        ("DISPATCHED", "sent out", "admin"),
+        ("OUT_FOR_DELIVERY", "out for delivery", "logistics"),
+        ("DELIVERED", "delivered", "logistics"),
     ):
-        # Whoever is not the warehouse is refused first.
+        # Whoever is not the desk holding it is refused first.
         r = api("put", f"/orders/{order['id']}/status", token["accounts"], json={"status": stage})
         check(f"accounts cannot mark it {stage}", r.status_code == 403, f"got {r.status_code}")
 
         r = api("put", f"/fulfilment/orders/{order['id']}/decide", token["inventory"], json={
             "approve": True, "remarks": f"{label.capitalize()}.",
         })
-        check(f"the warehouse marks it {stage} - {label}", r.status_code == 200, f"{r.status_code} {r.text[:160]}")
+        check(f"the warehouse cannot mark it {stage}", r.status_code == 403, f"got {r.status_code}")
+
+        r = (
+            api("put", f"/orders/{order['id']}/status", admin, json={"status": stage})
+            if desk == "admin"
+            else api("put", f"/fulfilment/orders/{order['id']}/decide", token[desk], json={
+                "approve": True, "remarks": f"{label.capitalize()}.",
+            })
+        )
+        check(f"{desk} marks it {stage} - {label}", r.status_code == 200, f"{r.status_code} {r.text[:160]}")
         check(f"the order is at {stage}", order_now()["status"] == stage, order_now()["status"])
 
-        if stage in ("PROCUREMENT", "READY"):
+        if stage == "PROCUREMENT":
             check(
                 f"the shelf is untouched at {stage}",
                 shelf("SG-IFP-75-SPX-3576") == opening,
                 f"{shelf('SG-SPX7-LANGO3576')} - should still be {opening}",
             )
 
-        if stage == "DISPATCHED":
+        if stage == "READY":
             check(
-                "dispatch takes the 5 off the shelf",
+                "ready takes the 5 off the shelf",
                 shelf("SG-IFP-75-SPX-3576") == opening - 5,
                 f"{shelf('SG-SPX7-LANGO3576')} - expected {opening - 5}",
             )
@@ -771,11 +821,13 @@ try:
         "amount_paid": round(float(short_invoice["grand_total"]) * 0.3, 2),
     })
 
+    coordinate_order(short_order["id"])
+
     api("put", f"/fulfilment/orders/{short_order['id']}/decide", token["accounts"], json={
         "approve": True, "remarks": "Paid up front.",
     })
 
-    board = api("get", "/fulfilment/procurement", token["inventory"]).json()["data"]
+    board = api("get", "/fulfilment/production", token["production"]).json()["data"]
     short = next((o for o in board["orders"] if o["id"] == short_order["id"]), None)
     lines = {
         str(line.get("sku") or "").upper(): line
@@ -806,10 +858,12 @@ try:
 
     # The warehouse can still send what it has - being short is a warning,
     # not a lock. What matters is that the shelf ends up telling the truth.
-    for _ in range(3):
-        api("put", f"/fulfilment/orders/{short_order['id']}/decide", token["inventory"], json={
-            "approve": True, "remarks": "Part shipment agreed with the customer.",
-        })
+    api("put", f"/fulfilment/orders/{short_order['id']}/decide", token["production"], json={
+        "approve": True, "remarks": "Part shipment agreed with the customer.",
+    })
+
+    for stage in ("READY", "DISPATCHED"):
+        api("put", f"/orders/{short_order['id']}/status", admin, json={"status": stage})
 
     check(
         "it is dispatched",

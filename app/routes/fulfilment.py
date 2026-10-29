@@ -1,6 +1,7 @@
 """The desks an order passes through after it has been approved.
 
-Two working screens - accounts and inventory - each showing only the
+Four working screens - business coordinator, accounts, production and
+logistics - each showing only the
 orders waiting on that desk, gated on the permission granted in Roles &
 Access. Where an order has got to is answered by the sales order's own
 Order Process panel, so there is no separate board here.
@@ -10,7 +11,12 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.core.fulfilment import ACCOUNTS, INVENTORY
+from app.core.fulfilment import (
+    ACCOUNTS,
+    BUSINESS_COORDINATOR,
+    LOGISTICS,
+    PRODUCTION,
+)
 from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.middleware.permission_middleware import require_permission
@@ -27,11 +33,45 @@ router = APIRouter(
 )
 
 
+class SerialPick(BaseModel):
+    line: int
+    serial: str
+
+
 class DecisionRequest(BaseModel):
-    """Approve the order onward, or reject it with the reason."""
+    """Approve the order onward, or reject it with the reason.
+
+    ``advance_amount`` is the coordinator's figure when accepting the
+    advance; ``serials`` are production's units when marking it ready.
+    """
 
     approve: bool
     remarks: str | None = None
+    advance_amount: float | None = None
+    serials: list[SerialPick] | None = None
+
+
+class DocumentRequest(BaseModel):
+    """A file already uploaded to /attachments, and which document it is."""
+
+    kind: str
+    key: str
+    name: str | None = None
+    size: int | None = None
+    type: str | None = None
+
+
+@router.get("/coordination")
+def coordination_desk(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_permission("coordination_desk.read")),
+):
+    """Approved orders: advances to check, and orders to process."""
+
+    return {
+        "success": True,
+        "data": FulfilmentDeskService.queue(BUSINESS_COORDINATOR, current_user, db),
+    }
 
 
 @router.get("/accounts")
@@ -47,17 +87,77 @@ def accounts_desk(
     }
 
 
-@router.get("/procurement")
-def procurement_desk(
+@router.get("/production")
+@router.get("/procurement", include_in_schema=False)
+def production_desk(
     db: Session = Depends(get_db),
-    current_user=Depends(require_permission("procurement_desk.read")),
+    current_user=Depends(require_permission("production_desk.read")),
 ):
-    """Orders waiting on inventory, each with what the shelf can cover."""
+    """Orders waiting on production, each with what the shelf can cover.
+
+    Was the procurement desk. The old path still answers, so a link in an
+    email sent before the rename does not break.
+    """
 
     return {
         "success": True,
-        "data": FulfilmentDeskService.queue(INVENTORY, current_user, db),
+        "data": FulfilmentDeskService.queue(PRODUCTION, current_user, db),
     }
+
+
+@router.get("/logistics")
+def logistics_desk(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_permission("logistics_desk.read")),
+):
+    """Orders ready to go out, and orders on their way to the client."""
+
+    return {
+        "success": True,
+        "data": FulfilmentDeskService.queue(LOGISTICS, current_user, db),
+    }
+
+
+@router.get("/serials/check")
+def check_serial(
+    serial: str,
+    order_id: int | None = None,
+    line: int | None = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_permission("production_desk.read")),
+):
+    """Whether a serial is on the shelf, checked as production type it."""
+
+    from app.services.sales_order_service import SalesOrderService
+    from app.services.stock_movement_service import check_serial as check
+
+    order_line = None
+
+    if order_id is not None and line is not None:
+        items = SalesOrderService.get_by_id(order_id, db).items or []
+        order_line = items[line] if 0 <= line < len(items) else None
+
+    return {"success": True, "data": check(serial, order_line)}
+
+
+@router.put("/orders/{order_id}/documents")
+def attach_document(
+    order_id: int,
+    request: DocumentRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Put the invoice copy, insurance copy or docket slip on an order."""
+
+    order = FulfilmentDeskService.attach_document(
+        order_id,
+        request.kind,
+        request.model_dump(),
+        current_user,
+        db,
+    )
+
+    return {"success": True, "data": serialize_sales_order(order)}
 
 
 @router.get("/orders/{order_id}")
@@ -106,6 +206,8 @@ def decide(
         request.remarks,
         current_user,
         db,
+        advance_amount=request.advance_amount,
+        serials=[pick.model_dump() for pick in request.serials or []],
     )
 
     return {"success": True, "data": serialize_sales_order(order)}

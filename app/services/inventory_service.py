@@ -313,6 +313,10 @@ class InventoryService:
             CompanyScopeService.mongo_filter(current_user or {}, db, company_id)
         )
 
+        # A unit issued to an order has left the shelf. Its record stays,
+        # for the outgoing trail and in case the order is put back.
+        query["issued"] = {"$ne": True}
+
         if search:
             # Escaped: a serial number with a dot or a bracket in it is a
             # serial number, not a pattern.

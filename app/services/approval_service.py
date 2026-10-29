@@ -154,9 +154,16 @@ class ApprovalService:
         whose only approvals are withdrawn has no standing approval at
         all, which is the whole point of withdrawing them: it needs
         sending for approval again.
+
+        A rejection is the same. It sends the order back to draft, so it is
+        where the order stands only while the order is still a draft. An
+        order resent and confirmed outright - a discount inside the
+        sender's own authority needs nobody - has no standing approval,
+        and its old rejection was being shown as "Not Approved" over an
+        order that read Approved.
         """
 
-        return (
+        approval = (
             db.query(SalesApproval)
             .filter(
                 SalesApproval.document_type == document_type,
@@ -166,6 +173,21 @@ class ApprovalService:
             .order_by(SalesApproval.id.desc())
             .first()
         )
+
+        if (
+            approval is not None
+            and approval.status == ApprovalStatus.REJECTED
+            and document_type == ApprovalDocument.SALES_ORDER
+        ):
+            from app.core.workflow_status import SalesOrderStatus
+            from app.models.sales_order import SalesOrder
+
+            order = db.query(SalesOrder).filter(SalesOrder.id == document_id).first()
+
+            if order is not None and order.status != SalesOrderStatus.DRAFT:
+                return None
+
+        return approval
 
     @staticmethod
     def _price_type_for_document(
@@ -281,6 +303,15 @@ class ApprovalService:
 
         if document_type not in ApprovalDocument.ALL:
             raise HTTPException(status_code=400, detail="Unknown document type.")
+
+        if document_type == ApprovalDocument.SALES_ORDER:
+            from app.models.sales_order import SalesOrder
+            from app.services.sales_order_service import assert_ready_to_send
+
+            order = db.query(SalesOrder).filter(SalesOrder.id == document_id).first()
+
+            if order is not None:
+                assert_ready_to_send(order)
 
         # Which price list this is written against follows from who is
         # buying, so it is read off the document rather than taken from

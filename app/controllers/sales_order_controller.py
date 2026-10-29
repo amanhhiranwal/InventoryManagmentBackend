@@ -84,8 +84,8 @@ class SalesOrderController:
         return {
             "success": True,
             "message": (
-                f"Accounts have been told. {order.order_number or order.id} "
-                "is with them for the advance."
+                f"{order.order_number or order.id} is processed and with "
+                "accounts to verify the payment."
             ),
             "data": serialize_sales_order(order),
         }

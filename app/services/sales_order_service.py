@@ -31,10 +31,13 @@ SALES_ORDER_STATUS_ACTIONS: dict[str, str] = {
     SalesOrderStatus.DRAFT: "Sales Order Created",
     SalesOrderStatus.PENDING_APPROVAL: "Sent For Approval",
     SalesOrderStatus.CONFIRMED: "Order Approved",
+    SalesOrderStatus.ADVANCE_ACCEPTED: "Advance Accepted",
+    SalesOrderStatus.ORDER_PROCESSED: "Order Processed",
     SalesOrderStatus.PAYMENT_VERIFIED: "Payment Verified",
-    SalesOrderStatus.PROCUREMENT: "With Inventory / Procurement",
+    SalesOrderStatus.PROCUREMENT: "In Production",
     SalesOrderStatus.READY: "Ready To Dispatch",
     SalesOrderStatus.DISPATCHED: "Order Dispatched",
+    SalesOrderStatus.OUT_FOR_DELIVERY: "Out For Delivery",
     SalesOrderStatus.DELIVERED: "Order Delivered",
     SalesOrderStatus.INSTALLED: "Installation Completed",
     SalesOrderStatus.ON_HOLD: "Order Put On Hold",
@@ -42,6 +45,93 @@ SALES_ORDER_STATUS_ACTIONS: dict[str, str] = {
     SalesOrderStatus.COMPLETED: "Order Completed",
     SalesOrderStatus.CANCELLED: "Order Cancelled",
 }
+
+
+def check_order_details(
+    customer_information: dict | None,
+    billing_address: dict | None,
+    shipping_address: dict | None,
+) -> None:
+    """Refuse an order whose numbers are the wrong shape.
+
+    The same rules the form checks as it is typed (app/core/field_checks),
+    so nothing that skips the form - an import, a script, an old screen -
+    can store a nine-character PAN or a five-digit PIN. Only what was
+    typed is checked: an empty field is a draft's business. An
+    unregistered customer has no GST or PAN to check. A PIN is held to six
+    digits only in India.
+    """
+
+    from app.core.field_checks import check_email, check_gstin, check_mobile, check_pan, check_pin
+
+    info = customer_information or {}
+
+    if str(info.get("registration") or "").strip() != "Unregistered":
+        check_gstin(info.get("gst"), field="GST")
+        check_pan(info.get("pan"))
+
+    contact = info.get("primary_contact") or {}
+
+    if isinstance(contact, dict):
+        check_mobile(contact.get("phone"), field="Phone")
+        check_email(contact.get("email"), field="Email")
+
+    for label, address in (("Billing", billing_address), ("Shipping", shipping_address)):
+        if not isinstance(address, dict):
+            continue
+
+        country = str(address.get("country") or "").strip().lower()
+
+        if country in ("", "india"):
+            check_pin(address.get("pin") or address.get("zip_code"), field=f"{label} PIN code")
+
+
+def assert_ready_to_send(order: SalesOrder) -> None:
+    """What an order must carry before it leaves draft.
+
+    A registered organisation has a PAN, and an order committing the
+    business to one is not sent up or confirmed without it. A draft may
+    still be saved without; it is work in progress.
+    """
+
+    info = order.customer_information or {}
+
+    if (
+        str(info.get("registration") or "").strip() == "Registered"
+        and not str(info.get("pan") or "").strip()
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="PAN is required for a registered organisation.",
+        )
+
+
+#: What the business coordinator does not see: orders the business has
+#: not committed to yet, and ones cancelled before they were.
+NOT_FOR_COORDINATOR = (
+    SalesOrderStatus.DRAFT,
+    SalesOrderStatus.PENDING_APPROVAL,
+    SalesOrderStatus.CANCELLED,
+)
+
+
+def coordinates_orders(current_user: dict, db: Session) -> bool:
+    """Whether this reader is the business coordinator.
+
+    The coordinator follows every approved order across the business -
+    they check its advance and process it, then keep track of it to
+    delivery - so they read outside the sales reporting line. Reading
+    only: nothing here lets them change an order.
+    """
+
+    from app.core.fulfilment import BUSINESS_COORDINATOR
+
+    if current_user.get("is_super_admin"):
+        return False
+
+    user = db.query(User).filter(User.id == current_user.get("user_id")).first()
+
+    return holds_desk(user, BUSINESS_COORDINATOR)
 
 
 def _staffs_the_desk(order: SalesOrder, current_user: dict, db: Session) -> bool:
@@ -55,6 +145,17 @@ def _staffs_the_desk(order: SalesOrder, current_user: dict, db: Session) -> bool
     user = db.query(User).filter(User.id == current_user.get("user_id")).first()
 
     return holds_desk(user, desk.role)
+
+
+#: Stages a desk can only move on from its own screen, because the move
+#: carries something that has to be checked: the coordinator's advance and
+#: Process Order, production's serials, logistics' dispatch documents.
+DESK_ONLY_STAGES = {
+    SalesOrderStatus.CONFIRMED,
+    SalesOrderStatus.ADVANCE_ACCEPTED,
+    SalesOrderStatus.PROCUREMENT,
+    SalesOrderStatus.READY,
+}
 
 
 def assert_desk_allows(
@@ -86,6 +187,18 @@ def assert_desk_allows(
     user = db.query(User).filter(User.id == current_user.get("user_id")).first()
 
     if holds_desk(user, desk.role):
+        if order.status in DESK_ONLY_STAGES:
+            # These stages ask for something with the move - the advance,
+            # the serials, the dispatch documents - which only the desk's
+            # own screen collects and checks.
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Move order {order.order_number or order.id} on from the "
+                    f"{desk.role} desk. {desk.asks}"
+                ),
+            )
+
         return
 
     raise HTTPException(
@@ -549,9 +662,15 @@ class SalesOrderService:
     ):
         """The orders this person may see, narrowed by a search."""
 
-        query = SalesOrderRepository.visible_query(
-            db, get_visible_creator_user_ids(current_user, db)
-        )
+        if coordinates_orders(current_user, db):
+            # Every approved order in the business, whoever raised it.
+            query = SalesOrderRepository.visible_query(db, []).filter(
+                SalesOrder.status.notin_(NOT_FOR_COORDINATOR)
+            )
+        else:
+            query = SalesOrderRepository.visible_query(
+                db, get_visible_creator_user_ids(current_user, db)
+            )
 
         clause = search_clause(
             search,
@@ -677,6 +796,12 @@ class SalesOrderService:
         ):
             return
 
+        # The coordinator tracks every approved order to delivery.
+        if order.status not in NOT_FOR_COORDINATOR and coordinates_orders(
+            current_user, db
+        ):
+            return
+
         SalesOrderService.assert_can_edit(order, current_user, db)
 
     @staticmethod
@@ -737,29 +862,51 @@ class SalesOrderService:
     # ------------------------------------------------------------------
     @staticmethod
     def send_to_desks(order_id: int, current_user: dict, db: Session) -> SalesOrder:
-        """Tell accounts an approved order is theirs to collect against.
+        """Process an approved order on to accounts.
 
-        Deliberately changes nothing. The order is already approved and
-        already invoiced; what was missing is that nobody downstream knew.
-        Accounts verify the payment as they always have, and the order
-        moves on from there.
+        The business coordinator's button, and nobody else's: they check
+        the advance against the payment terms first, and only once they
+        have accepted it can the order be processed. Processing moves it to
+        accounts, who verify the payment as they always have, and tells
+        them it is there.
         """
 
+        from app.core.fulfilment import is_coordinator
         from app.models.proforma_invoice import ProformaInvoice
+        from app.models.user import User
+        from app.services.fulfilment_desk_service import FulfilmentDeskService
         from app.services.fulfilment_notice import announce_processing
 
         order = SalesOrderService.get_by_id(order_id, db)
 
-        SalesOrderService.assert_can_edit(order, current_user, db)
+        user = db.query(User).filter(User.id == current_user.get("user_id")).first()
 
-        if not _confirmed_onwards(order.status):
+        # The coordinator's button, and the super admin's, who stands in.
+        if not current_user.get("is_super_admin") and not is_coordinator(user):
+            raise HTTPException(
+                status_code=403,
+                detail="Only the business coordinator can process an order.",
+            )
+
+        if order.status == SalesOrderStatus.CONFIRMED:
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    f"{order.order_number or order.id} has not been approved "
-                    "yet. It can be processed once the chain has cleared it."
+                    f"{order.order_number or order.id} is waiting on its advance. "
+                    "Record and accept the advance before processing it."
                 ),
             )
+
+        if order.status != SalesOrderStatus.ADVANCE_ACCEPTED:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{order.order_number or order.id} cannot be processed from "
+                    f"{order.status.replace('_', ' ').title()}."
+                ),
+            )
+
+        order = FulfilmentDeskService.decide(order.id, True, None, current_user, db)
 
         invoice = (
             db.query(ProformaInvoice)
@@ -768,35 +915,21 @@ class SalesOrderService:
             .first()
         )
 
-        if invoice is None:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "Generate the proforma invoice first - it is what "
-                    "accounts collect the advance against."
-                ),
-            )
-
-        name = f"{current_user.get('first_name', '')} {current_user.get('last_name', '')}".strip()
-
-        announce_processing(order, invoice, db, name or None)
-
-        SalesOrderService.record_activity(
-            db,
-            order,
-            action="Sent For Processing",
-            description=(
-                "Accounts told to collect the advance against "
-                f"{invoice.pi_number or invoice.id}."
-            ),
-            user_id=current_user.get("user_id"),
-        )
+        if invoice is not None:
+            name = f"{current_user.get('first_name', '')} {current_user.get('last_name', '')}".strip()
+            announce_processing(order, invoice, db, name or None)
 
         return order
 
     @staticmethod
     def create(request, current_user: dict, db: Session) -> SalesOrder:
         SalesOrderService._validate_opportunity(request.opportunity_id, db)
+
+        check_order_details(
+            request.customer_information,
+            request.billing_address,
+            request.shipping_address,
+        )
 
         opportunity_id = request.opportunity_id or _opportunity_from_quotation(
             request.quotation_id,
@@ -919,6 +1052,12 @@ class SalesOrderService:
         order = SalesOrderService.get_by_id(order_id, db)
 
         SalesOrderService.assert_can_edit(order, current_user, db)
+
+        check_order_details(
+            getattr(request, "customer_information", None),
+            getattr(request, "billing_address", None),
+            getattr(request, "shipping_address", None),
+        )
 
         if getattr(request, "opportunity_id", None) is not None:
             SalesOrderService._validate_opportunity(request.opportunity_id, db)
@@ -1398,6 +1537,12 @@ class SalesOrderService:
         assert_desk_allows(order, target, current_user, db)
 
         SalesOrderService._assert_discount_signed_off(order, target, db)
+
+        if previous_status == SalesOrderStatus.DRAFT and target in (
+            SalesOrderStatus.PENDING_APPROVAL,
+            SalesOrderStatus.CONFIRMED,
+        ):
+            assert_ready_to_send(order)
 
         order.status = target
 
