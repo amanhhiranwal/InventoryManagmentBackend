@@ -20,8 +20,22 @@ from dataclasses import dataclass
 
 from app.core.workflow_status import SalesOrderStatus
 
-#: The two desks an order passes through, as roles in Roles & Access.
+#: The desks an order passes through, as roles in Roles & Access.
+#: Takes an approved order first: records the advance against the payment
+#: terms, accepts it or holds the order, and is the only role that can
+#: process it on to accounts.
+BUSINESS_COORDINATOR = "Business Coordinator"
 ACCOUNTS = "Accounts"
+#: Confirms the stock and takes the order through procurement until it is
+#: ready. This was the Inventory role's desk; the warehouse now keeps the
+#: catalogue only, and the desk sits under Technology.
+PRODUCTION = "Production Tech Head"
+#: Sends a ready order out and confirms it reached the client - the half
+#: of the old procurement desk that is about moving goods, not finding them.
+LOGISTICS = "Logistics"
+
+#: The catalogue role. Not a desk any more, kept for anything still
+#: asking for the name.
 INVENTORY = "Inventory"
 
 
@@ -44,6 +58,25 @@ class Desk:
 #: status the order is sitting at -> the desk waiting on it.
 DESKS: dict[str, Desk] = {
     SalesOrderStatus.CONFIRMED: Desk(
+        role=BUSINESS_COORDINATOR,
+        asks=(
+            "Record the advance received and check it against the payment "
+            "terms. Accept it, or hold the order with the reason."
+        ),
+        approves_to=SalesOrderStatus.ADVANCE_ACCEPTED,
+        approval_action="Advance Accepted",
+        queue_label="Awaiting Advance Check",
+    ),
+    SalesOrderStatus.ADVANCE_ACCEPTED: Desk(
+        role=BUSINESS_COORDINATOR,
+        asks="The advance is accepted. Process the order to send it to accounts.",
+        approves_to=SalesOrderStatus.ORDER_PROCESSED,
+        approval_action="Order Processed",
+        queue_label="Ready To Process",
+    ),
+    # Accounts verify exactly as they did when this was the CONFIRMED
+    # stage; the order simply reaches them through the coordinator now.
+    SalesOrderStatus.ORDER_PROCESSED: Desk(
         role=ACCOUNTS,
         asks="Confirm the advance has been received against the proforma invoice.",
         approves_to=SalesOrderStatus.PAYMENT_VERIFIED,
@@ -51,29 +84,42 @@ DESKS: dict[str, Desk] = {
         queue_label="Awaiting Payment",
     ),
     SalesOrderStatus.PAYMENT_VERIFIED: Desk(
-        role=INVENTORY,
-        asks="Confirm the stock is available and take the order into procurement.",
+        role=PRODUCTION,
+        asks="Confirm the stock is available and start production.",
         approves_to=SalesOrderStatus.PROCUREMENT,
-        approval_action="With Inventory / Procurement",
+        approval_action="In Production",
         queue_label="Awaiting Stock",
     ),
     SalesOrderStatus.PROCUREMENT: Desk(
-        role=INVENTORY,
-        asks="Confirm the stock is in hand and the order is ready to deliver.",
+        role=PRODUCTION,
+        asks=(
+            "Enter the serial number of every unit going out. Each one is "
+            "checked against stock and issued when the order is marked ready."
+        ),
         approves_to=SalesOrderStatus.READY,
         approval_action="Ready To Dispatch",
-        queue_label="In Procurement",
+        queue_label="In Production",
     ),
     SalesOrderStatus.READY: Desk(
-        role=INVENTORY,
-        asks="Send the order out.",
+        role=LOGISTICS,
+        asks=(
+            "Upload the invoice copy, the insurance copy and the docket slip, "
+            "then mark the order dispatched."
+        ),
         approves_to=SalesOrderStatus.DISPATCHED,
         approval_action="Order Dispatched",
         queue_label="Ready To Dispatch",
     ),
     SalesOrderStatus.DISPATCHED: Desk(
-        role=INVENTORY,
-        asks="Confirm the order has reached the client.",
+        role=LOGISTICS,
+        asks="Mark the order out for delivery once the courier has it on the last leg.",
+        approves_to=SalesOrderStatus.OUT_FOR_DELIVERY,
+        approval_action="Out For Delivery",
+        queue_label="Dispatched",
+    ),
+    SalesOrderStatus.OUT_FOR_DELIVERY: Desk(
+        role=LOGISTICS,
+        asks="Mark the order delivered once it has reached the client.",
         approves_to=SalesOrderStatus.DELIVERED,
         approval_action="Order Delivered",
         queue_label="Out For Delivery",
@@ -92,14 +138,21 @@ DESKS: dict[str, Desk] = {
 #: keep working exactly as they do.
 SALES_OWNED = {SalesOrderStatus.DELIVERED}
 
+#: Every role that staffs a desk.
+DESK_ROLES = (BUSINESS_COORDINATOR, ACCOUNTS, PRODUCTION, LOGISTICS)
+
+#: The documents logistics must upload before an order can be dispatched:
+#: kind stored on the attachment -> what a person calls it.
+DISPATCH_DOCUMENTS: dict[str, str] = {
+    "invoice_copy": "Invoice Copy",
+    "insurance_copy": "Insurance Copy",
+    "docket_slip": "Docket Slip",
+}
+
 #: Which desk each screen shows.
 DESK_STAGES: dict[str, list[str]] = {
-    ACCOUNTS: [
-        stage for stage, desk in DESKS.items() if desk.role == ACCOUNTS
-    ],
-    INVENTORY: [
-        stage for stage, desk in DESKS.items() if desk.role == INVENTORY
-    ],
+    role: [stage for stage, desk in DESKS.items() if desk.role == role]
+    for role in DESK_ROLES
 }
 
 
@@ -138,6 +191,12 @@ def role_names(user) -> set[str]:
             names.add(str(name))
 
     return names
+
+
+def is_coordinator(user) -> bool:
+    """Whether this user holds the Business Coordinator role itself."""
+
+    return BUSINESS_COORDINATOR in role_names(user)
 
 
 def holds_desk(user, role: str, *, is_super_admin: bool = False) -> bool:

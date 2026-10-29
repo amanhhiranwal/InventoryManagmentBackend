@@ -47,7 +47,10 @@ SALES_FLOOR = [
     "quotation.read", "quotation.write",
     "order.read", "order.write",
     "customer.read",
-    "inventory.menu", "inventory.read", "inventory.create",
+    # No inventory.*: the Inventory page under SCM is the Inventory role's.
+    # Proposals still read the catalogue - sales.menu stands in for
+    # inventory.read on those lookups - and a super admin can tick the
+    # page back on for anyone in Roles & Access.
     "user.read",
     "reports.read",
 ]

@@ -1,8 +1,9 @@
-"""The accounts and procurement desks, and who may do what at them.
+"""The accounts, production and logistics desks, and who may do what at them.
 
 An approved order stops being the salesperson's to push. It goes to
-accounts, who confirm the money; then to inventory, who confirm the stock
-and send it out; and everyone above them watches the tracking board. This
+accounts, who confirm the money; then to production, who confirm the stock
+and get it ready; then to logistics, who send it out; and everyone above
+them watches the tracking board. This
 checks all of that, including the parts that should be refused:
 
   * a desk sees only its own queue, and is refused the other one;
@@ -26,6 +27,7 @@ from datetime import datetime, timezone
 from seed_sales_team import (
     TEAM_PASSWORD,
     api,
+    coordinate_order,
     email_for,
     login,
     rows,
@@ -35,8 +37,13 @@ from seed_sales_team import (
 ADMIN = ("superadmin@mailinator.com", "password123")
 ACCOUNTS = "accounts@mailinator.com"
 INVENTORY = "inventory@mailinator.com"
+PRODUCTION = "production@mailinator.com"
+LOGISTICS = "logistics@mailinator.com"
 
 TAG = uuid.uuid4().hex[:6]
+#: Units of our own, so production have real serials to issue when the
+#: order is marked ready.
+UNITS = [f"DESK-{TAG.upper()}-{n}" for n in (1, 2)]
 
 passed, failed = [], []
 section = ""
@@ -60,6 +67,7 @@ def banner(title):
 token = {}
 created_orders = []
 created_invoices = []
+created_keys: list[str] = []
 #: serial -> what was on the shelf before this suite touched it. Dispatching
 #: an order really does take stock off, so the run has to put it back.
 stock_before_run: dict[str, float] = {}
@@ -72,8 +80,10 @@ try:
 
     token["accounts"] = login(ACCOUNTS, TEAM_PASSWORD)
     token["inventory"] = login(INVENTORY, TEAM_PASSWORD)
+    token["production"] = login(PRODUCTION, TEAM_PASSWORD)
+    token["logistics"] = login(LOGISTICS, TEAM_PASSWORD)
 
-    print("Signed in as the super admin, the sales team and both desks.")
+    print("Signed in as the super admin, the sales team, the desks and the catalogue.")
 
     owner = token["am_north_1"]
     now = datetime.now(timezone.utc)
@@ -119,6 +129,9 @@ try:
 
         if invoiced:
             invoice_order(order)
+            # The business coordinator accepts the advance and processes
+            # it before accounts see it; this suite starts at accounts.
+            coordinate_order(order["id"])
 
         return order
 
@@ -151,6 +164,18 @@ try:
         return api("get", f"/orders/{order_id}", admin).json()["data"]["status"]
 
     # ============================================= who may open which desk
+    for serial in UNITS:
+        api("post", "/inventory/items", admin, json={
+            "name": f"Desk Panel {TAG}",
+            "serial_number": serial,
+            "product_type_code": "DISPLAY",
+            "category": "Interactive Panels",
+            "attributes": {
+                "rate": 185000, "unit": "Nos", "instock": 1, "case_size": 1,
+                "model_number": "SG-IFP-75-SPX-3576", "specification": "Test unit",
+            },
+        })
+
     banner("1. Each desk is its own")
 
     check(
@@ -158,30 +183,56 @@ try:
         api("get", "/fulfilment/accounts", token["accounts"]).status_code == 200,
     )
     check(
-        "inventory open the procurement desk",
-        api("get", "/fulfilment/procurement", token["inventory"]).status_code == 200,
+        "production open the production desk",
+        api("get", "/fulfilment/production", token["production"]).status_code == 200,
     )
     check(
-        "accounts are refused the procurement desk",
-        api("get", "/fulfilment/procurement", token["accounts"]).status_code == 403,
+        "and the old procurement path still answers them",
+        api("get", "/fulfilment/procurement", token["production"]).status_code == 200,
     )
     check(
-        "inventory are refused the accounts desk",
-        api("get", "/fulfilment/accounts", token["inventory"]).status_code == 403,
+        "logistics open the logistics desk",
+        api("get", "/fulfilment/logistics", token["logistics"]).status_code == 200,
     )
     check(
-        "an Area Manager is refused both",
-        api("get", "/fulfilment/accounts", token["am_north_1"]).status_code == 403
-        and api("get", "/fulfilment/procurement", token["am_north_1"]).status_code == 403,
+        "production and logistics are refused each other's desk",
+        api("get", "/fulfilment/logistics", token["production"]).status_code == 403
+        and api("get", "/fulfilment/production", token["logistics"]).status_code == 403,
+    )
+    check(
+        "accounts are refused the production desk",
+        api("get", "/fulfilment/production", token["accounts"]).status_code == 403,
+    )
+    check(
+        "inventory keep the catalogue and work no desk",
+        api("get", "/inventory/items", token["inventory"]).status_code == 200
+        and all(
+            api("get", f"/fulfilment/{desk}", token["inventory"]).status_code == 403
+            for desk in ("accounts", "production", "logistics")
+        ),
+    )
+    check(
+        "the catalogue is not production's or logistics'",
+        api("get", "/inventory/items", token["production"]).status_code == 403
+        and api("get", "/inventory/items", token["logistics"]).status_code == 403,
+    )
+    check(
+        "an Area Manager is refused every desk",
+        all(
+            api("get", f"/fulfilment/{desk}", token["am_north_1"]).status_code == 403
+            for desk in ("accounts", "production", "logistics")
+        ),
     )
     check(
         "the CEO is refused them too - it is not their job",
         api("get", "/fulfilment/accounts", token["ceo"]).status_code == 403,
     )
     check(
-        "a super admin stands in at either desk",
-        api("get", "/fulfilment/accounts", admin).status_code == 200
-        and api("get", "/fulfilment/procurement", admin).status_code == 200,
+        "a super admin stands in at any desk",
+        all(
+            api("get", f"/fulfilment/{desk}", admin).status_code == 200
+            for desk in ("accounts", "production", "logistics")
+        ),
     )
 
     # ================================================ the accounts queue
@@ -192,10 +243,24 @@ try:
     # verify money that was never recorded.
     order = raise_order("Desk Test", invoiced=False)
 
+    # An approved order goes to the business coordinator first. Put in
+    # front of accounts by the super admin, unpaid, so section 4 can check
+    # accounts still refuse money that was never recorded.
+    check(
+        "an approved order is not on the accounts desk yet",
+        order["id"] not in {
+            r["id"] for r in api("get", "/fulfilment/accounts", token["accounts"]).json()["data"]["orders"]
+        },
+    )
+
+    # The super admin, who stands in at any desk, puts it there.
+    for stage in ("ADVANCE_ACCEPTED", "ORDER_PROCESSED"):
+        api("put", f"/orders/{order['id']}/status", admin, json={"status": stage})
+
     queue = api("get", "/fulfilment/accounts", token["accounts"]).json()["data"]
     mine = [row for row in queue["orders"] if row["id"] == order["id"]]
 
-    check("a confirmed order lands on the accounts desk", len(mine) == 1)
+    check("a processed order lands on the accounts desk", len(mine) == 1)
 
     if mine:
         row = mine[0]
@@ -212,7 +277,7 @@ try:
         )
 
     kpis = {k["key"]: k["value"] for k in queue["kpis"]}
-    waiting = [r for r in queue["orders"] if r["status"] == "CONFIRMED"]
+    waiting = [r for r in queue["orders"] if r["status"] == "ORDER_PROCESSED"]
 
     check(
         "the Awaiting Verification figure matches the queue",
@@ -238,10 +303,10 @@ try:
         blocked.text[:120],
     )
 
-    blocked = api("put", f"/fulfilment/orders/{order['id']}/decide", token["inventory"], json={
+    blocked = api("put", f"/fulfilment/orders/{order['id']}/decide", token["production"], json={
         "approve": True,
     })
-    check("inventory cannot decide an accounts step", blocked.status_code == 403, f"got {blocked.status_code}")
+    check("production cannot decide an accounts step", blocked.status_code == 403, f"got {blocked.status_code}")
 
     empty = api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
         "approve": False, "remarks": "  ",
@@ -255,7 +320,7 @@ try:
     })
     check("the salesperson can still hold their own order", held.status_code == 200, f"{held.status_code} {held.text[:120]}")
 
-    api("put", f"/orders/{order['id']}/status", admin, json={"status": "CONFIRMED"})
+    api("put", f"/orders/{order['id']}/status", admin, json={"status": "ORDER_PROCESSED"})
 
     # ================================================== the decision
     banner("4. Accounts decide - and only on money that exists")
@@ -273,7 +338,11 @@ try:
         nothing.text[:140],
     )
 
+    # An invoice is raised before the coordinator's step, so the order is
+    # held while it is raised and put back in front of accounts after.
+    api("put", f"/orders/{order['id']}/status", admin, json={"status": "ON_HOLD", "remarks": "Raising the invoice."})
     invoice = invoice_order(order, paid=False)
+    api("put", f"/orders/{order['id']}/status", admin, json={"status": "ORDER_PROCESSED"})
 
     unpaid = api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
         "approve": True, "remarks": "Says he has paid.",
@@ -298,7 +367,7 @@ try:
     history = rows(api("get", f"/orders/{order['id']}/activities", admin))
     check(
         "the reason is on the record",
-        any("Advance received in full." == (e.get("description") or "") for e in history),
+        any("Advance received in full." in (e.get("description") or "") for e in history),
         str([e.get("description") for e in history][:3]),
     )
 
@@ -311,12 +380,12 @@ try:
     )
 
     # ============================================== the procurement queue
-    banner("5. Inventory pick it up")
+    banner("5. Production pick it up")
 
-    desk = api("get", "/fulfilment/procurement", token["inventory"]).json()["data"]
+    desk = api("get", "/fulfilment/production", token["production"]).json()["data"]
     mine = [row for row in desk["orders"] if row["id"] == order["id"]]
 
-    check("it arrives on the procurement desk", len(mine) == 1)
+    check("it arrives on the production desk", len(mine) == 1)
 
     if mine:
         stock = mine[0]["stock"]
@@ -326,14 +395,16 @@ try:
             line = stock[0]
             # Read the catalogue rather than hard-coding a figure: stock
             # moves now, so yesterday's number is not today's.
-            on_hand = next(
-                (
-                    float((i.get("attributes") or {}).get("instock") or 0)
-                    for i in rows(api("get", "/inventory/items", token["inventory"]))
-                    if str(i.get("serial_number") or "").upper() == "SG-IFP-75-SPX-3576"
-                ),
-                None,
-            )
+            # Every unit of the product, as the desk counts it: the line's
+            # SKU as a serial or a model number.
+            on_hand = sum(
+                float((i.get("attributes") or {}).get("instock") or 0)
+                for i in rows(api("get", "/inventory/items", token["inventory"], params={"grouped": False}))
+                if "SG-IFP-75-SPX-3576" in {
+                    str(i.get("serial_number") or "").upper(),
+                    str((i.get("attributes") or {}).get("model_number") or "").upper(),
+                }
+            ) or None
 
             check("the line is matched to a real item", line["known"] is True, str(line))
             check(
@@ -354,15 +425,17 @@ try:
     # catalogue was repriced, so a four-unit order was comfortably covered
     # and the assertion had quietly stopped testing the shortfall warning
     # at all. One more than there is, is short however the shelf moves.
-    SHORT_SKU = "SG-OPS-I5-12G"
+    # The suite's own product, so the shortfall does not depend on what
+    # the shared catalogue happens to hold.
+    SHORT_SKU = "SG-IFP-75-SPX-3576"
 
-    in_hand = next(
-        (
-            float((i.get("attributes") or {}).get("instock") or 0)
-            for i in rows(api("get", "/inventory/items", token["inventory"]))
-            if str(i.get("serial_number") or "").upper() == SHORT_SKU
-        ),
-        0.0,
+    in_hand = sum(
+        float((i.get("attributes") or {}).get("instock") or 0)
+        for i in rows(api("get", "/inventory/items", token["inventory"], params={"grouped": False}))
+        if SHORT_SKU in {
+            str(i.get("serial_number") or "").upper(),
+            str((i.get("attributes") or {}).get("model_number") or "").upper(),
+        }
     )
 
     short_order = raise_order("Short Order", sku=SHORT_SKU, qty=int(in_hand) + 1)
@@ -370,7 +443,7 @@ try:
         "approve": True, "remarks": "Paid.",
     })
 
-    desk = api("get", "/fulfilment/procurement", token["inventory"]).json()["data"]
+    desk = api("get", "/fulfilment/production", token["production"]).json()["data"]
     short_row = next((r for r in desk["orders"] if r["id"] == short_order["id"]), None)
 
     check("an order the shelf cannot cover is flagged", short_row and short_row["stock_short"] is True, str(short_row and short_row["stock"]))
@@ -381,12 +454,48 @@ try:
     # ============================================ walking it to the end
     banner("6. Out the door")
 
-    for expected in ("PROCUREMENT", "READY", "DISPATCHED", "DELIVERED"):
-        step = api("put", f"/fulfilment/orders/{order['id']}/decide", token["inventory"], json={
+    blocked = api("put", f"/fulfilment/orders/{order['id']}/decide", token["logistics"], json={
+        "approve": True,
+    })
+    check("logistics cannot take a production step", blocked.status_code == 403, f"got {blocked.status_code}")
+
+    for who, expected in (
+        ("production", "PROCUREMENT"),
+        ("production", "READY"),
+        ("logistics", "DISPATCHED"),
+        ("logistics", "OUT_FOR_DELIVERY"),
+        ("logistics", "DELIVERED"),
+    ):
+        if expected == "DISPATCHED":
+            blocked = api("put", f"/fulfilment/orders/{order['id']}/decide", token["production"], json={
+                "approve": True,
+            })
+            check("production cannot dispatch it", blocked.status_code == 403, f"got {blocked.status_code}")
+
+            landed = api("get", "/fulfilment/logistics", token["logistics"]).json()["data"]
+            check(
+                "a ready order lands on the logistics desk",
+                order["id"] in {r["id"] for r in landed["orders"]},
+            )
+
+        if expected == "DISPATCHED":
+            # Logistics cannot dispatch without the three documents.
+            uploaded = api(
+                "post", "/attachments", token["logistics"],
+                files={"file": (f"docket-{TAG}.pdf", b"%PDF-1.4\n%test\n", "application/pdf")},
+            ).json()["data"]
+            created_keys.append(uploaded["key"])
+
+            for kind in ("invoice_copy", "insurance_copy", "docket_slip"):
+                api("put", f"/fulfilment/orders/{order['id']}/documents", token["logistics"], json={"kind": kind, **uploaded})
+
+        step = api("put", f"/fulfilment/orders/{order['id']}/decide", token[who], json={
             "approve": True, "remarks": f"Moving to {expected.lower()}.",
+            # Production name a serial for every unit to mark it ready.
+            **({"serials": [{"line": 0, "serial": s} for s in UNITS]} if expected == "READY" else {}),
         })
         check(
-            f"inventory move it to {expected.lower()}",
+            f"{who} move it to {expected.lower()}",
             step.status_code == 200 and status_of(order["id"]) == expected,
             f"{step.status_code} {status_of(order['id'])}",
         )
@@ -518,6 +627,10 @@ finally:
                 {"order_id": {"$in": created_orders}}
             )
 
+        from app.services.inventory_service import InventoryService
+
+        InventoryService.items_col.delete_many({"serial_number": {"$in": UNITS}})
+
         session = SessionLocal()
 
         def run(sql, **params):
@@ -538,6 +651,9 @@ finally:
             run("delete from notifications where module = 'sales_order' and entity_id = any(:ids)", ids=created_orders)
             run("delete from sales_order_activity where sales_order_id = any(:ids)", ids=created_orders)
             run("delete from sales_order where id = any(:ids)", ids=created_orders)
+
+        if created_keys:
+            run("delete from sales_attachment where key = any(:keys)", keys=created_keys)
 
         session.commit()
 

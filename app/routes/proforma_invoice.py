@@ -101,8 +101,8 @@ def download_proforma_invoice_pdf(
 ):
     """The proforma invoice as a PDF, the same file the customer is sent.
 
-    For the fulfilment desks - Inventory takes the order through
-    procurement and dispatch and needs the invoice it was paid against,
+    For the fulfilment desks - production and logistics take the order
+    through procurement and dispatch and need the invoice it was paid against,
     without being able to open the sales order - and for everyone who can
     already open the invoice.
     """
@@ -110,7 +110,7 @@ def download_proforma_invoice_pdf(
     from fastapi import HTTPException
     from fastapi.responses import Response
 
-    from app.core.fulfilment import ACCOUNTS, INVENTORY
+    from app.core.fulfilment import DESK_ROLES
     from app.models.user import User
     from app.services.approval_service import _role_names
     from app.services.proforma_invoice_pdf_service import ProformaInvoicePDFService
@@ -118,7 +118,7 @@ def download_proforma_invoice_pdf(
     invoice = ProformaInvoiceService.get_by_id(invoice_id, db)
 
     user = db.query(User).filter(User.id == current_user.get("user_id")).first()
-    desk = user is not None and bool(_role_names(user) & {INVENTORY, ACCOUNTS})
+    desk = user is not None and bool(_role_names(user) & set(DESK_ROLES))
 
     if not desk:
         try:

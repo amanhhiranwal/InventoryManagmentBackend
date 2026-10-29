@@ -38,7 +38,7 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-from seed_sales_team import BASE, TEAM_PASSWORD, api, email_for, login, rows
+from seed_sales_team import BASE, TEAM_PASSWORD, api, coordinate_order, email_for, login, rows
 
 ADMIN = ("superadmin@mailinator.com", "password123")
 TAG = uuid.uuid4().hex[:6]
@@ -62,6 +62,7 @@ token = {}
 created_quotations = []
 created_approvals = []
 created_orders = []
+created_invoices = []
 
 try:
     admin = login(*ADMIN)
@@ -75,7 +76,9 @@ try:
 
     # The desks that own an order once it has been approved.
     token["accounts"] = login("accounts@mailinator.com", TEAM_PASSWORD)
-    token["inventory"] = login("inventory@mailinator.com", TEAM_PASSWORD)
+    token["production"] = login("production@mailinator.com", TEAM_PASSWORD)
+    token["logistics"] = login("logistics@mailinator.com", TEAM_PASSWORD)
+    token["admin"] = admin
     print("Signed in as the super admin and the team.")
 
     # ------------------------------------------------------------ matrix
@@ -587,18 +590,34 @@ try:
 
         # Who may push each step: the sales owner up to Confirmed, then the
         # desks, because once an order is approved it stops being theirs.
+        # The coordinator's two steps, ready and dispatched carry an advance,
+        # serials and documents that only the desks' own screens collect
+        # (test_order_journey walks those), so the super admin stands in.
         chain = [
             ("CONFIRMED", "approved", "am_north_1"),
             ("PAYMENT_VERIFIED", "payment verified by accounts", "accounts"),
-            ("PROCUREMENT", "with inventory", "inventory"),
-            ("READY", "ready to dispatch", "inventory"),
-            ("DISPATCHED", "dispatched", "inventory"),
-            ("DELIVERED", "delivered", "inventory"),
+            ("PROCUREMENT", "with production", "production"),
+            ("READY", "ready to dispatch", "admin"),
+            ("DISPATCHED", "dispatched", "admin"),
+            ("OUT_FOR_DELIVERY", "out for delivery", "logistics"),
+            ("DELIVERED", "delivered", "logistics"),
             ("INSTALLED", "installed", "am_north_1"),
             ("COMPLETED", "won", "accounts"),
         ]
 
         for status, label, who in chain:
+            if status == "PAYMENT_VERIFIED":
+                # The coordinator's own step: the advance on an invoice,
+                # accepted and processed by them and nobody else.
+                invoice = api("post", "/proforma-invoices", token["am_north_1"], json={
+                    "sales_order_id": order["id"], "status": "DRAFT", "advance_percent": 30,
+                }).json()["data"]
+                created_invoices.append(invoice["id"])
+                check(
+                    "the business coordinator accepts the advance and processes it",
+                    coordinate_order(order["id"], round(float(invoice["grand_total"]) * 0.3, 2)),
+                )
+
             step = api("put", f"/orders/{order['id']}/status", token[who], json={
                 "status": status, "remarks": f"Moved to {label}.",
             })
@@ -1070,6 +1089,10 @@ finally:
         if created_quotations:
             run("delete from sales_quotation_activity where quotation_id = any(:ids)", ids=created_quotations)
             run("delete from sales_quotation where id = any(:ids)", ids=created_quotations)
+        if created_invoices:
+            run("delete from notifications where module = 'proforma_invoice' and entity_id = any(:ids)", ids=created_invoices)
+            run("delete from sales_proforma_invoice_activity where proforma_invoice_id = any(:ids)", ids=created_invoices)
+            run("delete from sales_proforma_invoice where id = any(:ids)", ids=created_invoices)
         if created_orders:
             run("delete from sales_order_activity where sales_order_id = any(:ids)", ids=created_orders)
             run("delete from sales_order where id = any(:ids)", ids=created_orders)

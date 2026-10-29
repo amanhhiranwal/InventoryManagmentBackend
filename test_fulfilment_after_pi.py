@@ -1,7 +1,8 @@
 """What happens after the proforma invoice, and whose letterhead it goes on.
 
 Runs a whole order from confirmed to completed: the advance is recorded on
-the invoice, accounts verify it, inventory move it through fulfilment, the
+the invoice, accounts verify it, production and logistics move it through
+fulfilment, the
 salesperson signs off the installation, and accounts close it once the
 balance is settled.
 
@@ -25,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 from seed_sales_team import (
     TEAM_PASSWORD,
     api,
+    coordinate_order,
     email_for,
     login,
     rows,
@@ -65,7 +67,8 @@ try:
         token[key] = login(email_for(key), TEAM_PASSWORD)
 
     token["accounts"] = login("accounts@mailinator.com", TEAM_PASSWORD)
-    token["inventory"] = login("inventory@mailinator.com", TEAM_PASSWORD)
+    token["production"] = login("production@mailinator.com", TEAM_PASSWORD)
+    token["logistics"] = login("logistics@mailinator.com", TEAM_PASSWORD)
 
     owner = token["am_north_1"]
     print("Signed in as the super admin and the team.")
@@ -140,10 +143,10 @@ try:
 
     after = order_now()
 
-    # Recording a figure on the invoice is not the same as accounts saying
-    # the money arrived - the order waits for them.
+    # Recording a figure on the invoice is not the same as the coordinator
+    # accepting it, or accounts saying the money arrived - the order waits.
     check(
-        "the order still waits on accounts",
+        "the order still waits to be processed",
         after["status"] == "CONFIRMED",
         after["status"],
     )
@@ -156,6 +159,12 @@ try:
         "so is the balance still owed",
         abs(float(after.get("outstanding_balance") or 0) - (grand_total - advance)) < 1,
         str(after.get("outstanding_balance")),
+    )
+
+    check(
+        "the business coordinator accepts the advance and processes it",
+        coordinate_order(order["id"], advance),
+        order_now()["status"],
     )
 
     verified = api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
@@ -181,11 +190,17 @@ try:
     # ================================================== the rest of the chain
     banner("3. Through to installation")
 
+    # Ready and dispatched carry serials and documents, which only the
+    # desks' own screens collect (test_order_journey walks those); here
+    # the super admin stands in for them.
+    token["admin"] = admin
+
     for stage, who in (
-        ("PROCUREMENT", "inventory"),
-        ("READY", "inventory"),
-        ("DISPATCHED", "inventory"),
-        ("DELIVERED", "inventory"),
+        ("PROCUREMENT", "production"),
+        ("READY", "admin"),
+        ("DISPATCHED", "admin"),
+        ("OUT_FOR_DELIVERY", "logistics"),
+        ("DELIVERED", "logistics"),
         ("INSTALLED", "am_north_1"),
     ):
         r = api("put", f"/orders/{order['id']}/status", token[who], json={"status": stage})

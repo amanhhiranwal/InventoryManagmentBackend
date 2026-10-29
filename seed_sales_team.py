@@ -356,3 +356,39 @@ def sign_off_order(order: dict, raiser_token: str) -> dict | None:
             break
 
     return approval
+
+
+def coordinate_order(order_id: int, amount: float | None = None) -> bool:
+    """Clear the business coordinator's step, so a test can move on.
+
+    An approved order goes to the coordinator before accounts: they accept
+    the advance and process it. A test about accounts or the warehouse
+    should not have to restate that, so the seeded coordinator accepts the
+    advance already on the invoice (or ``amount``) and processes the order.
+    Nobody stands in for them here, a super admin included.
+
+    Returns True when the order reached accounts.
+    """
+
+    admin = login(ADMIN_EMAIL, ADMIN_PASSWORD)
+    coordinator = login("coordinator@mailinator.com", TEAM_PASSWORD)
+
+    order = api("get", f"/orders/{order_id}", admin).json()["data"]
+
+    if amount is None:
+        amount = float(order.get("advance_received") or 0) or round(
+            float(order.get("grand_total") or 0)
+            * float(order.get("advance_percent") or 30)
+            / 100,
+            2,
+        )
+
+    accepted = api(
+        "put", f"/fulfilment/orders/{order_id}/decide", coordinator,
+        json={"approve": True, "advance_amount": amount, "remarks": "Accepted for the test."},
+    )
+
+    if accepted.status_code != 200:
+        return False
+
+    return api("post", f"/orders/{order_id}/process", coordinator).status_code == 200

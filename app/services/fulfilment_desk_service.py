@@ -1,6 +1,8 @@
 """The desks an order passes through once it has been approved.
 
-Accounts confirm the money, inventory confirm the stock and send it out.
+The business coordinator checks the advance and processes the order,
+accounts confirm the money, production name the units and get the order
+ready, and logistics send it out.
 Each desk has a queue of orders waiting on it, a few numbers across the
 top, and one decision to make on each order: approve it onward, or reject
 it with a reason and put it on hold.
@@ -19,9 +21,12 @@ from sqlalchemy.orm import Session
 from app.core.timezone import iso
 from app.core.fulfilment import (
     ACCOUNTS,
+    BUSINESS_COORDINATOR,
+    DESK_ROLES,
     DESK_STAGES,
     DESKS,
-    INVENTORY,
+    DISPATCH_DOCUMENTS,
+    LOGISTICS,
     desk_for,
     holds_desk,
 )
@@ -38,6 +43,41 @@ def _user(current_user: dict, db: Session) -> User | None:
         )
     except Exception:  # pragma: no cover - a bad token is handled upstream
         return None
+
+
+def _line_qty(line: dict) -> int:
+    """How many units a line is for, as the order screen counts them."""
+
+    for key in ("quantity_case", "qty", "quantity"):
+        try:
+            if line.get(key) is not None:
+                return int(round(float(line.get(key))))
+        except (TypeError, ValueError):
+            continue
+
+    return 0
+
+
+def _documents(order: SalesOrder) -> dict[str, dict]:
+    """The dispatch documents on an order, by kind."""
+
+    return {
+        str(entry.get("kind")): entry
+        for entry in (order.attachments or [])
+        if isinstance(entry, dict) and entry.get("kind") in DISPATCH_DOCUMENTS
+    }
+
+
+def _latest_invoice(order: SalesOrder, db: Session):
+    return (
+        db.query(ProformaInvoice)
+        .filter(
+            ProformaInvoice.sales_order_id == order.id,
+            ProformaInvoice.status != ProformaInvoiceStatus.CANCELLED,
+        )
+        .order_by(ProformaInvoice.id.desc())
+        .first()
+    )
 
 
 def _waiting_days(order: SalesOrder) -> int:
@@ -92,7 +132,7 @@ class FulfilmentDeskService:
 
         user = _user(current_user, db)
 
-        if any(holds_desk(user, role) for role in (ACCOUNTS, INVENTORY)):
+        if any(holds_desk(user, role) for role in DESK_ROLES):
             return
 
         from app.services.sales_order_service import SalesOrderService
@@ -136,7 +176,11 @@ class FulfilmentDeskService:
         )
 
         rows = [
-            FulfilmentDeskService._row(order, db, with_stock=role == INVENTORY)
+            # Production checks the shelf; logistics needs it too, because
+            # dispatch is when the stock comes off it.
+            FulfilmentDeskService._row(
+                order, db, with_stock=role not in (ACCOUNTS, BUSINESS_COORDINATOR)
+            )
             for order in orders
         ]
 
@@ -154,9 +198,13 @@ class FulfilmentDeskService:
             ],
             "orders": rows,
             "kpis": (
-                FulfilmentDeskService._accounts_kpis(rows)
+                FulfilmentDeskService._coordination_kpis(rows)
+                if role == BUSINESS_COORDINATOR
+                else FulfilmentDeskService._accounts_kpis(rows)
                 if role == ACCOUNTS
-                else FulfilmentDeskService._inventory_kpis(rows, current_user, db)
+                else FulfilmentDeskService._logistics_kpis(rows, db)
+                if role == LOGISTICS
+                else FulfilmentDeskService._production_kpis(rows, current_user, db)
             ),
         }
 
@@ -213,16 +261,47 @@ class FulfilmentDeskService:
             # Accounts should not have to open the invoice to see whether
             # the advance has actually landed.
             "advance_settled": paid + 0.5 >= expected and expected > 0,
+            "payment_terms": order.payment_terms,
+            # What each line is for, so production can name a serial per
+            # unit against the right one.
+            "lines": [
+                {
+                    "index": index,
+                    "product": line.get("product") or line.get("name") or "Unnamed line",
+                    "sku": line.get("sku"),
+                    "quantity": _line_qty(line),
+                }
+                for index, line in enumerate(order.items or [])
+            ],
+            "documents": [
+                {
+                    "kind": kind,
+                    "label": label,
+                    **(_documents(order).get(kind) or {}),
+                    "uploaded": kind in _documents(order),
+                }
+                for kind, label in DISPATCH_DOCUMENTS.items()
+            ],
         }
 
         if with_stock:
             from app.services.stock_movement_service import for_order
 
             row["stock"] = FulfilmentDeskService.stock_for(order, db)
-            row["stock_short"] = any(line["short"] for line in row["stock"])
             # What this order has already taken off the shelf, so the desk
             # is not left guessing whether it has been counted down.
             row["stock_movements"] = for_order(order.id)
+
+            # Once its units are issued the order holds them, so it cannot
+            # be short: the shelf showing fewer is those very units leaving.
+            directions = [m["direction"] for m in row["stock_movements"]]
+            issued = bool(directions) and directions[-1] == "OUT"
+
+            if issued:
+                for line in row["stock"]:
+                    line["short"] = False
+
+            row["stock_short"] = any(line["short"] for line in row["stock"])
 
         return row
 
@@ -245,21 +324,38 @@ class FulfilmentDeskService:
         try:
             from app.services.inventory_service import InventoryService
 
-            items = list(InventoryService.items_col.find({}))
+            items = list(InventoryService.items_col.find({"issued": {"$ne": True}}))
         except Exception:  # noqa: BLE001 - the desk still has to open
             logger.exception("Could not read inventory for order %s", order.id)
             items = []
 
-        by_serial = {
-            str(item.get("serial_number") or "").upper(): item for item in items
-        }
-        by_name = {str(item.get("name") or "").strip().lower(): item for item in items}
+        # The catalogue keeps one record per serial, so a product's stock is
+        # every one of its units added up - matched on the line's SKU as a
+        # serial or a model number, failing that on the product name.
+        groups: dict[str, list[dict]] = {}
+
+        for item in items:
+            attributes = item.get("attributes") or {}
+
+            for key in {
+                "serial:" + str(item.get("serial_number") or "").strip().upper(),
+                "model:" + str(attributes.get("model_number") or "").strip().upper(),
+                "name:" + str(item.get("name") or "").strip().lower(),
+            }:
+                if not key.endswith(":"):
+                    groups.setdefault(key, []).append(item)
 
         for line in order.items or []:
             sku = str(line.get("sku") or "").strip().upper()
             name = str(line.get("product") or line.get("name") or "").strip()
 
-            item = by_serial.get(sku) or by_name.get(name.lower())
+            units = (
+                groups.get(f"serial:{sku}")
+                or groups.get(f"model:{sku}")
+                or groups.get(f"name:{name.lower()}")
+            ) if sku or name else None
+
+            item = units[0] if units else None
 
             wanted = float(line.get("qty") or line.get("quantity") or 0)
 
@@ -274,21 +370,23 @@ class FulfilmentDeskService:
                 })
                 continue
 
-            attributes = item.get("attributes") or {}
+            def held(unit: dict) -> float:
+                attributes = unit.get("attributes") or {}
+                value = attributes.get("instock")
 
-            available = attributes.get("instock")
+                if value is None:
+                    value = attributes.get("stock")
 
-            if available is None:
-                available = attributes.get("stock")
+                try:
+                    return float(value or 0)
+                except (TypeError, ValueError):
+                    return 0.0
 
-            try:
-                available = float(available or 0)
-            except (TypeError, ValueError):
-                available = 0.0
+            available = sum(held(unit) for unit in units)
 
             lines.append({
                 "product": item.get("name") or name,
-                "sku": item.get("serial_number") or sku or None,
+                "sku": sku or item.get("serial_number") or None,
                 "wanted": wanted,
                 "available": available,
                 "short": available < wanted,
@@ -301,8 +399,60 @@ class FulfilmentDeskService:
     # The numbers
     # ------------------------------------------------------------------
     @staticmethod
+    def _coordination_kpis(rows: list[dict]) -> list[dict]:
+        checking = [r for r in rows if r["status"] == SalesOrderStatus.CONFIRMED]
+        accepted = [r for r in rows if r["status"] == SalesOrderStatus.ADVANCE_ACCEPTED]
+        oldest = max((r["waiting_days"] for r in rows), default=0)
+
+        return [
+            {
+                "key": "awaiting_check",
+                "label": "Awaiting Advance Check",
+                "value": len(checking),
+                "format": "count",
+                "hint": "Approved orders waiting for the advance to be recorded",
+            },
+            {
+                "key": "ready_to_process",
+                "label": "Ready To Process",
+                "value": len(accepted),
+                "format": "count",
+                "hint": "Advance accepted, waiting to be processed to accounts",
+            },
+            {
+                "key": "value_waiting",
+                "label": "Value Waiting",
+                "value": round(sum(r["grand_total"] for r in rows), 2),
+                "format": "currency",
+                "hint": "What the orders at this desk are worth",
+            },
+            {
+                "key": "advance_received",
+                "label": "Advance Received",
+                "value": round(sum(r["advance_received"] for r in accepted), 2),
+                "format": "currency",
+                "hint": "Recorded on the orders ready to process",
+            },
+            {
+                "key": "short_of_terms",
+                "label": "Short Of Terms",
+                "value": sum(1 for r in accepted if not r["advance_settled"]),
+                "format": "count",
+                "tone": "warn",
+                "hint": "Accepted with less than the payment terms ask for",
+            },
+            {
+                "key": "oldest",
+                "label": "Longest Waiting",
+                "value": oldest,
+                "format": "days",
+                "hint": "How long the oldest item has sat at this desk",
+            },
+        ]
+
+    @staticmethod
     def _accounts_kpis(rows: list[dict]) -> list[dict]:
-        verifying = [r for r in rows if r["status"] == SalesOrderStatus.CONFIRMED]
+        verifying = [r for r in rows if r["status"] == SalesOrderStatus.ORDER_PROCESSED]
         closing = [r for r in rows if r["status"] == SalesOrderStatus.INSTALLED]
 
         oldest = max((r["waiting_days"] for r in rows), default=0)
@@ -359,14 +509,13 @@ class FulfilmentDeskService:
         ]
 
     @staticmethod
-    def _inventory_kpis(rows: list[dict], current_user: dict, db: Session) -> list[dict]:
-        from app.services.stock_movement_service import summary
+    def _production_kpis(rows: list[dict], current_user: dict, db: Session) -> list[dict]:
+        from app.services.stock_movement_service import issued_recently, summary
 
         def at(*stages):
             return [r for r in rows if r["status"] in stages]
 
         short = [r for r in rows if r.get("stock_short")]
-        oldest = max((r["waiting_days"] for r in rows), default=0)
         shelf = summary(current_user, db)
 
         return [
@@ -382,21 +531,21 @@ class FulfilmentDeskService:
                 "label": "Awaiting Stock",
                 "value": len(at(SalesOrderStatus.PAYMENT_VERIFIED)),
                 "format": "count",
-                "hint": "Paid orders waiting for inventory to confirm stock",
+                "hint": "Paid orders waiting for production to confirm stock",
             },
             {
                 "key": "in_procurement",
-                "label": "In Procurement",
+                "label": "In Production",
                 "value": len(at(SalesOrderStatus.PROCUREMENT)),
                 "format": "count",
-                "hint": "Stock being picked or on order",
+                "hint": "Being built, picked or on order",
             },
             {
-                "key": "ready",
-                "label": "Ready To Dispatch",
-                "value": len(at(SalesOrderStatus.READY)),
+                "key": "issued_30d",
+                "label": "Units Issued",
+                "value": issued_recently(),
                 "format": "count",
-                "hint": "Picked, packed and waiting to go out",
+                "hint": "Units issued by serial in the last 30 days",
             },
             {
                 "key": "short",
@@ -412,7 +561,76 @@ class FulfilmentDeskService:
                 "value": shelf["out_of_stock"],
                 "format": "count",
                 "tone": "warn",
-                "hint": f"Products with nothing left. Oldest item here: {oldest}d",
+                "hint": "Products with nothing left on the shelf",
+            },
+            # Six figures, one row. How long each order has waited is on
+            # its own row in the queue.
+        ]
+
+    @staticmethod
+    def _logistics_kpis(rows: list[dict], db: Session) -> list[dict]:
+        from datetime import timedelta
+
+        def at(*stages):
+            return [r for r in rows if r["status"] in stages]
+
+        oldest = max((r["waiting_days"] for r in rows), default=0)
+        ready = at(SalesOrderStatus.READY)
+
+        delivered = (
+            db.query(SalesOrder)
+            .filter(
+                SalesOrder.status == SalesOrderStatus.DELIVERED,
+                SalesOrder.updated_at >= datetime.utcnow() - timedelta(days=30),
+            )
+            .count()
+        )
+
+        return [
+            {
+                "key": "ready",
+                "label": "Ready To Dispatch",
+                "value": len(ready),
+                "format": "count",
+                "hint": "Picked, packed and waiting to go out",
+            },
+            {
+                "key": "documents_pending",
+                "label": "Documents Pending",
+                "value": sum(
+                    1 for r in ready if not all(d["uploaded"] for d in r["documents"])
+                ),
+                "format": "count",
+                "tone": "warn",
+                "hint": "Ready orders missing an invoice, insurance or docket copy",
+            },
+            {
+                "key": "dispatched",
+                "label": "Dispatched",
+                "value": len(at(SalesOrderStatus.DISPATCHED)),
+                "format": "count",
+                "hint": "Left the warehouse, not yet with the courier's last leg",
+            },
+            {
+                "key": "out_for_delivery",
+                "label": "Out For Delivery",
+                "value": len(at(SalesOrderStatus.OUT_FOR_DELIVERY)),
+                "format": "count",
+                "hint": "On the last leg to the client",
+            },
+            {
+                "key": "delivered_30d",
+                "label": "Delivered",
+                "value": delivered,
+                "format": "count",
+                "hint": "Orders delivered in the last 30 days",
+            },
+            {
+                "key": "oldest",
+                "label": "Longest Waiting",
+                "value": oldest,
+                "format": "days",
+                "hint": "How long the oldest item has sat at this desk",
             },
         ]
 
@@ -465,14 +683,212 @@ class FulfilmentDeskService:
             )
 
     @staticmethod
+    def accept_advance(order: SalesOrder, amount: float | None, current_user: dict, db: Session) -> str:
+        """The coordinator's check: record what arrived, against the terms.
+
+        Written onto the proforma invoice the way a payment typed there is,
+        so the invoice, the order and the accounts desk all carry the same
+        figure - accounts used to open an order and read an advance of
+        nothing. Less than the terms ask for is allowed, because accepting
+        a part payment is the coordinator's call; the note says so.
+        """
+
+        from app.services.proforma_invoice_service import ProformaInvoiceService
+
+        try:
+            amount = float(amount or 0)
+        except (TypeError, ValueError):
+            amount = 0.0
+
+        grand_total = float(order.grand_total or 0)
+
+        if amount <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Enter the advance received before accepting it.",
+            )
+
+        if amount > grand_total + 0.5:
+            raise HTTPException(
+                status_code=400,
+                detail="The advance cannot be more than the order is worth.",
+            )
+
+        invoice = _latest_invoice(order, db)
+
+        if invoice is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Order {order.order_number} has no proforma invoice. "
+                    "Generate one from the sales order first - the advance is "
+                    "recorded against it."
+                ),
+            )
+
+        ProformaInvoiceService.record_advance(invoice, amount, current_user, db)
+        db.refresh(order)
+
+        percent = float(order.advance_percent if order.advance_percent is not None else 30)
+        expected = round(grand_total * percent / 100, 2)
+
+        from app.services.quotation_service import format_inr
+
+        return (
+            f"{format_inr(amount)} received against {invoice.pi_number or 'the invoice'}; "
+            f"the terms ask for {percent:g}% ({format_inr(expected)})."
+            + (" Accepted short of the terms." if amount + 0.5 < expected else "")
+        )
+
+    @staticmethod
+    def take_serials(order: SalesOrder, serials: list | None) -> list[dict]:
+        """Check every serial production named, line by line.
+
+        One serial per unit, none twice, every one on the shelf. All the
+        problems are reported together so the desk fixes them in one go.
+        """
+
+        from app.services.stock_movement_service import check_serial
+
+        lines = order.items or []
+        picks: list[dict] = []
+        problems: list[str] = []
+        seen: set[str] = set()
+
+        for entry in serials or []:
+            serial = str((entry or {}).get("serial") or "").strip()
+
+            if not serial:
+                continue
+
+            try:
+                index = int(entry.get("line"))
+            except (TypeError, ValueError):
+                index = -1
+
+            if not 0 <= index < len(lines):
+                problems.append(f"{serial} is not against a line on this order.")
+                continue
+
+            if serial.upper() in seen:
+                problems.append(f"{serial} is entered more than once.")
+                continue
+
+            seen.add(serial.upper())
+            picks.append({"line": index, "serial": serial})
+
+        for index, line in enumerate(lines):
+            wanted = _line_qty(line)
+            named = sum(1 for pick in picks if pick["line"] == index)
+
+            if named != wanted:
+                problems.append(
+                    f"{line.get('product') or 'Line ' + str(index + 1)} needs "
+                    f"{wanted} serial{'s' if wanted != 1 else ''}; {named} entered."
+                )
+
+        for pick in picks:
+            result = check_serial(pick["serial"], lines[pick["line"]])
+
+            if not result["found"] or not result["in_stock"]:
+                problems.append(result["message"])
+
+        if problems:
+            raise HTTPException(status_code=400, detail=" ".join(problems))
+
+        return picks
+
+    @staticmethod
+    def attach_document(
+        order_id: int,
+        kind: str,
+        file: dict,
+        current_user: dict,
+        db: Session,
+    ) -> SalesOrder:
+        """Put one dispatch document on the order, replacing any earlier one.
+
+        Kept on the order's own attachments, so the salesperson sees the
+        docket and the invoice copy on the sales order too.
+        """
+
+        from sqlalchemy.orm.attributes import flag_modified
+
+        from app.services.sales_order_service import SalesOrderService
+
+        if kind not in DISPATCH_DOCUMENTS:
+            raise HTTPException(status_code=400, detail="That is not a dispatch document.")
+
+        order = SalesOrderService.get_by_id(order_id, db)
+
+        if not current_user.get("is_super_admin") and not holds_desk(
+            _user(current_user, db), LOGISTICS
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Dispatch documents are uploaded by logistics.",
+            )
+
+        if order.status not in DESK_STAGES[LOGISTICS] and order.status != SalesOrderStatus.DELIVERED:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Order {order.order_number} is not with logistics.",
+            )
+
+        key = str((file or {}).get("key") or "").strip()
+
+        if not key:
+            raise HTTPException(status_code=400, detail="Upload the file first.")
+
+        label = DISPATCH_DOCUMENTS[kind]
+        kept = [
+            entry
+            for entry in (order.attachments or [])
+            if not (isinstance(entry, dict) and entry.get("kind") == kind)
+        ]
+        kept.append({
+            "kind": kind,
+            "label": label,
+            "key": key,
+            "name": file.get("name") or label,
+            "size": file.get("size"),
+            "type": file.get("type"),
+        })
+
+        order.attachments = kept
+        flag_modified(order, "attachments")
+
+        SalesOrderService.record_activity(
+            db,
+            order,
+            action=f"{label} Uploaded",
+            description=file.get("name") or None,
+            user_id=current_user.get("user_id"),
+            commit=False,
+        )
+
+        db.add(order)
+        db.commit()
+        db.refresh(order)
+
+        return order
+
+    @staticmethod
     def decide(
         order_id: int,
         approve: bool,
         remarks: str | None,
         current_user: dict,
         db: Session,
+        advance_amount: float | None = None,
+        serials: list | None = None,
     ) -> SalesOrder:
-        """Approve an order onward, or reject it and hold it with a reason."""
+        """Approve an order onward, or reject it and hold it with a reason.
+
+        Three stages ask for more than a yes: the coordinator records the
+        advance, production name a serial for every unit, and logistics
+        cannot dispatch without the invoice, insurance and docket copies.
+        """
 
         from app.services.sales_order_service import SalesOrderService
 
@@ -505,8 +921,62 @@ class FulfilmentDeskService:
                 detail="Say why it is being rejected - it goes on hold with the reason.",
             )
 
+        notes: list[str] = []
+        picks: list[dict] = []
+
         if approve and order.status == SalesOrderStatus.CONFIRMED:
+            notes.append(
+                FulfilmentDeskService.accept_advance(order, advance_amount, current_user, db)
+            )
+
+        if approve and order.status == SalesOrderStatus.ORDER_PROCESSED:
             FulfilmentDeskService.assert_advance_recorded(order, db)
+
+            # What is left to collect once the advance is in, kept on the
+            # order so every screen after this one shows the same figure.
+            invoice = _latest_invoice(order, db)
+            paid = float(invoice.amount_paid if invoice else order.advance_received or 0)
+            order.advance_received = paid
+            order.outstanding_balance = round(float(order.grand_total or 0) - paid, 2)
+
+            from app.services.quotation_service import format_inr
+
+            notes.append(
+                f"Advance {format_inr(paid)} verified. "
+                f"Balance {format_inr(order.outstanding_balance)}."
+            )
+
+        if approve and order.status == SalesOrderStatus.PROCUREMENT:
+            picks = FulfilmentDeskService.take_serials(order, serials)
+
+        if approve and order.status == SalesOrderStatus.READY:
+            missing = [
+                label
+                for kind, label in DISPATCH_DOCUMENTS.items()
+                if kind not in _documents(order)
+            ]
+
+            if missing:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Upload the {', '.join(missing)} before dispatching.",
+                )
+
+        if picks:
+            from app.services.stock_movement_service import issue_serials
+
+            try:
+                issue_serials(
+                    order,
+                    picks,
+                    current_user.get("name") or current_user.get("email"),
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=409, detail=str(error))
+
+            notes.append(
+                "Serials issued: " + ", ".join(pick["serial"] for pick in picks) + "."
+            )
 
         target = desk.approves_to if approve else SalesOrderStatus.ON_HOLD
         previous = order.status
@@ -521,7 +991,7 @@ class FulfilmentDeskService:
                 if approve
                 else f"Rejected By {desk.role}"
             ),
-            description=remarks or None,
+            description=" ".join([*notes, remarks]).strip() or None,
             from_status=previous,
             to_status=target,
             user_id=current_user.get("user_id"),

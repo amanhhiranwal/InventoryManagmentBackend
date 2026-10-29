@@ -177,12 +177,25 @@ class ProformaInvoiceService:
         db: Session,
         sales_order_id: int | None = None,
     ) -> list[ProformaInvoice]:
+        from app.services.sales_order_service import (
+            NOT_FOR_COORDINATOR,
+            coordinates_orders,
+        )
+
         query = db.query(ProformaInvoice)
 
         visible_ids = get_visible_creator_user_ids(current_user, db)
 
+        if coordinates_orders(current_user, db):
+            # The invoices behind every approved order, which is what the
+            # coordinator checks the advance against.
+            from app.models.sales_order import SalesOrder
+
+            query = query.join(
+                SalesOrder, SalesOrder.id == ProformaInvoice.sales_order_id
+            ).filter(SalesOrder.status.notin_(NOT_FOR_COORDINATOR))
         # An empty list means unrestricted access, as for sales orders.
-        if visible_ids:
+        elif visible_ids:
             query = query.filter(
                 or_(
                     ProformaInvoice.creator_id.in_(
@@ -534,6 +547,47 @@ class ProformaInvoiceService:
             ProformaInvoiceService._carry_payment_to_order(
                 invoice, current_user, db
             )
+
+        return invoice
+
+    @staticmethod
+    def record_advance(
+        invoice: ProformaInvoice,
+        amount: float,
+        current_user: dict,
+        db: Session,
+    ) -> ProformaInvoice:
+        """Record the advance the business coordinator has checked.
+
+        The same steps as a payment typed on the invoice - totals worked
+        out again, a Payment Recorded line, the figure carried to the order
+        - so the coordinator's number and the invoice's cannot disagree.
+        """
+
+        previous_paid = invoice.amount_paid or 0.0
+        invoice.amount_paid = amount
+
+        for key, value in _totals(invoice).items():
+            setattr(invoice, key, value)
+
+        ProformaInvoiceService.record_activity(
+            db,
+            invoice,
+            action="Payment Recorded",
+            description=(
+                f"Amount paid updated from {format_inr(previous_paid)} to "
+                f"{format_inr(invoice.amount_paid)} by the business "
+                f"coordinator. Balance due {format_inr(invoice.balance_due)}."
+            ),
+            user_id=current_user.get("user_id"),
+            commit=False,
+        )
+
+        db.add(invoice)
+        db.commit()
+        db.refresh(invoice)
+
+        ProformaInvoiceService._carry_payment_to_order(invoice, current_user, db)
 
         return invoice
 

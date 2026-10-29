@@ -15,7 +15,13 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from app.core.fulfilment import ACCOUNTS, INVENTORY, desk_for
+from app.core.fulfilment import (
+    ACCOUNTS,
+    BUSINESS_COORDINATOR,
+    LOGISTICS,
+    PRODUCTION,
+    desk_for,
+)
 from app.core.workflow_status import SalesOrderStatus
 from app.models.user import User
 from app.services.email_service import EmailService
@@ -28,27 +34,40 @@ logger = logging.getLogger(__name__)
 #: Where a desk works, so its notification opens the queue rather than one
 #: order in isolation.
 DESK_LINKS = {
+    # The coordinator works from the Sales Order pages.
+    BUSINESS_COORDINATOR: "/sales/orders",
     ACCOUNTS: "/fulfilment/accounts",
-    INVENTORY: "/fulfilment/procurement",
+    PRODUCTION: "/fulfilment/production",
+    LOGISTICS: "/fulfilment/logistics",
 }
 
 #: What each stage means to the people reading about it, as a sentence
 #: rather than a status code.
 STAGE_NOTE: dict[str, str] = {
     SalesOrderStatus.CONFIRMED: (
-        "The order is approved and confirmed. Accounts can collect the "
-        "advance against the proforma invoice."
+        "The order is approved and confirmed. The business coordinator will "
+        "check the advance against the payment terms."
     ),
+    SalesOrderStatus.ADVANCE_ACCEPTED: (
+        "The business coordinator has accepted the advance. The order is "
+        "ready to be processed to accounts."
+    ),
+    # ORDER_PROCESSED is left out on purpose: processing sends accounts
+    # their own letter (announce_processing), with the terms in it.
     SalesOrderStatus.PAYMENT_VERIFIED: (
-        "Accounts have verified the payment. The order can go to inventory "
+        "Accounts have verified the payment. The order can go to production "
         "for procurement."
     ),
     SalesOrderStatus.PROCUREMENT: (
-        "Inventory have taken the order: stock is being picked or placed on "
+        "Production have taken the order: stock is being picked or placed on "
         "order."
     ),
-    SalesOrderStatus.READY: "Stock is in hand and the order is ready to dispatch.",
+    SalesOrderStatus.READY: (
+        "Production have issued the units by serial number. The order is "
+        "ready for logistics to dispatch."
+    ),
     SalesOrderStatus.DISPATCHED: "The order has left the warehouse.",
+    SalesOrderStatus.OUT_FOR_DELIVERY: "The order is out for delivery to the client.",
     SalesOrderStatus.DELIVERED: (
         "The order has reached the client. Installation can be scheduled."
     ),

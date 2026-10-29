@@ -47,7 +47,11 @@ def _guard_for(table: str):
     if table == "sales_order":
         from app.services.sales_order_service import SalesOrderService
 
-        return SalesOrderService.get_by_id, SalesOrderService.assert_can_edit
+        # Whoever may open the order opens its files, and nobody else: the
+        # reporting line, its approvers, the desk holding it (so one
+        # logistics clerk opens the docket another uploaded) and the
+        # business coordinator, who checks every approved order's papers.
+        return SalesOrderService.get_by_id, SalesOrderService.assert_can_view
 
     if table == "sales_quotation":
         from app.services.quotation_service import QuotationService

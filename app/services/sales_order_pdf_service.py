@@ -35,7 +35,7 @@ from app.services.email_templates import _money
 #: AVP is only the raiser's own - an AVP from another region has no
 #: business with the order - while the CEO, the Founder and Accounts each
 #: see every order there is.
-EVERY_ORDER_ROLES = {"CEO", "Founder", "Accounts"}
+EVERY_ORDER_ROLES = {"CEO", "Founder", "Accounts", "Business Coordinator"}
 LINE_ROLE = "AVP"
 
 

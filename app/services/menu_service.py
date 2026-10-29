@@ -30,6 +30,37 @@ RENAMED_BY_PATH = {
   ("Accounts", "/users"): "Users",
 }
 
+#: Default headings renamed with what is under them, matched on the old
+#: heading and its old child path together: (old heading, old child,
+#: child path) -> (new heading, new child, new path, new permission).
+#: The procurement desk became Production under a Technology heading when
+#: the desk passed from the warehouse to the Production Tech Head.
+RENAMED_DEFAULT_GROUPS = {
+    ("Procurement", "Procurement Desk", "/fulfilment/procurement"): (
+        "Technology",
+        "Production",
+        "/fulfilment/production",
+        "production_desk.read",
+    ),
+}
+
+#: Top-level default pages moved under a heading: (title, path) -> heading.
+#: Inventory went under SCM beside Logistics. A row somebody has renamed
+#: or already moved is left where it is.
+MOVED_UNDER_HEADING = {
+    ("Inventory", "/inventory"): "SCM",
+}
+
+#: Default icons changed after they shipped: (title, old icon) -> new icon.
+#: A row still on the old default is updated; one somebody picked is not.
+#: SCM first shipped with the truck, which is Logistics' icon under it.
+REICONED_DEFAULTS = {
+    ("SCM", "LuTruck"): "LuWarehouse",
+    # Renamed from Procurement with the old icon, the same one Production
+    # under it carries.
+    ("Technology", "LuPackageCheck"): "LuCpu",
+}
+
 #: Default menus withdrawn before anyone could have arranged them. The row
 #: and its children go; one the user has since renamed is left alone.
 #: "Fulfilment" grouped the two desks together, which put the accounts team
@@ -47,6 +78,13 @@ RETIRED_DEFAULT_MENUS = {"Fulfilment", "Order Tracking"}
 #: path together, so a heading somebody made themselves is never swept up.
 RETIRED_DEFAULT_CHILDREN = {
     ("Proforma Invoice", "/sales/proforma-invoices"),
+    # Seeded briefly under Business Coordinator; RENAMED_DEFAULT_TITLES
+    # turns "Sales Orders" into "Sales Order", so the seed then added it
+    # again beside the renamed one. The singular is the default now.
+    ("Sales Orders", "/sales/orders"),
+    # The coordinator's separate queue. Their work is on the Sales Order
+    # pages, where the advance is checked on the order itself.
+    ("Approved Orders", "/fulfilment/coordination"),
 }
 
 #: Top-level menus the design moved: title -> (old defaults, new default).
@@ -54,7 +92,15 @@ RETIRED_DEFAULT_CHILDREN = {
 #: is not. Several carry more than one old position, having moved once for
 #: the design and again to make room for the desks.
 MOVED_DEFAULT_ORDER = {
-  "Customers": ((2,), 6),
+  # The business coordinator sits right under Sales, where approved
+  # orders come from, and Technology above SCM; the rest moved down to
+  # make room. Earlier positions are kept as olds.
+  "Business Coordinator": ((7, 8), 4),
+  "Users": ((4,), 5),
+  "Technology": ((5, 8, 9), 6),
+  "SCM": ((5, 6), 7),
+  "Customers": ((2, 6, 7), 8),
+  "Accounts": ((7, 8), 9),
   "Reports": ((6, 7, 8), 10),
   "Masters": ((8, 9), 11),
   "Workflows": ((9, 10), 12),
@@ -78,7 +124,7 @@ DEFAULT_MENUS_DATA = [
     "path": "/sales/customers",
     "permission_key": "customer.read",
     # After Inventory, as in the design.
-    "order_index": 6,
+    "order_index": 8,
     "children": []
   },
   {
@@ -103,16 +149,38 @@ DEFAULT_MENUS_DATA = [
     "icon": "LuUsers",
     "path": "/users",
     "permission_key": "user.read",
-    "order_index": 4,
+    "order_index": 5,
     "children": []
   },
   {
-    "title": "Inventory",
-    "icon": "LuPackage",
-    "path": "/inventory",
+    # Supply chain: the catalogue and getting orders out of the door. Each
+    # page is gated on its own permission, so the warehouse sees Inventory
+    # and the dispatch team sees Logistics.
+    "title": "SCM",
+    "icon": "LuWarehouse",
+    "path": None,
     "permission_key": "inventory.read",
-    "order_index": 5,
-    "children": []
+    "order_index": 7,
+    "children": [
+      {"title": "Inventory", "icon": "LuPackage", "path": "/inventory", "permission_key": "inventory.read", "order_index": 1},
+      {"title": "Logistics", "icon": "LuTruck", "path": "/fulfilment/logistics", "permission_key": "logistics_desk.read", "order_index": 2},
+    ]
+  },
+  {
+    # Where an approved order goes first: the advance is checked against
+    # the payment terms and the order is processed on to accounts. Gated
+    # on its own permission, like every desk.
+    "title": "Business Coordinator",
+    "icon": "LuClipboardCheck",
+    "path": None,
+    "permission_key": "coordination_desk.read",
+    "order_index": 4,
+    "children": [
+      # The same Sales Order list and pages everyone else uses, showing
+      # every approved order: the coordinator checks the documents and
+      # tracks each one to delivery, and accepts the advance on the page.
+      {"title": "Sales Order", "icon": "LuFileText", "path": "/sales/orders", "permission_key": "coordination_desk.read", "order_index": 1},
+    ]
   },
   {
     # The finance team's own menu. Separate from procurement on purpose:
@@ -122,20 +190,21 @@ DEFAULT_MENUS_DATA = [
     "icon": "LuWallet",
     "path": None,
     "permission_key": "payment_desk.read",
-    "order_index": 7,
+    "order_index": 9,
     "children": [
       {"title": "Accounts Desk", "icon": "LuWallet", "path": "/fulfilment/accounts", "permission_key": "payment_desk.read", "order_index": 1},
     ]
   },
   {
-    # The warehouse's menu, gated on its own permission.
-    "title": "Procurement",
-    "icon": "LuPackageCheck",
+    # The Production Tech Head's menu, gated on its own permission. Was
+    # "Procurement" when the warehouse worked this desk.
+    "title": "Technology",
+    "icon": "LuCpu",
     "path": None,
-    "permission_key": "procurement_desk.read",
-    "order_index": 8,
+    "permission_key": "production_desk.read",
+    "order_index": 6,
     "children": [
-      {"title": "Procurement Desk", "icon": "LuPackageCheck", "path": "/fulfilment/procurement", "permission_key": "procurement_desk.read", "order_index": 1},
+      {"title": "Production", "icon": "LuPackageCheck", "path": "/fulfilment/production", "permission_key": "production_desk.read", "order_index": 1},
     ]
   },
   {
@@ -249,6 +318,87 @@ class MenuService:
                 else:
                     row.title = new_title
 
+                changed = True
+
+        # Headings renamed together with the page under them. The old
+        # heading is matched with its old child, so a menu somebody named
+        # "Procurement" themselves is never swept up.
+        for (old_heading, old_child, old_path), (
+            heading, child_title, path, permission
+        ) in RENAMED_DEFAULT_GROUPS.items():
+            for parent in [
+                r for r in rows if r.parent_id is None and r.title == old_heading
+            ]:
+                children = [
+                    r
+                    for r in rows
+                    if r.parent_id == parent.id
+                    and r.title == old_child
+                    and (r.path or "") == old_path
+                ]
+
+                if not children or any(
+                    r.parent_id is None and r.title == heading for r in rows
+                ):
+                    continue
+
+                parent.title = heading
+                parent.permission_key = permission
+
+                for child in children:
+                    child.title = child_title
+                    child.path = path
+                    child.permission_key = permission
+
+                changed = True
+
+        # Icons corrected after they shipped.
+        for row in rows:
+            new_icon = REICONED_DEFAULTS.get((row.title, row.icon))
+
+            if new_icon and row.parent_id is None:
+                row.icon = new_icon
+                changed = True
+
+        # Top-level pages moved under a heading, which is created here if
+        # it is not there yet so the page keeps its own row and settings.
+        for (title, path), heading in MOVED_UNDER_HEADING.items():
+            for row in [
+                r
+                for r in rows
+                if r.parent_id is None
+                and r.title == title
+                and (r.path or "") == path
+            ]:
+                parent = next(
+                    (r for r in rows if r.parent_id is None and r.title == heading),
+                    None,
+                )
+
+                if parent is None:
+                    spec = next(g for g in DEFAULT_MENUS_DATA if g["title"] == heading)
+                    parent = MenuItem(
+                        title=heading,
+                        icon=spec["icon"],
+                        path=spec.get("path"),
+                        permission_key=spec["permission_key"],
+                        order_index=spec["order_index"],
+                        is_active=True,
+                    )
+                    db.add(parent)
+                    db.flush()
+                    rows.append(parent)
+
+                spec = next(
+                    c
+                    for g in DEFAULT_MENUS_DATA
+                    if g["title"] == heading
+                    for c in g["children"]
+                    if c["title"] == title
+                )
+
+                row.parent_id = parent.id
+                row.order_index = spec["order_index"]
                 changed = True
 
         # Defaults withdrawn before anyone could have arranged them. Matched

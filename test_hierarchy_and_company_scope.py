@@ -96,18 +96,22 @@ try:
     print("1. Roles offered when creating a user")
     by_name = {r["role_name"]: r for r in rows(api("get", "/rbac/roles", admin))}
 
-    # The sales chart, plus the two desks an approved order passes through.
-    # Accounts and Inventory sit outside the reporting line on purpose -
+    # The sales chart, plus the desks an approved order passes through and
+    # the catalogue role. They sit outside the reporting line on purpose -
     # they answer for the whole company, not for one region.
+    DESKS = {
+        "Business Coordinator", "Accounts", "Production Tech Head",
+        "Logistics", "Inventory",
+    }
     check(
         "the sales chart is Super Admin, Founder, CEO, AVP, Zonal Head, Area Manager",
-        sorted(set(by_name) - {"Accounts", "Inventory"})
+        sorted(set(by_name) - DESKS)
         == ["AVP", "Area Manager", "CEO", "Founder", "Super Admin", "Zonal Head"],
         str(sorted(by_name)),
     )
     check(
-        "and the two fulfilment desks are there beside it",
-        {"Accounts", "Inventory"} <= set(by_name),
+        "and the fulfilment desks are there beside it",
+        DESKS <= set(by_name),
         str(sorted(by_name)),
     )
 
@@ -330,8 +334,10 @@ try:
         category = types[0].get("category") or "General"
         serial = f"SN-{TAG}"
 
+        # The catalogue is the Inventory role's now, not the sales floor's;
+        # the super admin files these, which is all the scoping rule needs.
         def make_product(who, company_id, label):
-            return api("post", "/inventory/items", tokens[who], json={
+            return api("post", "/inventory/items", admin, json={
                 "name": f"{label} {TAG}",
                 "serial_number": serial,
                 "product_type_code": type_code,
@@ -347,7 +353,7 @@ try:
             })
 
         r1 = make_product("AM 1", company_a, "Shared Product Alpha")
-        check("Area Manager 1 adds the product for their company", r1.status_code == 200, f"{r1.status_code} {r1.text[:160]}")
+        check("a product is added for company A", r1.status_code == 200, f"{r1.status_code} {r1.text[:160]}")
         if r1.status_code == 200:
             created_items.append(r1.json()["data"]["_id"])
 
