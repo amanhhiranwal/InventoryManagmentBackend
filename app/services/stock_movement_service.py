@@ -76,7 +76,10 @@ def _match(line, by_serial, by_name):
     sku = str(line.get("sku") or "").strip().upper()
     name = str(line.get("product") or line.get("name") or "").strip().lower()
 
-    return by_serial.get(sku) or by_name.get(name)
+    # A blank SKU or name matches nothing: inventory holds products with no
+    # serial, and "" would otherwise find one of them for any line without
+    # a SKU and count it down.
+    return (by_serial.get(sku) if sku else None) or (by_name.get(name) if name else None)
 
 
 def _wanted(line) -> float:

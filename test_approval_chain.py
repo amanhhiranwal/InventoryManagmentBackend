@@ -629,6 +629,13 @@ try:
         final = api("get", f"/orders/{order['id']}", token["am_north_1"]).json()["data"]
         check("it finishes Completed", final["status"] == "COMPLETED", final["status"])
 
+        # Its one line has no SKU, so nothing in inventory is its product:
+        # going past Ready must not count down a product that has no serial.
+        from app.database.mongodb import sync_mongo_db
+
+        moved = sync_mongo_db["inventory_movements"].count_documents({"order_id": int(order["id"])})
+        check("a line with no SKU takes nothing off the shelf", moved == 0, f"{moved} movements")
+
         history = [a["action"] for a in rows(api("get", f"/orders/{order['id']}/activities", token["am_north_1"]))]
         check(
             "every step is in the history",
@@ -1096,6 +1103,14 @@ finally:
         if created_orders:
             run("delete from sales_order_activity where sales_order_id = any(:ids)", ids=created_orders)
             run("delete from sales_order where id = any(:ids)", ids=created_orders)
+
+            # The order's stock movements go with it, or they stay on the
+            # Stock Out page against an order that no longer exists.
+            from app.database.mongodb import sync_mongo_db
+
+            sync_mongo_db["inventory_movements"].delete_many(
+                {"order_id": {"$in": [int(i) for i in created_orders]}}
+            )
         session.commit()
 
         left = session.execute(
