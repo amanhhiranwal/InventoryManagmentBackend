@@ -306,6 +306,71 @@ class InventoryService:
     }
 
     @classmethod
+    def picker_catalogue(cls) -> list[dict]:
+        """Every product on the shelf, one row per model, for the Add Product pickers.
+
+        Not scoped to the caller's companies: a salesperson quotes whatever
+        the business holds, whichever company it is filed under, and most
+        profiles carry no company at all. No serial numbers either - a
+        picker needs the model, its rates and how many there are.
+        """
+
+        def text(field: str) -> dict:
+            return {"$trim": {"input": {"$toString": {"$ifNull": [field, ""]}}}}
+
+        # The model, or the name when the model is missing or blank - the
+        # sheet leaves Model Number optional.
+        model_key = {
+            "$toLower": {
+                "$cond": [
+                    {"$eq": [text("$attributes.model_number"), ""]},
+                    text("$name"),
+                    text("$attributes.model_number"),
+                ]
+            }
+        }
+
+        pipeline = [
+            {"$match": {"issued": {"$ne": True}}},
+            {
+                "$group": {
+                    "_id": model_key,
+                    "name": {"$first": "$name"},
+                    "model_number": {"$first": "$attributes.model_number"},
+                    "product_type_code": {"$first": "$product_type_code"},
+                    "category": {"$first": "$category"},
+                    # The first record's rate, the one the server prices a
+                    # line by, so the picker and the saved line agree.
+                    "rate": {"$first": cls._RATE},
+                    "rate_per_unit": {"$first": "$attributes.rate_per_unit"},
+                    "dtp_rate": {"$first": "$attributes.dtp_rate"},
+                    "hsn_code": {"$first": "$attributes.hsn_code"},
+                    "instock": {"$sum": cls._HELD},
+                }
+            },
+            {"$sort": {"name": 1, "model_number": 1}},
+        ]
+
+        # Read in the order the server's price lookup reads, so "first"
+        # means the same record for both.
+        pipeline.insert(1, {"$sort": {"_id": 1}})
+
+        return [
+            {
+                "name": row.get("name") or "",
+                "model_number": row.get("model_number") or "",
+                "product_type_code": row.get("product_type_code") or "",
+                "category": row.get("category") or "",
+                "rate": row.get("rate") or row.get("rate_per_unit") or 0,
+                "dtp_rate": row.get("dtp_rate") or 0,
+                "hsn_code": row.get("hsn_code") or "",
+                "instock": row.get("instock") or 0,
+            }
+            for row in cls.items_col.aggregate(pipeline)
+            if row["_id"]
+        ]
+
+    @classmethod
     def _scope(cls, search, company_id, current_user, db) -> dict:
         """The catalogue this caller is looking at, before any category."""
 
