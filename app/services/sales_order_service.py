@@ -1,3 +1,4 @@
+import time
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -221,40 +222,30 @@ def _to_uuid(value) -> UUID | None:
         return None
 
 
-#: SKU -> {"hsn": ..., "ecp": ..., "dtp": ...}, read once per process. The
-#: catalogue is a few dozen rows and changes when somebody edits a product,
-#: so it is cheap to hold and refreshed by a restart.
+#: SKU -> {"hsn": ..., "ecp": ..., "dtp": ...}, read from inventory and held
+#: for a minute. The pickers offer whatever inventory holds now, so a product
+#: uploaded after start-up has to be priced here too, not only after a
+#: restart.
 _CATALOGUE_BY_SKU: dict[str, dict] | None = None
+_CATALOGUE_READ_AT = 0.0
+CATALOGUE_TTL_SECONDS = 60
 
 
 def _catalogue() -> dict[str, dict]:
-    global _CATALOGUE_BY_SKU
+    global _CATALOGUE_BY_SKU, _CATALOGUE_READ_AT
 
-    if _CATALOGUE_BY_SKU is None:
+    if _CATALOGUE_BY_SKU is None or time.monotonic() - _CATALOGUE_READ_AT > CATALOGUE_TTL_SECONDS:
+        _CATALOGUE_READ_AT = time.monotonic()
+
         try:
             from app.database.mongodb import sync_mongo_db
 
-            _CATALOGUE_BY_SKU = {
-                str(row.get("serial_number") or "").upper(): {
-                    "hsn": str(
-                        (row.get("attributes") or {}).get("hsn_code") or ""
-                    ).strip(),
-                    "dtp": _as_float(
-                        (row.get("attributes") or {}).get("dtp_rate")
-                    ),
-                    "ecp": _as_float(
-                        (row.get("attributes") or {}).get("rate")
-                        or (row.get("attributes") or {}).get("rate_per_unit")
-                    ),
-                    "warranty_rates": (row.get("attributes") or {}).get(
-                        "warranty_rates"
-                    )
-                    or {},
-                }
-                for row in sync_mongo_db["inventory_items"].find(
+            rows = list(
+                sync_mongo_db["inventory_items"].find(
                     {},
                     {
                         "serial_number": 1,
+                        "attributes.model_number": 1,
                         "attributes.hsn_code": 1,
                         "attributes.dtp_rate": 1,
                         "attributes.rate": 1,
@@ -262,7 +253,35 @@ def _catalogue() -> dict[str, dict]:
                         "attributes.warranty_rates": 1,
                     },
                 )
+            )
+
+            def entry(row: dict) -> dict:
+                attributes = row.get("attributes") or {}
+
+                return {
+                    "hsn": str(attributes.get("hsn_code") or "").strip(),
+                    "dtp": _as_float(attributes.get("dtp_rate")),
+                    "ecp": _as_float(
+                        attributes.get("rate") or attributes.get("rate_per_unit")
+                    ),
+                    "warranty_rates": attributes.get("warranty_rates") or {},
+                }
+
+            _CATALOGUE_BY_SKU = {
+                str(row.get("serial_number") or "").upper(): entry(row)
+                for row in rows
             }
+
+            # The Add Product pickers read inventory, where units of one
+            # model are one product and the model number is the line's
+            # SKU. A serial keeps its own entry if the two ever collide.
+            for row in rows:
+                model = str(
+                    (row.get("attributes") or {}).get("model_number") or ""
+                ).strip().upper()
+
+                if model:
+                    _CATALOGUE_BY_SKU.setdefault(model, entry(row))
         except Exception:  # noqa: BLE001 - a lookup must never fail a save
             _CATALOGUE_BY_SKU = {}
 

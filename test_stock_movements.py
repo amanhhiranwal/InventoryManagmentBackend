@@ -8,11 +8,16 @@ This covers both sides of putting that right:
     stock figure, remove it again, and see the totals - and a salesperson,
     who may still add a product for their own company, cannot correct a
     count or delete one;
-  * a bulk record - one serial standing for many units - cannot be
-    issued by serial, so production cannot mark its order ready; a super
-    admin moving the order on counts it down by quantity instead, at
-    ready, and it comes back if the order is held afterwards;
-  * the deduction is written down and cannot happen twice.
+  * a bulk record - one serial standing for many units - cannot have its
+    one serial named for several units; a super admin moving the order on
+    counts it down by quantity instead, at ready, and it comes back if the
+    order is held afterwards;
+  * the deduction is written down and cannot happen twice;
+  * production can only name serials that are in inventory, in stock and
+    of the model the line asks for; another model's serial or a made-up
+    one is refused, and an issued serial cannot be named twice;
+  * the server prices a line by the model number the Add Product pickers
+    now send as its SKU.
 
 Run seed_sales_team.py and seed_fulfilment_roles.py first. Everything it
 creates is removed again.
@@ -264,12 +269,143 @@ try:
         f"{stock_now()} - a second deduction would leave 8",
     )
 
+    # ================================================== serials of the line's product
+    banner("6. Production names serials of the product the line asks for")
+
+    model = f"MDL-{TAG}"
+
+    def unit(serial, model_number):
+        made = api("post", "/inventory/items", inventory, json={
+            **body,
+            "serial_number": serial,
+            "attributes": {**body["attributes"], "instock": 1, "model_number": model_number},
+        })
+        if made.status_code == 200:
+            created_items.append(made.json()["data"]["_id"])
+        return made.status_code == 200
+
+    mine = [f"UNIT-{TAG}-{n}".upper() for n in range(2)]
+    other = f"OTHER-{TAG}".upper()
+
+    check(
+        "two units of the model and one of another are put on the shelf",
+        all([unit(mine[0], model), unit(mine[1], model), unit(other, f"OTHERMDL-{TAG}")]),
+    )
+
+    made = api("post", "/orders", token["am_north_1"], json={
+        "customer_name": f"Serial Test {TAG}",
+        "company_name": "Synergy North Agro",
+        "state": "Delhi",
+        "order_date": now.isoformat(),
+        "items": [{"product": f"Test Panel {TAG}", "sku": model, "qty": 2, "rate": 50000, "tax_rate": 18}],
+    }).json()["data"]
+    created_orders.append(made["id"])
+
+    sign_off_order(made, token["am_north_1"])
+    api("put", f"/orders/{made['id']}/status", token["am_north_1"], json={"status": "CONFIRMED"})
+    bill = api("post", "/proforma-invoices", token["am_north_1"], json={
+        "sales_order_id": made["id"], "status": "DRAFT", "advance_percent": 30,
+    }).json()["data"]
+    created_invoices.append(bill["id"])
+    api("put", f"/proforma-invoices/{bill['id']}", token["am_north_1"], json={
+        "amount_paid": round(float(bill["grand_total"]) * 0.3, 2),
+    })
+    coordinate_order(made["id"])
+    api("put", f"/fulfilment/orders/{made['id']}/decide", token["accounts"], json={"approve": True, "remarks": "Paid."})
+    api("put", f"/fulfilment/orders/{made['id']}/decide", production, json={"approve": True, "remarks": "Taken in."})
+
+    def status_of(order_id):
+        return api("get", f"/orders/{order_id}", admin).json()["data"]["status"]
+
+    check("the order reaches production", status_of(made["id"]) == "PROCUREMENT", status_of(made["id"]))
+
+    def looked(serial):
+        return api("get", "/fulfilment/serials/check", production, params={
+            "serial": serial, "order_id": made["id"], "line": 0,
+        }).json()["data"]
+
+    seen = looked(mine[0])
+    check(
+        "a unit of the line's model is accepted",
+        seen.get("found") and seen.get("in_stock") and seen.get("matches_line") is True,
+        str(seen),
+    )
+
+    seen = looked(other)
+    check(
+        "a unit of another model is refused, and says what it is",
+        seen.get("found") and seen.get("matches_line") is False and f"OTHERMDL-{TAG}" in str(seen.get("message")),
+        str(seen),
+    )
+
+    seen = looked(f"MADE-UP-{TAG}")
+    check(
+        "a serial that is not in inventory is refused",
+        not seen.get("found") and "not in inventory" in str(seen.get("message")),
+        str(seen),
+    )
+
+    from app.services.stock_movement_service import _unit, belongs_to_line
+
+    shelf = _unit(mine[0])
+    check(
+        "a line whose SKU inventory does not know is matched on the product name",
+        belongs_to_line(shelf, {"sku": f"OLD-LIST-{TAG}", "product": body["name"]})
+        and not belongs_to_line(shelf, {"sku": f"OLD-LIST-{TAG}", "product": "Something Else"}),
+        str(shelf and shelf.get("name")),
+    )
+
+    refused = api("put", f"/fulfilment/orders/{made['id']}/decide", production, json={
+        "approve": True, "remarks": "Ready.",
+        "serials": [{"line": 0, "serial": mine[0]}, {"line": 0, "serial": other}],
+    })
+    check(
+        "the desk cannot mark it ready with another model's serial",
+        refused.status_code == 400 and f"OTHERMDL-{TAG}" in refused.text,
+        f"{refused.status_code} {refused.text[:160]}",
+    )
+
+    ready = api("put", f"/fulfilment/orders/{made['id']}/decide", production, json={
+        "approve": True, "remarks": "Ready.",
+        "serials": [{"line": 0, "serial": serial} for serial in mine],
+    })
+    check("with both of the model's serials it is ready", ready.status_code == 200, f"{ready.status_code} {ready.text[:160]}")
+    check("the order is ready to dispatch", status_of(made["id"]) == "READY", status_of(made["id"]))
+
+    seen = looked(mine[0])
+    check(
+        "an issued serial cannot be named again",
+        not seen.get("found") and "already been issued" in str(seen.get("message")),
+        str(seen),
+    )
+
+    api("put", f"/orders/{made['id']}/status", admin, json={"status": "ON_HOLD", "remarks": "Recalled."})
+    seen = looked(mine[0])
+    check("held, the units go back and can be named again", seen.get("found") and seen.get("in_stock"), str(seen))
+
+    # ================================================== priced by model
+    banner("7. A line keyed by model number is priced from inventory")
+
+    import app.services.sales_order_service as orders_module
+
+    orders_module._CATALOGUE_BY_SKU = None
+    check(
+        "the model number finds the rate",
+        orders_module.rate_for_sku(f"MDL-{TAG}") == 50000,
+        str(orders_module.rate_for_sku(f"MDL-{TAG}")),
+    )
+    check(
+        "the serial still finds it too",
+        orders_module.rate_for_sku(SERIAL) == 50000,
+        str(orders_module.rate_for_sku(SERIAL)),
+    )
+
 except Exception as exc:  # noqa: BLE001 - the report below still has to print
     failed.append(f"{section}: the run stopped - {exc}")
     print(f"\n  STOPPED  {exc}")
 
 finally:
-    banner("6. Clearing what the test created")
+    banner("8. Clearing what the test created")
 
     try:
         for item_id in created_items:
