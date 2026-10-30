@@ -23,7 +23,8 @@ what makes that safe - a failed deduction is visible rather than silent.
 
 import logging
 import re
-from datetime import datetime
+from bisect import bisect_left
+from datetime import datetime, timedelta
 
 from app.core.workflow_status import SalesOrderStatus
 from app.database.mongodb import sync_mongo_db
@@ -104,6 +105,9 @@ def _write(order, item, quantity: float, direction: str, before: float, after: f
         "order_number": order.order_number,
         "customer_name": order.customer_name,
         "item_id": str(item["_id"]),
+        # Kept on the movement itself, so who may see it does not depend on
+        # the product record still being there.
+        "company_id": item.get("company_id"),
         "serial_number": item.get("serial_number"),
         "product": item.get("name"),
         "direction": direction,
@@ -478,6 +482,181 @@ def _return_serials(order, actor: str | None) -> list[dict]:
         })
 
     return moved
+
+
+#: Tabs on the Stock Out page: everything, still out, or put back.
+STOCK_OUT_VIEWS = ("out", "returned")
+
+#: Set once this process has made sure the movement indexes exist.
+_MOVEMENT_INDEXES = False
+
+
+def _ensure_movement_indexes() -> None:
+    """The indexes the Stock Out page reads by. Creating one that exists is a no-op."""
+
+    global _MOVEMENT_INDEXES
+
+    if _MOVEMENT_INDEXES:
+        return
+
+    movements_col.create_index([("direction", 1), ("created_at", -1)])
+    movements_col.create_index([("order_id", 1), ("direction", 1)])
+    _MOVEMENT_INDEXES = True
+
+
+def stock_out(
+    current_user: dict,
+    db,
+    search: str | None = None,
+    view: str | None = None,
+    page: int = 1,
+    size: int = 20,
+) -> dict:
+    """Every unit that has left inventory for an order, newest first.
+
+    Read straight from the movement records the desks already write - the
+    serial, the order, the customer, where it went, who issued it and when -
+    so this page shows what is stored, nothing worked out afresh. A unit
+    whose order was held or cancelled afterwards came back; it is still
+    listed, marked returned, because it did leave.
+
+    The search runs in the database. The figures across the top read every
+    issue, but only the fields they add up, and the put-backs are read only
+    for the orders those issues belong to. Out and Returned depend on the
+    put-backs, so the tabs and the page are cut here.
+    """
+
+    from app.core.timezone import iso
+    from app.services.company_scope_service import CompanyScopeService
+
+    _ensure_movement_indexes()
+
+    base: dict = {"direction": OUT}
+
+    # Units of a company the caller is not in are not theirs to see. A
+    # super admin, and anyone unrestricted, gets an empty filter. A movement
+    # carries its company; one written before it did is judged by its product.
+    scope = CompanyScopeService.mongo_filter(current_user or {}, db)
+
+    if scope:
+        base["$or"] = [
+            scope,
+            {
+                "company_id": {"$exists": False},
+                "item_id": {
+                    "$in": [str(item["_id"]) for item in _items().find(scope, {"_id": 1})]
+                },
+            },
+        ]
+
+    tallied = list(
+        movements_col.find(
+            base,
+            {"order_id": 1, "item_id": 1, "order_number": 1, "quantity": 1, "created_at": 1},
+        )
+    )
+
+    # Every put-back for these orders, oldest first, per order and unit. An
+    # issue is matched to the first put-back after it, so a unit sent,
+    # returned, sent again and returned again shows each return at its own
+    # time.
+    put_back: dict[tuple, list[datetime]] = {}
+
+    for row in movements_col.find(
+        {"direction": IN, "order_id": {"$in": list({row.get("order_id") for row in tallied})}},
+        {"order_id": 1, "item_id": 1, "created_at": 1},
+    ).sort("created_at", 1):
+        if row.get("created_at"):
+            put_back.setdefault((row.get("order_id"), row.get("item_id")), []).append(row["created_at"])
+
+    def back(row) -> datetime | None:
+        times = put_back.get((row.get("order_id"), row.get("item_id"))) or []
+        sent = row.get("created_at")
+
+        if not sent:
+            return None
+
+        index = bisect_left(times, sent)
+
+        return times[index] if index < len(times) else None
+
+    since = datetime.utcnow() - timedelta(days=30)
+    still_out = [row for row in tallied if back(row) is None]
+
+    summary = {
+        "units_out": sum(float(row.get("quantity") or 0) for row in still_out),
+        "orders": len({row.get("order_number") for row in still_out} - {None, ""}),
+        "last_30_days": sum(
+            float(row.get("quantity") or 0)
+            for row in tallied
+            if row.get("created_at") and row["created_at"] >= since
+        ),
+        "returned": sum(
+            float(row.get("quantity") or 0) for row in tallied if back(row) is not None
+        ),
+    }
+
+    listed = dict(base)
+
+    if search and str(search).strip():
+        # Escaped: a serial with a dot or a bracket in it is a serial.
+        pattern = {"$regex": re.escape(str(search).strip()), "$options": "i"}
+        matches = {
+            "$or": [
+                {field: pattern}
+                for field in (
+                    "serial_number", "product", "model_number", "order_number",
+                    "customer_name", "place", "actor",
+                )
+            ]
+        }
+        listed = {"$and": [base, matches]}
+
+    everything = list(movements_col.find(listed).sort("created_at", -1))
+
+    counts = {
+        "all": len(everything),
+        "out": sum(1 for row in everything if back(row) is None),
+        "returned": sum(1 for row in everything if back(row) is not None),
+    }
+
+    if view == "out":
+        everything = [row for row in everything if back(row) is None]
+    elif view == "returned":
+        everything = [row for row in everything if back(row) is not None]
+
+    page = max(1, int(page or 1))
+    size = max(1, min(int(size or 20), 100))
+    window = everything[(page - 1) * size: page * size]
+
+    return {
+        "rows": [
+            {
+                "id": str(row["_id"]),
+                "serial_number": row.get("serial_number"),
+                "product": row.get("product"),
+                "model_number": row.get("model_number"),
+                "line_product": row.get("line_product"),
+                "quantity": row.get("quantity"),
+                "by_serial": bool(row.get("by_serial")),
+                "order_id": row.get("order_id"),
+                "order_number": row.get("order_number"),
+                "customer_name": row.get("customer_name"),
+                "place": row.get("place"),
+                "state": row.get("state"),
+                "actor": row.get("actor"),
+                "stock_before": row.get("stock_before"),
+                "stock_after": row.get("stock_after"),
+                "created_at": iso(row.get("created_at")),
+                "returned": back(row) is not None,
+                "returned_at": iso(back(row)),
+            }
+            for row in window
+        ],
+        "total": len(everything),
+        "summary": summary,
+        "counts": counts,
+    }
 
 
 def issued_recently(days: int = 30) -> int:

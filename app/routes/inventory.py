@@ -186,6 +186,35 @@ def get_scope_companies(
     }
 
 
+@router.get("/stock-out")
+def stock_out(
+    search: Optional[str] = None,
+    view: Optional[str] = None,
+    page: int = 1,
+    size: int = 20,
+    current_user=Depends(require_permission("stock_out.read")),
+    db: Session = Depends(get_db),
+):
+    """Every unit issued from inventory to an order, as it was recorded.
+
+    Its own permission, granted to nobody by default: a super admin sees
+    it, and Roles & Access can hand it to anyone else.
+    """
+
+    from app.services.stock_movement_service import STOCK_OUT_VIEWS
+    from app.services.stock_movement_service import stock_out as read_stock_out
+
+    if view and view not in STOCK_OUT_VIEWS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"view must be one of: {', '.join(STOCK_OUT_VIEWS)}.",
+        )
+
+    result = read_stock_out(current_user, db, search=search, view=view, page=page, size=size)
+
+    return {"success": True, "data": result.pop("rows"), **result}
+
+
 @router.get("/items")
 def get_items(
     product_type_code: Optional[str] = None,
