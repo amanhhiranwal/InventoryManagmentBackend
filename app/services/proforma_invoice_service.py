@@ -791,6 +791,9 @@ class ProformaInvoiceService:
                 ),
             )
 
+        # Its bell entries go with it, rather than opening a deleted invoice.
+        NotificationService.delete_for_entity(db, "proforma_invoice", invoice.id)
+
         db.delete(invoice)
         db.commit()
 
