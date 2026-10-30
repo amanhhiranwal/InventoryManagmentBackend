@@ -47,6 +47,13 @@ ALIAS_MAP = {
     "order.read": {"order.read", "order.view", "sales.menu"},
     "quotation.read": {"quotation.read", "quotation.view", "sales.menu"},
     "inventory.read": {"inventory.read", "inventory.view", "lead.read", "lead.create", "sales.menu"},
+    # The Add Product pickers' catalogue: whoever can put a product on an
+    # opportunity, proposal or sales order, and whoever keeps inventory -
+    # not every role that can only read leads.
+    "product_picker.read": {
+        "opportunity.write", "quotation.write", "order.write",
+        "inventory.read", "inventory.view",
+    },
     "unit.read": {"unit.read", "unit.view", "lead.read", "sales.menu", "inventory.read"},
     "customer.read": {"customer.read", "customer.view", "sales.menu"},
 }

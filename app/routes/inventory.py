@@ -186,6 +186,20 @@ def get_scope_companies(
     }
 
 
+@router.get("/catalogue")
+def picker_catalogue(
+    current_user=Depends(require_permission("product_picker.read")),
+):
+    """What the Add Product pickers offer: every product on the shelf, by model.
+
+    For whoever can add a product to an opportunity, proposal or sales
+    order, or keeps inventory. Unlike /items it is not narrowed to the
+    caller's companies, and carries no serial numbers.
+    """
+
+    return {"success": True, "data": InventoryService.picker_catalogue()}
+
+
 @router.get("/stock-out")
 def stock_out(
     search: Optional[str] = None,

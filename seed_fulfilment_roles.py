@@ -304,85 +304,12 @@ def main() -> int:
 
         print(f"  {email} created as {role_name}")
 
-    stock(admin)
-
     print("\nSign in with:")
 
     for _, _, role_name, email in STAFF:
         print(f"  {role_name:<20} {email}  /  {TEAM_PASSWORD}")
 
     return 0
-
-
-#: What the procurement desk checks an order against. The serial numbers
-#: match the SKUs the demo quotations and orders carry, because that is how
-#: the two sides are keyed.
-STOCK = [
-    ('75" Interactive Flat Panel SPX7 (LangoV100)', "SG-IFP-75-SPX-V100", 12),
-    ('86" Interactive Flat Panel CPX8 (LangoV100)', "SG-IFP-86-SPX-V100", 3),
-    ("OPS i7 8GB/512GB 11th Gen", "SG-OPS-I7-13G", 0),
-]
-
-PRODUCT_TYPE = {
-    "name": "Display Systems",
-    "code": "DISPLAY",
-    "category": "Interactive Panels",
-}
-
-
-def stock(admin) -> None:
-    """Put something on the shelf, so the procurement desk has an answer.
-
-    Without any inventory every line reads "not in the catalogue", which
-    is honest but shows nothing. One item is deliberately short and one is
-    out altogether, so the desk's shortfall warning can be seen working.
-    """
-
-    print("\nStock for the procurement desk")
-
-    types = {t["code"]: t for t in rows(api("get", "/product-types/", admin))}
-
-    if PRODUCT_TYPE["code"] not in types:
-        created = api("post", "/product-types/", admin, json=PRODUCT_TYPE)
-
-        if created.status_code >= 400:
-            print(f"  could not add the product type: {created.text[:120]}")
-            return
-
-        print(f"  product type {PRODUCT_TYPE['code']} created")
-
-    held = {
-        str(item.get("serial_number") or "").upper()
-        for item in rows(api("get", "/inventory/items", admin))
-    }
-
-    for name, serial, quantity in STOCK:
-        if serial.upper() in held:
-            print(f"  {serial} already stocked")
-            continue
-
-        created = api("post", "/inventory/items", admin, json={
-            "name": name,
-            "serial_number": serial,
-            "product_type_code": PRODUCT_TYPE["code"],
-            "category": PRODUCT_TYPE["category"],
-            "attributes": {
-                "rate": 185000,
-                "unit": "Nos",
-                "instock": quantity,
-                "case_size": 1,
-                # Required on every product: the model says which one it
-                # is, the specification says what is in it.
-                "model_number": serial,
-                "specification": name,
-            },
-        })
-
-        if created.status_code >= 400:
-            print(f"  {serial}: {created.status_code} {created.text[:120]}")
-            continue
-
-        print(f"  {serial} stocked, {quantity} in hand")
 
 
 def employee_id(role_name: str) -> str:

@@ -383,6 +383,15 @@ try:
     seen = looked(mine[0])
     check("held, the units go back and can be named again", seen.get("found") and seen.get("in_stock"), str(seen))
 
+    # ================================================== a line with no SKU
+    from app.services.stock_movement_service import _match
+
+    blank = {"_id": "x", "serial_number": "", "name": ""}
+    check(
+        "a line with no SKU or name matches no product, not one without a serial",
+        _match({"sku": "", "product": ""}, {"": blank}, {"": blank}) is None,
+    )
+
     # ================================================== priced by model
     banner("7. A line keyed by model number is priced from inventory")
 

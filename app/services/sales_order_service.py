@@ -252,7 +252,7 @@ def _catalogue() -> dict[str, dict]:
                         "attributes.rate_per_unit": 1,
                         "attributes.warranty_rates": 1,
                     },
-                )
+                ).sort("_id", 1)
             )
 
             def entry(row: dict) -> dict:
