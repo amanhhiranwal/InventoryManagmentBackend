@@ -1590,6 +1590,10 @@ class SalesOrderService:
             SalesApproval.document_id == order.id,
         ).delete(synchronize_session=False)
 
+        # And its bell entries, which otherwise outlive it and open a page
+        # for an order that is gone - as proposals and opportunities do.
+        NotificationService.delete_for_entity(db, "sales_order", order.id)
+
         SalesOrderRepository.delete(db, order)
 
 
