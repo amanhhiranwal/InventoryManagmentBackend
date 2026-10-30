@@ -324,7 +324,9 @@ class FulfilmentDeskService:
         try:
             from app.services.inventory_service import InventoryService
 
-            items = list(InventoryService.items_col.find({"issued": {"$ne": True}}))
+            # Issued units too: a product whose every unit has gone out is
+            # still in the catalogue, with nothing left on the shelf.
+            items = list(InventoryService.items_col.find({}))
         except Exception:  # noqa: BLE001 - the desk still has to open
             logger.exception("Could not read inventory for order %s", order.id)
             items = []
@@ -382,7 +384,7 @@ class FulfilmentDeskService:
                 except (TypeError, ValueError):
                     return 0.0
 
-            available = sum(held(unit) for unit in units)
+            available = sum(held(unit) for unit in units if unit.get("issued") is not True)
 
             lines.append({
                 "product": item.get("name") or name,
