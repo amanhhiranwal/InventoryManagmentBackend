@@ -338,7 +338,7 @@ try:
     check("the same serial twice is refused", r.status_code == 400, f"{r.status_code}")
 
     r = decide("production", oid, serials=[{"line": 0, "serial": SERIALS[0]}, {"line": 0, "serial": f"NOPE-{TAG}"}])
-    check("a serial not on the shelf is refused", r.status_code == 400 and "not in the catalogue" in r.text, r.text[:160])
+    check("a serial not on the shelf is refused", r.status_code == 400 and "not in inventory" in r.text, r.text[:160])
     check("and nothing moved", status_of(oid) == "PROCUREMENT", status_of(oid))
 
     r = decide("production", oid, serials=[{"line": 0, "serial": SERIALS[0]}, {"line": 0, "serial": SERIALS[1]}])

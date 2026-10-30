@@ -163,6 +163,19 @@ def _move(order, direction: str, actor: str | None) -> list[dict]:
         item = _match(line, by_serial, by_name)
         quantity = _wanted(line)
 
+        if item is None and quantity > 0:
+            # The product is not in inventory any more - removed, or the
+            # line was written against an old product list - so there is
+            # nothing to count down or put back. Said, not skipped quietly.
+            logger.warning(
+                "Order %s line %s (%s) matches nothing in inventory; %s stock not moved %s",
+                order.order_number,
+                line.get("sku"),
+                line.get("product") or line.get("name"),
+                quantity,
+                direction,
+            )
+
         if item is None or quantity <= 0:
             continue
 
@@ -249,20 +262,51 @@ def _unit(serial: str):
     )
 
 
-def _line_names(line) -> set[str]:
-    return {
-        str(value).strip().lower()
-        for value in (line.get("sku"), line.get("product"), line.get("name"))
-        if value and str(value).strip()
-    }
+def _key(value) -> str:
+    return str(value or "").strip().lower()
+
+
+def _sku_known(sku: str) -> bool:
+    """Whether any record in inventory carries this SKU as its model or serial."""
+
+    pattern = {"$regex": f"^{re.escape(sku)}$", "$options": "i"}
+
+    return _items().count_documents(
+        {"$or": [{"attributes.model_number": pattern}, {"serial_number": pattern}]},
+        limit=1,
+    ) > 0
+
+
+def belongs_to_line(unit: dict, line: dict | None) -> bool:
+    """Whether this unit is the product the order line asks for.
+
+    A line picked from inventory carries the model number as its SKU, so
+    the unit's model - or its own serial, for a product recorded as one
+    record - has to be that SKU. A line whose SKU inventory does not know
+    (none, or one typed before the pickers read inventory) is matched on
+    the product name instead, the same way the desk's stock table is.
+    """
+
+    if not line:
+        return True
+
+    attributes = unit.get("attributes") or {}
+    sku = _key(line.get("sku"))
+
+    if sku and _sku_known(sku):
+        return sku in {_key(attributes.get("model_number")), _key(unit.get("serial_number"))}
+
+    names = {_key(line.get("product")), _key(line.get("name"))} - {""}
+
+    return bool(names & {_key(unit.get("name")), _key(attributes.get("model_number"))})
 
 
 def check_serial(serial: str, line: dict | None = None) -> dict:
-    """Whether a serial can be issued, as the production desk types it.
+    """Whether a serial can be issued against this line, as production types it.
 
-    In stock is the rule. Belonging to the product on the line is checked
-    too and reported, but only as a warning: the catalogue names and the
-    order's line names were typed by different people.
+    It has to be a unit on the shelf, in stock, and the product the line
+    asks for. A serial of a different product is refused and says which
+    product it is, so the desk can see what they picked up.
     """
 
     text = str(serial or "").strip()
@@ -287,32 +331,29 @@ def check_serial(serial: str, line: dict | None = None) -> dict:
             "message": (
                 f"{text} has already been issued to {issued.get('issued_order') or 'another order'}."
                 if issued
-                else f"{text} is not in the catalogue."
+                else f"{text} is not in inventory."
             ),
         }
 
     held = _stock_of(unit)
     attributes = unit.get("attributes") or {}
-    names = {
-        str(value).strip().lower()
-        for value in (unit.get("name"), unit.get("serial_number"), attributes.get("model_number"))
-        if value and str(value).strip()
-    }
-    matches = True if not line else bool(names & _line_names(line))
+    matches = belongs_to_line(unit, line)
+    model = attributes.get("model_number")
+    what = f"{unit.get('name')}" + (f" ({model})" if model else "")
 
     return {
         "serial": unit.get("serial_number") or text,
         "found": True,
         "in_stock": held > 0,
         "product": unit.get("name"),
-        "model_number": attributes.get("model_number"),
+        "model_number": model,
         "matches_line": matches,
         "message": (
             f"{unit.get('name')} is out of stock."
             if held <= 0
             else None
             if matches
-            else f"In stock, but it is a {unit.get('name')} - check it belongs on this line."
+            else f"This serial is a {what}, not {(line or {}).get('sku') or 'this product'}."
         ),
     }
 
@@ -345,6 +386,9 @@ def issue_serials(order, picks: list[dict], actor: str | None) -> list[dict]:
     moved: list[dict] = []
 
     for pick in picks:
+        index = int(pick.get("line") or 0)
+        line = lines[index] if 0 <= index < len(lines) else {}
+
         unit = _unit(pick["serial"])
 
         if unit is None:
@@ -368,9 +412,6 @@ def issue_serials(order, picks: list[dict], actor: str | None) -> list[dict]:
             })
 
         _items().update_one({"_id": unit["_id"]}, {"$set": changes})
-
-        index = int(pick.get("line") or 0)
-        line = lines[index] if 0 <= index < len(lines) else {}
 
         _write(
             order, unit, 1, OUT, before, after, actor,

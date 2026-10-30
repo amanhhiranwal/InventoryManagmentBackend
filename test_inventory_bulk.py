@@ -232,7 +232,7 @@ try:
     check("it has not created anything", data(preview).get("created") == 0)
     check("it has no complaints", data(preview).get("errors") == [], str(data(preview).get("errors")))
 
-    listed = rows(api("get", f"/inventory/items?search=BULK-{TAG}", admin))
+    listed = rows(api("get", f"/inventory/items?grouped=false&search=BULK-{TAG}", admin))
     check("nothing is in the catalogue yet", listed == [], str(len(listed)))
 
     print("\n3. Committing loads it")
@@ -242,7 +242,7 @@ try:
     check("the upload is accepted", done.status_code == 200, str(done.status_code))
     check("one product was created", data(done).get("created") == 1, str(data(done)))
 
-    listed = rows(api("get", f"/inventory/items?search=BULK-{TAG}-001", admin))
+    listed = rows(api("get", f"/inventory/items?grouped=false&search=BULK-{TAG}-001", admin))
     made += [row["_id"] for row in listed]
 
     check("it is in the catalogue", len(listed) == 1, str(len(listed)))
@@ -285,7 +285,7 @@ try:
     check("the sheet is accepted", trio.status_code == 200, str(body(trio)))
     check("three products came out of one row", data(trio).get("created") == 3, str(data(trio).get("created")))
 
-    saved = rows(api("get", f"/inventory/items?search=BULK-{TAG}-A", admin))
+    saved = rows(api("get", f"/inventory/items?grouped=false&search=BULK-{TAG}-A", admin))
     made += [row["_id"] for row in saved]
 
     serials = sorted(row["serial_number"] for row in saved)
@@ -347,7 +347,7 @@ try:
         str(data(loaded).get("created") or body(loaded)),
     )
 
-    saved = rows(api("get", f"/inventory/items?search=BULK-{TAG}-D", admin))
+    saved = rows(api("get", f"/inventory/items?grouped=false&search=BULK-{TAG}-D", admin))
     made += [row["_id"] for row in saved]
 
     stock = [float((row.get("attributes") or {}).get("instock") or 0) for row in saved]
@@ -393,7 +393,7 @@ try:
         str(data(either).get("created") or body(either)),
     )
 
-    saved = rows(api("get", f"/inventory/items?search=BULK-{TAG}-E", admin))
+    saved = rows(api("get", f"/inventory/items?grouped=false&search=BULK-{TAG}-E", admin))
     made += [row["_id"] for row in saved]
 
     check(
@@ -472,7 +472,7 @@ try:
             str(body(covered)),
         )
 
-        saved = rows(api("get", f"/inventory/items?search=BULK-{TAG}-W1", admin))
+        saved = rows(api("get", f"/inventory/items?grouped=false&search=BULK-{TAG}-W1", admin))
         made += [row["_id"] for row in saved]
 
         priced = ((saved[0].get("attributes") if saved else {}) or {}).get(
@@ -527,7 +527,7 @@ try:
         str(data(refused).get("errors")),
     )
 
-    left = rows(api("get", f"/inventory/items?search=BULK-{TAG}-OK", admin))
+    left = rows(api("get", f"/inventory/items?grouped=false&search=BULK-{TAG}-OK", admin))
     check("not even the good rows went in", left == [], str(len(left)))
 
     print("\n6. The same serial number twice is refused")
@@ -628,7 +628,7 @@ try:
     check("the CSV is accepted", loaded.status_code == 200, str(body(loaded)))
     check("both serial numbers became products", data(loaded).get("created") == 2, str(data(loaded)))
 
-    saved = rows(api("get", f"/inventory/items?search=BULK-{TAG}-C", admin))
+    saved = rows(api("get", f"/inventory/items?grouped=false&search=BULK-{TAG}-C", admin))
     made += [row["_id"] for row in saved]
 
     check(
@@ -686,7 +686,7 @@ finally:
         for item_id in set(made):
             api("delete", f"/inventory/items/{item_id}", admin)
 
-        leftover = rows(api("get", f"/inventory/items?search=BULK-{TAG}", admin))
+        leftover = rows(api("get", f"/inventory/items?grouped=false&search=BULK-{TAG}", admin))
 
         for row in leftover:
             api("delete", f"/inventory/items/{row['_id']}", admin)

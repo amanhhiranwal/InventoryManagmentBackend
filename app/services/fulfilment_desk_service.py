@@ -790,7 +790,7 @@ class FulfilmentDeskService:
         for pick in picks:
             result = check_serial(pick["serial"], lines[pick["line"]])
 
-            if not result["found"] or not result["in_stock"]:
+            if not result["found"] or not result["in_stock"] or not result["matches_line"]:
                 problems.append(result["message"])
 
         if problems:
