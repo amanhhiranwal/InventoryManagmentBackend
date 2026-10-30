@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import asc
+from sqlalchemy import asc, text
 from sqlalchemy.orm import Session
 
 from app.models.menu import MenuItem
@@ -109,6 +109,10 @@ MOVED_DEFAULT_ORDER = {
 #: Set once the default menus have been checked in this process.
 _DEFAULTS_ENSURED = False
 
+#: Any fixed number, the same in every worker: the advisory lock that lets
+#: only one of them seed the default menus at a time.
+MENU_SEED_LOCK = 7_310_031
+
 DEFAULT_MENUS_DATA = [
   {
     "title": "Dashboard",
@@ -164,6 +168,7 @@ DEFAULT_MENUS_DATA = [
     "children": [
       {"title": "Inventory", "icon": "LuPackage", "path": "/inventory", "permission_key": "inventory.read", "order_index": 1},
       {"title": "Logistics", "icon": "LuTruck", "path": "/fulfilment/logistics", "permission_key": "logistics_desk.read", "order_index": 2},
+      {"title": "Stock Out", "icon": "LuPackageMinus", "path": "/inventory/stock-out", "permission_key": "stock_out.read", "order_index": 3},
     ]
   },
   {
@@ -278,7 +283,14 @@ class MenuService:
         reordered - untouched. Reads every menu row in one query and commits
         only when something was actually added or renamed, so it costs a
         single query when the menus are already in place.
+
+        Taken under a database lock: a page asks for the menu tree and the
+        sidebar at once, and several workers start together, so two of
+        these used to run side by side - each saw an item missing and each
+        added it. The second now waits, then sees the first one's rows.
         """
+
+        db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": MENU_SEED_LOCK})
 
         rows = db.query(MenuItem).all()
         changed = False
@@ -482,8 +494,13 @@ class MenuService:
                 children_keys.add((parent_menu.id, c_item["title"]))
                 changed = True
 
+        # Either ends the transaction, which is what lets go of the seeding
+        # lock, so the next worker is not held up for the rest of this
+        # request. Nothing changed means nothing to keep.
         if changed:
             db.commit()
+        else:
+            db.rollback()
 
     @staticmethod
     def ensure_default_menus(db: Session):

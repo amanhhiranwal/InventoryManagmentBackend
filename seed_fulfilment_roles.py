@@ -61,6 +61,12 @@ PERMISSIONS = {
         "Inventory",
         "Load a sheet of products from Excel or CSV",
     ),
+    # The record of every unit issued to an order. Granted to no role here:
+    # a super admin sees it, and Roles & Access gives it to anyone else.
+    "stock_out.read": (
+        "Inventory",
+        "See every unit issued from inventory to an order: serial, order, customer and destination",
+    ),
 }
 
 #: role -> what it is for, and what it is granted.
