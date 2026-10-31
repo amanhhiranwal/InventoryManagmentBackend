@@ -44,6 +44,9 @@ MODEL = f"JRN-{TAG}"
 SERIALS = [f"JRN-{TAG}-{n}" for n in (1, 2, 3)]
 
 passed, failed = [], []
+
+#: What accounts enter as the day the money arrived.
+TODAY = datetime.now(timezone.utc).date().isoformat()
 section = ""
 
 
@@ -296,7 +299,34 @@ try:
     banner("5. Accounts verify, and the balance is kept")
 
     r = decide("accounts", oid, remarks="In the bank.")
+    check("verifying with no received date is refused", r.status_code == 400 and "date" in r.text, f"{r.status_code} {r.text[:160]}")
+
+    r = decide("accounts", oid, remarks="In the bank.", received_date="2999-01-01")
+    check("a received date in the future is refused", r.status_code == 400 and "future" in r.text, f"{r.status_code} {r.text[:160]}")
+
+    r = decide("accounts", oid, remarks="In the bank.", received_date="not a date")
+    check("a received date that is not a date is refused", r.status_code == 422, f"{r.status_code}")
+    check("and the order has not moved", status_of(oid) == "ORDER_PROCESSED", status_of(oid))
+
+    r = decide("accounts", oid, remarks="In the bank.", received_date=TODAY)
     check("accounts verify the payment", r.status_code == 200, f"{r.status_code} {r.text[:160]}")
+
+    from sqlalchemy import text as sql
+
+    from app.database.postgres import SessionLocal
+
+    session = SessionLocal()
+    stored = session.execute(
+        sql("select advance_received_date, balance_received_date from sales_order where id = :i"), {"i": oid}
+    ).one()
+    session.close()
+    check("the received date is kept on the order", str(stored[0]) == TODAY and stored[1] is None, str(stored))
+
+    history = rows(api("get", f"/orders/{oid}/activities", admin))
+    check(
+        "and written into the history",
+        any("Received on" in (e.get("description") or "") for e in history),
+    )
     check("the order is payment verified", status_of(oid) == "PAYMENT_VERIFIED", status_of(oid))
 
     now_order = api("get", f"/orders/{oid}", admin).json()["data"]
@@ -426,7 +456,7 @@ try:
 
     decide("coordinator", hid, advance_amount=round(float(held["grand_total"]) * 0.3, 2))
     api("post", f"/orders/{hid}/process", token["coordinator"])
-    decide("accounts", hid)
+    decide("accounts", hid, received_date=TODAY)
     decide("production", hid)
     r = decide("production", hid, serials=[{"line": 0, "serial": SERIALS[2]}])
     check("the last unit is issued to it", r.status_code == 200 and status_of(hid) == "READY", f"{r.status_code} {r.text[:120]}")

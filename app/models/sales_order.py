@@ -1,6 +1,7 @@
 from sqlalchemy import (
     JSON,
     Column,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -108,6 +109,11 @@ class SalesOrder(Base):
     #: an order always reports the balance it was saved with.
     advance_received = Column(Float, default=0.0, nullable=True)
     outstanding_balance = Column(Float, default=0.0, nullable=True)
+
+    #: The day the money reached the bank, as accounts entered it when
+    #: verifying the advance and when settling the balance.
+    advance_received_date = Column(Date, nullable=True)
+    balance_received_date = Column(Date, nullable=True)
 
     aging_0_30 = Column(Float, default=0.0, nullable=True)
     aging_31_60 = Column(Float, default=0.0, nullable=True)

@@ -37,6 +37,9 @@ ADMIN = ("superadmin@mailinator.com", "password123")
 TAG = uuid.uuid4().hex[:6]
 
 passed, failed = [], []
+
+#: What accounts enter as the day the money arrived.
+TODAY = datetime.now(timezone.utc).date().isoformat()
 section = ""
 
 
@@ -168,7 +171,7 @@ try:
     )
 
     verified = api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
-        "approve": True, "remarks": "Advance seen in the bank.",
+        "approve": True, "remarks": "Advance seen in the bank.", "received_date": TODAY,
     })
     check("accounts verify it", verified.status_code == 200, f"{verified.status_code} {verified.text[:160]}")
     check(
@@ -217,7 +220,7 @@ try:
     check("the balance is recorded", r.status_code == 200, f"{r.status_code} {r.text[:200]}")
 
     closed_by = api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
-        "approve": True, "remarks": "Balance settled.",
+        "approve": True, "remarks": "Balance settled.", "received_date": TODAY,
     })
     check("accounts close it out", closed_by.status_code == 200, f"{closed_by.status_code} {closed_by.text[:160]}")
 

@@ -13,12 +13,12 @@ in here.
 """
 
 import logging
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.timezone import iso
+from app.core.timezone import iso, now_ist
 from app.core.fulfilment import (
     ACCOUNTS,
     BUSINESS_COORDINATOR,
@@ -243,6 +243,8 @@ class FulfilmentDeskService:
             "advance_expected": expected,
             "advance_received": paid,
             "outstanding_balance": round(grand_total - paid, 2),
+            "advance_received_date": iso(order.advance_received_date),
+            "balance_received_date": iso(order.balance_received_date),
             "order_date": iso(order.order_date) if order.order_date else None,
             "waiting_days": _waiting_days(order),
             "items": order.items or [],
@@ -884,6 +886,7 @@ class FulfilmentDeskService:
         db: Session,
         advance_amount: float | None = None,
         serials: list | None = None,
+        received_date: date | None = None,
     ) -> SalesOrder:
         """Approve an order onward, or reject it and hold it with a reason.
 
@@ -925,6 +928,28 @@ class FulfilmentDeskService:
 
         notes: list[str] = []
         picks: list[dict] = []
+
+        # Accounts say on which day the money came in, whether it is the
+        # advance they verify or the balance that closes the order.
+        if approve and desk.role == ACCOUNTS:
+            if received_date is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Enter the date the payment was received.",
+                )
+
+            if received_date > now_ist().date():
+                raise HTTPException(
+                    status_code=400,
+                    detail="The received date cannot be in the future.",
+                )
+
+            if order.status == SalesOrderStatus.INSTALLED:
+                order.balance_received_date = received_date
+            else:
+                order.advance_received_date = received_date
+
+            notes.append(f"Received on {received_date.strftime('%d %b %Y')}.")
 
         if approve and order.status == SalesOrderStatus.CONFIRMED:
             notes.append(

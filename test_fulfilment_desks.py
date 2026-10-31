@@ -46,6 +46,9 @@ TAG = uuid.uuid4().hex[:6]
 UNITS = [f"DESK-{TAG.upper()}-{n}" for n in (1, 2)]
 
 passed, failed = [], []
+
+#: What accounts enter as the day the money arrived.
+TODAY = datetime.now(timezone.utc).date().isoformat()
 section = ""
 
 
@@ -329,7 +332,7 @@ try:
     # it at all: the desk asked accounts to confirm the advance "against
     # the proforma invoice" while never requiring one to exist.
     nothing = api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
-        "approve": True, "remarks": "Says he has paid.",
+        "approve": True, "remarks": "Says he has paid.", "received_date": TODAY,
     })
     check("an order with no proforma invoice cannot be verified", nothing.status_code == 400, f"got {nothing.status_code}")
     check(
@@ -345,7 +348,7 @@ try:
     api("put", f"/orders/{order['id']}/status", admin, json={"status": "ORDER_PROCESSED"})
 
     unpaid = api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
-        "approve": True, "remarks": "Says he has paid.",
+        "approve": True, "remarks": "Says he has paid.", "received_date": TODAY,
     })
     check("an invoice with nothing received on it cannot be verified either", unpaid.status_code == 400, f"got {unpaid.status_code}")
     check(
@@ -359,7 +362,7 @@ try:
     })
 
     approved = api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
-        "approve": True, "remarks": "Advance received in full.",
+        "approve": True, "remarks": "Advance received in full.", "received_date": TODAY,
     })
     check("accounts approve it", approved.status_code == 200, f"{approved.status_code} {approved.text[:160]}")
     check("it moves exactly one step", status_of(order["id"]) == "PAYMENT_VERIFIED", status_of(order["id"]))
@@ -440,7 +443,7 @@ try:
 
     short_order = raise_order("Short Order", sku=SHORT_SKU, qty=int(in_hand) + 1)
     api("put", f"/fulfilment/orders/{short_order['id']}/decide", token["accounts"], json={
-        "approve": True, "remarks": "Paid.",
+        "approve": True, "remarks": "Paid.", "received_date": TODAY,
     })
 
     desk = api("get", "/fulfilment/production", token["production"]).json()["data"]
@@ -511,7 +514,7 @@ try:
     )
 
     closed = api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
-        "approve": True, "remarks": "Balance settled.",
+        "approve": True, "remarks": "Balance settled.", "received_date": TODAY,
     })
     check("accounts close it", closed.status_code == 200 and status_of(order["id"]) == "COMPLETED", status_of(order["id"]))
 

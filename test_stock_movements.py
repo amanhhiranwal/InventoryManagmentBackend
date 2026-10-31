@@ -45,6 +45,9 @@ TAG = uuid.uuid4().hex[:6]
 SERIAL = f"TEST-{TAG}".upper()
 
 passed, failed = [], []
+
+#: What accounts enter as the day the money arrived.
+TODAY = datetime.now(timezone.utc).date().isoformat()
 section = ""
 
 
@@ -209,7 +212,7 @@ try:
     coordinate_order(order["id"])
 
     api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
-        "approve": True, "remarks": "Paid.",
+        "approve": True, "remarks": "Paid.", "received_date": TODAY,
     })
 
     check("accounts release it to the warehouse", status_now() == "PAYMENT_VERIFIED", status_now())
@@ -311,7 +314,7 @@ try:
         "amount_paid": round(float(bill["grand_total"]) * 0.3, 2),
     })
     coordinate_order(made["id"])
-    api("put", f"/fulfilment/orders/{made['id']}/decide", token["accounts"], json={"approve": True, "remarks": "Paid."})
+    api("put", f"/fulfilment/orders/{made['id']}/decide", token["accounts"], json={"approve": True, "remarks": "Paid.", "received_date": TODAY})
     api("put", f"/fulfilment/orders/{made['id']}/decide", production, json={"approve": True, "remarks": "Taken in."})
 
     def status_of(order_id):
