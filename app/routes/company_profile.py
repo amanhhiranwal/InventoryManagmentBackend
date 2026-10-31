@@ -30,6 +30,9 @@ class CompanyProfileRequest(BaseModel):
     company_offerings: str | None = None
     company_logo_path: str | None = None
     company_cover_image: str | None = None
+    company_brand_name: str | None = None
+    company_tagline: str | None = None
+    company_services_line: str | None = None
     signatory_name: str | None = None
     signatory_title: str | None = None
 
@@ -157,21 +160,76 @@ def remove_cover(
 
 @router.get("/cover/image")
 def get_cover_image(db: Session = Depends(get_db)):
-    """The cover picture, for the preview to show.
+    """The cover photograph the proposal prints, for the previews to show.
 
-    Open like the logo: an <img> tag cannot carry an Authorization header.
+    The uploaded one, or the bundled one the PDF falls back to - so the
+    screen shows what will actually be printed. Open like the logo: an
+    <img> tag cannot carry an Authorization header.
     """
 
     from fastapi.responses import FileResponse
 
-    configured = CompanyProfileService.raw(db).get("company_cover_image") or ""
-    path = Path(configured) if configured else None
+    from app.services.quotation_pdf_service import DEFAULT_COVER, _image_path
 
-    if path and not path.is_absolute():
-        path = Path(__file__).resolve().parents[2] / configured
+    path = _image_path(
+        CompanyProfileService.raw(db).get("company_cover_image"), DEFAULT_COVER
+    )
 
-    if path is None or not path.exists():
+    if path is None:
         raise HTTPException(status_code=404, detail="No cover image set.")
+
+    return FileResponse(str(path))
+
+
+@router.post("/cover-logo")
+def upload_cover_logo(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user=Depends(require_super_admin),
+):
+    """The white mark printed over the cover photograph."""
+
+    CompanyProfileService.save(
+        {"company_cover_logo": _store_image(file, "cover-logo")}, db
+    )
+
+    return {
+        "success": True,
+        "message": "Cover logo uploaded.",
+        "data": CompanyProfileService.as_lists(db),
+    }
+
+
+@router.delete("/cover-logo")
+def remove_cover_logo(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_super_admin),
+):
+    """Back to the bundled cover logo."""
+
+    CompanyProfileService.save({"company_cover_logo": ""}, db)
+
+    return {
+        "success": True,
+        "message": "Cover logo reset.",
+        "data": CompanyProfileService.as_lists(db),
+    }
+
+
+@router.get("/cover-logo/image")
+def get_cover_logo_image(db: Session = Depends(get_db)):
+    """The cover logo the proposal prints. Open, like the other images."""
+
+    from fastapi.responses import FileResponse
+
+    from app.services.quotation_pdf_service import DEFAULT_COVER_LOGO, _image_path
+
+    path = _image_path(
+        CompanyProfileService.raw(db).get("company_cover_logo"), DEFAULT_COVER_LOGO
+    )
+
+    if path is None:
+        raise HTTPException(status_code=404, detail="No cover logo set.")
 
     return FileResponse(str(path))
 

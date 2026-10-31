@@ -1,10 +1,17 @@
 """The quotation as a proposal PDF, ready to attach to an email.
 
-Laid out like the business proposal that goes out today: a cover carrying
-the logo and a navy sweep, an About page whose text sits in a navy panel
-over the range on offer, the priced table under a navy header, and the
-terms and signature. Every page after the cover carries the logo and a
-navy footer bar with the website.
+Laid out like the business proposal that goes out today. The cover is a
+product photograph across the top with the brand mark on it and PROPOSAL
+under it, then the About text and tagline, the document details, and who
+it is billed to and prepared by. Every page after it is on a pale tint
+with the logo and company line at the top over a maroon rule, and the
+address and contacts at the foot: the supply summary under a navy
+header, the totals with the advance due and the amount in words, the
+payment schedule beside the terms, and who issued it.
+
+The logo, the cover logo, the cover photograph and the copy all come from
+Masters > Company Profile; the bundled images are only what prints until
+somebody uploads their own.
 
 Built with reportlab's Platypus so it paginates on its own - a quotation
 with forty lines spills onto the next page with the table header repeated,
@@ -12,6 +19,7 @@ rather than running off the bottom.
 """
 
 from datetime import datetime
+from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
 
@@ -21,16 +29,14 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import (
+    BaseDocTemplate,
     Frame,
-    Image,
+    KeepInFrame,
     KeepTogether,
-    ListFlowable,
-    ListItem,
     NextPageTemplate,
     PageBreak,
     PageTemplate,
     Paragraph,
-    BaseDocTemplate,
     Spacer,
     Table,
     TableStyle,
@@ -39,19 +45,31 @@ from reportlab.platypus import (
 from app.core.config import settings
 from app.services.company_profile_service import CompanyProfileService
 
-#: The brand navy, sampled from the printed proposal.
-NAVY = colors.HexColor("#1f477b")
-INK = colors.HexColor("#1f2d3d")
-MUTED = colors.HexColor("#64748b")
-RULE = colors.HexColor("#c9d2e0")
-BAND = colors.HexColor("#f4f7fb")
+#: The colours of the printed proposal.
+NAVY = colors.HexColor("#233353")
+INK = colors.HexColor("#1f2937")
+MUTED = colors.HexColor("#6b7280")
+MAROON = colors.HexColor("#a3324c")
+TEAL = colors.HexColor("#4a8190")
+LABEL = colors.HexColor("#5b7590")
+TINT = colors.HexColor("#eff4f8")
+BOX = colors.HexColor("#eef3f7")
+PANEL = colors.HexColor("#f6f9fb")
+RULE = colors.HexColor("#dde4ea")
 
 PAGE_W, PAGE_H = A4
-MARGIN = 18 * mm
+
+#: The text column of every page after the cover.
+MARGIN = 13 * mm
 CONTENT_W = PAGE_W - 2 * MARGIN
 
-#: Sits at the bottom of every page after the cover.
-FOOTER_H = 9 * mm
+#: Where the header ends and the footer begins on those pages.
+HEADER_H = 32 * mm
+FOOTER_H = 22 * mm
+
+#: The cover's text starts under the photograph and PROPOSAL.
+COVER_TEXT_TOP = 170 * mm
+COVER_MARGIN = 10 * mm
 
 ABOUT_FALLBACK = (
     "A technology hardware and business consulting company delivering "
@@ -61,13 +79,20 @@ ABOUT_FALLBACK = (
     "customers need as the landscape changes."
 )
 
-DEFAULT_LOGO = Path(__file__).resolve().parents[1] / "assets" / "brand-logo.jpg"
+#: Printed until Masters says otherwise, as the business's proposal has them.
+TAGLINE_FALLBACK = "Smarter Displays. Better Decisions."
+SERVICES_FALLBACK = "INTERACTIVE DISPLAY | EDUCATION TECHNOLOGY | AV SOLUTIONS"
 
-#: The picture the printed proposal opens with. Bundled rather than
-#: configured, so a proposal looks like the one the business actually
-#: sends without anybody having to set an environment variable first.
-#: COMPANY_COVER_IMAGE still overrides it.
-DEFAULT_COVER = Path(__file__).resolve().parents[1] / "assets" / "proposal-hero.jpg"
+ASSETS = Path(__file__).resolve().parents[1] / "assets"
+
+#: The colour mark at the top of every page after the cover.
+DEFAULT_LOGO = ASSETS / "brand-logo.jpg"
+
+#: The white mark printed over the cover photograph.
+DEFAULT_COVER_LOGO = ASSETS / "proposal-cover-logo.png"
+
+#: The photograph the cover opens with.
+DEFAULT_COVER = ASSETS / "proposal-hero.jpg"
 
 
 def _money(value) -> str:
@@ -240,93 +265,149 @@ def _logo_path(configured: str | None = None) -> Path | None:
     return DEFAULT_LOGO if DEFAULT_LOGO.exists() else None
 
 
+
+def _image_path(configured: str | None, fallback: Path) -> Path | None:
+    """An uploaded image if it is still on disk, else the bundled one."""
+
+    configured = (configured or "").strip()
+
+    if configured:
+        path = Path(configured)
+        if not path.is_absolute():
+            path = Path(__file__).resolve().parents[2] / configured
+        if path.exists():
+            return path
+
+    return fallback if fallback.exists() else None
+
+
+@lru_cache(maxsize=8)
+def _without_white(path: str, modified: float):
+    """A logo with its white background made see-through.
+
+    Worked out once per file (and again if it is replaced, which changes
+    its modified time) rather than pixel by pixel on every page.
+    """
+
+    from PIL import Image as PILImage
+
+    picture = PILImage.open(path).convert("RGBA")
+    picture.putdata([
+        (r, g, b, 0) if r > 238 and g > 238 and b > 238 else (r, g, b, a)
+        for r, g, b, a in picture.getdata()
+    ])
+    return picture
+
+
 def _styles() -> dict:
     base = getSampleStyleSheet()
 
+    def style(name, **kw):
+        return ParagraphStyle(name, parent=base["Normal"], **kw)
+
     return {
-        "cover_title": ParagraphStyle(
-            "cover_title", parent=base["Title"], fontSize=42, leading=46,
-            textColor=NAVY, alignment=0, spaceAfter=2,
-            fontName="Helvetica-Bold",
+        "about_title": style(
+            "about_title", fontName="Helvetica-Bold", fontSize=15.5,
+            leading=20, textColor=INK, spaceAfter=7,
         ),
-        "cover_sub": ParagraphStyle(
-            "cover_sub", parent=base["Normal"], fontSize=20, leading=25,
-            textColor=NAVY, fontName="Helvetica-Bold", spaceAfter=26,
+        "about": style(
+            "about", fontSize=10.3, leading=16.8, textColor=INK,
+            alignment=TA_JUSTIFY, spaceAfter=6,
         ),
-        "label": ParagraphStyle(
-            "label", parent=base["Normal"], fontSize=10.5, leading=14,
-            textColor=NAVY, fontName="Helvetica-Bold", spaceAfter=3,
-        ),
-        "value": ParagraphStyle(
-            "value", parent=base["Normal"], fontSize=10, leading=14,
+        "tagline": style(
+            "tagline", fontName="Helvetica-Bold", fontSize=10.3, leading=14,
             textColor=INK,
         ),
-        "panel_title": ParagraphStyle(
-            "panel_title", parent=base["Normal"], fontSize=17, leading=22,
-            textColor=colors.white, fontName="Helvetica-Bold",
-            alignment=TA_CENTER,
+        "details_title": style(
+            "details_title", fontName="Helvetica-Bold", fontSize=7.4,
+            leading=10, textColor=NAVY,
         ),
-        "panel_body": ParagraphStyle(
-            "panel_body", parent=base["Normal"], fontSize=8.4, leading=12.6,
-            textColor=colors.white, alignment=TA_JUSTIFY, spaceAfter=7,
+        "details_label": style(
+            "details_label", fontName="Helvetica-Bold", fontSize=8.2,
+            leading=10.4, textColor=LABEL,
         ),
-        "h2": ParagraphStyle(
-            "h2", parent=base["Normal"], fontSize=17, leading=22,
-            textColor=NAVY, fontName="Helvetica-Bold", alignment=TA_CENTER,
-            spaceAfter=12,
+        "details_value": style(
+            "details_value", fontSize=8.2, leading=10.4, textColor=INK,
         ),
-        "h3": ParagraphStyle(
-            "h3", parent=base["Normal"], fontSize=11, leading=15,
-            textColor=INK, fontName="Helvetica-Bold", spaceBefore=10,
-            spaceAfter=6,
+        "purpose": style("purpose", fontSize=9.4, leading=12, textColor=INK),
+        "party_label": style(
+            "party_label", fontName="Helvetica-Bold", fontSize=7,
+            leading=9, textColor=MAROON,
         ),
-        "body": ParagraphStyle(
-            "body", parent=base["Normal"], fontSize=9, leading=13.5,
-            textColor=INK, spaceAfter=5,
+        "party_name": style(
+            "party_name", fontName="Helvetica-Bold", fontSize=11.2,
+            leading=13.5, textColor=NAVY,
         ),
-        "offering": ParagraphStyle(
-            "offering", parent=base["Normal"], fontSize=10, leading=17,
-            textColor=INK,
+        "party_strong": style(
+            "party_strong", fontName="Helvetica-Bold", fontSize=7.8,
+            leading=9.6, textColor=NAVY,
         ),
-        "cell": ParagraphStyle(
-            "cell", parent=base["Normal"], fontSize=7.8, leading=10.8,
-            alignment=TA_CENTER, textColor=INK,
+        "party_line": style("party_line", fontSize=7.8, leading=9.6, textColor=INK),
+        "section": style(
+            "section", fontName="Helvetica-Bold", fontSize=8.6, leading=11,
+            textColor=NAVY, spaceAfter=5,
         ),
-        "cell_left": ParagraphStyle(
-            "cell_left", parent=base["Normal"], fontSize=7.8, leading=10.8,
-            textColor=INK,
+        "head": style(
+            "head", fontName="Helvetica-Bold", fontSize=7, leading=9,
+            textColor=colors.white, alignment=TA_CENTER,
         ),
-        #: A part code is one thing, not a run of letters to break where
-        #: the column happens to end. SG-IFP-65-SPX-V100 was coming out
-        #: as "SG-IFP-65-SPX-V1 / 00", which is not the code any more.
-        "cell_code": ParagraphStyle(
-            "cell_code", parent=base["Normal"], fontSize=7.2, leading=10,
-            textColor=INK, alignment=TA_CENTER, splitLongWords=0,
-            wordWrap=None,
+        "cell": style(
+            "cell", fontSize=7.8, leading=10, textColor=INK, alignment=TA_CENTER,
         ),
-        #: Figures stay on one line: "INR / 1,54,580.00" over two lines
-        #: reads as two numbers.
-        "cell_money": ParagraphStyle(
-            "cell_money", parent=base["Normal"], fontSize=7.8, leading=10.8,
-            textColor=INK, alignment=TA_RIGHT, splitLongWords=0,
+        "cell_product": style(
+            "cell_product", fontName="Helvetica-Bold", fontSize=7.8,
+            leading=9.6, textColor=INK,
         ),
-        "cell_serial": ParagraphStyle(
-            "cell_serial", parent=base["Normal"], fontSize=8, leading=11,
-            textColor=colors.white, fontName="Helvetica-Bold",
-            alignment=TA_CENTER,
+        #: Figures stay on one line: "1,54,580.00" over two lines reads
+        #: as two numbers.
+        "cell_money": style(
+            "cell_money", fontSize=7.8, leading=10, textColor=INK,
+            alignment=TA_RIGHT, splitLongWords=0,
         ),
-        "cell_head": ParagraphStyle(
-            "cell_head", parent=base["Normal"], fontSize=8, leading=11,
-            textColor=colors.white, fontName="Helvetica-Bold",
-            alignment=TA_CENTER,
+        "total_label": style("total_label", fontSize=8.4, leading=10.5, textColor=MUTED),
+        "total_value": style(
+            "total_value", fontSize=8.4, leading=10.5, textColor=INK, alignment=TA_RIGHT,
         ),
-        "small": ParagraphStyle(
-            "small", parent=base["Normal"], fontSize=8.5, leading=12,
-            textColor=MUTED,
+        "grand_label": style(
+            "grand_label", fontName="Helvetica-Bold", fontSize=8.8,
+            leading=11, textColor=colors.white,
         ),
-        "sign": ParagraphStyle(
-            "sign", parent=base["Normal"], fontSize=9.5, leading=14,
-            textColor=INK, fontName="Helvetica-Bold",
+        "grand_value": style(
+            "grand_value", fontName="Helvetica-Bold", fontSize=8.8,
+            leading=11, textColor=colors.white, alignment=TA_RIGHT,
+        ),
+        "advance_label": style(
+            "advance_label", fontName="Helvetica-Bold", fontSize=8.4,
+            leading=10.5, textColor=NAVY,
+        ),
+        "advance_value": style(
+            "advance_value", fontName="Helvetica-Bold", fontSize=8.4,
+            leading=10.5, textColor=NAVY, alignment=TA_RIGHT,
+        ),
+        "words": style(
+            "words", fontName="Helvetica-Bold", fontSize=8.8, leading=11.5,
+            textColor=NAVY,
+        ),
+        "panel_label": style(
+            "panel_label", fontName="Helvetica-Bold", fontSize=7.4,
+            leading=9.5, textColor=TEAL, spaceAfter=2,
+        ),
+        "panel_strong": style(
+            "panel_strong", fontName="Helvetica-Bold", fontSize=8.2,
+            leading=11, textColor=NAVY,
+        ),
+        "panel_line": style("panel_line", fontSize=8.2, leading=11, textColor=INK),
+        "term": style(
+            "term", fontSize=7.3, leading=9.4, textColor=INK, leftIndent=7,
+            firstLineIndent=-7,
+        ),
+        "issued": style(
+            "issued", fontName="Helvetica-Bold", fontSize=8.4, leading=11,
+            textColor=NAVY,
+        ),
+        "signatory": style(
+            "signatory", fontName="Helvetica-Bold", fontSize=8.4, leading=11,
+            textColor=MUTED, alignment=TA_RIGHT,
         ),
     }
 
@@ -350,9 +431,17 @@ class QuotationPDFService:
 
         profile = CompanyProfileService.as_lists(db)
         seller = QuotationPDFService._seller(db, quotation, company_id)
+        name = (seller and seller.company_name) or profile["company_legal_name"] or "Synergy Group"
 
         return {
-            "name": (seller and seller.company_name) or profile["company_legal_name"] or "Synergy Group",
+            "name": name,
+            # "About Synergy", not "About SYNERGY GLOBAL PRIVATE LIMITED".
+            "brand_name": (
+                profile["company_brand_name"] or name.split()[0].capitalize()
+            ),
+            "tagline": profile["company_tagline"] or TAGLINE_FALLBACK,
+            "services_line": profile["company_services_line"] or SERVICES_FALLBACK,
+            "cover_logo": profile["company_cover_logo"],
             "address": (
                 QuotationPDFService._seller_address(seller)
                 or profile["company_address_lines"]
@@ -471,302 +560,308 @@ class QuotationPDFService:
     # Page furniture
     # ------------------------------------------------------------------
     @staticmethod
-    def _logo(canvas, x, y, width, configured=None):
-        path = _logo_path(configured)
+    def _draw_image(canvas, path, x, top, width=None, height=None, centre=False,
+                    clear_white=False):
+        """An image hung from its top edge, sized by width or by height.
+
+        ``clear_white`` makes a logo's white background see-through, so a
+        JPG mark sits on the tinted page instead of in a white box.
+
+        Returns the height drawn, 0 when there was nothing to draw. A
+        missing or unreadable image leaves the page without it rather
+        than failing the whole proposal.
+        """
 
         if path is None:
-            return
+            return 0
 
         try:
             from reportlab.lib.utils import ImageReader
 
-            reader = ImageReader(str(path))
+            if clear_white:
+                reader = ImageReader(_without_white(str(path), Path(path).stat().st_mtime))
+            else:
+                reader = ImageReader(str(path))
             iw, ih = reader.getSize()
-            height = width * ih / iw
+
+            if height is not None and width is None:
+                width = height * iw / ih
+            elif width is not None and height is None:
+                height = width * ih / iw
+            elif width is not None and height is not None:
+                # Fit inside the box, keeping its shape.
+                scale = min(width / iw, height / ih)
+                width, height = iw * scale, ih * scale
+
+            if centre:
+                x = x - width / 2
+
             canvas.drawImage(
-                reader, x, y - height, width=width, height=height,
-                mask="auto", preserveAspectRatio=True,
+                reader, x, top - height, width=width, height=height, mask="auto",
             )
-        except Exception:  # pragma: no cover - a missing logo is not fatal
-            pass
+            return height
+        except Exception:  # pragma: no cover - a bad image is not fatal
+            return 0
 
     @staticmethod
     def _cover_page(company, canvas, doc):
-        """The navy sweep and the logo, drawn behind the cover's text."""
+        """The photograph, the white mark on it, and PROPOSAL under it."""
 
         canvas.saveState()
 
-        # The navy sweep off the top-right corner. The cover art carries
-        # its own, so this is only drawn when there is none.
-        if QuotationPDFService._cover_art() is None:
-            canvas.setFillColor(NAVY)
-            canvas.circle(PAGE_W + 38 * mm, PAGE_H - 4 * mm, 92 * mm, stroke=0, fill=1)
-
-        # The cover art is the page. In the printed proposal the navy
-        # sweep, the white field the addresses sit on and the photograph
-        # are one picture - so it is drawn edge to edge behind everything
-        # rather than inset in the middle with white around it. It is cut
-        # to very nearly A4 already, so filling the page does not stretch
-        # it noticeably.
-        hero = QuotationPDFService._cover_art()
-
-        if hero:
-            try:
-                from reportlab.lib.utils import ImageReader
-
-                canvas.drawImage(
-                    ImageReader(str(hero)), 0, 0,
-                    width=PAGE_W, height=PAGE_H,
-                    preserveAspectRatio=False, anchor="sw", mask="auto",
-                )
-            except Exception:  # pragma: no cover - a bad image is not fatal
-                hero = None
-
-        # Only drawn when there is no art to carry the corner itself.
-        if not hero:
-            canvas.setFillColor(NAVY)
-            canvas.circle(-46 * mm, -30 * mm, 78 * mm, stroke=0, fill=1)
-
-        QuotationPDFService._logo(
-            canvas, MARGIN, PAGE_H - MARGIN, 42 * mm, company["logo_path"]
+        photo = _image_path(
+            company["cover_image"] or settings.COMPANY_COVER_IMAGE, DEFAULT_COVER
         )
+        drawn = QuotationPDFService._draw_image(canvas, photo, 0, PAGE_H, width=PAGE_W)
+
+        if not drawn:
+            # No photograph at all: a navy field in its place, so the white
+            # mark still has something to sit on.
+            drawn = 118 * mm
+            canvas.setFillColor(NAVY)
+            canvas.rect(0, PAGE_H - drawn, PAGE_W, drawn, stroke=0, fill=1)
+
+        # Fade the foot of the picture into the page, as the printed cover
+        # does - an uploaded photograph with a hard bottom edge would
+        # otherwise end in a line across the page.
+        fade = drawn * 0.28
+        steps = 40
+        canvas.setFillColor(colors.white)
+        for step in range(steps):
+            canvas.setFillAlpha((step + 1) / steps)
+            band_top = PAGE_H - drawn + fade - fade * step / steps
+            canvas.rect(0, band_top - fade / steps, PAGE_W, fade / steps + 0.5, stroke=0, fill=1)
+        canvas.setFillAlpha(1)
+
+        # Anything below the picture is plain page.
+        canvas.rect(0, 0, PAGE_W, PAGE_H - drawn, stroke=0, fill=1)
+
+        QuotationPDFService._draw_image(
+            canvas,
+            _image_path(company["cover_logo"], DEFAULT_COVER_LOGO),
+            PAGE_W / 2, PAGE_H - 16 * mm, width=78 * mm, height=16 * mm, centre=True,
+        )
+
+        word = "PROPOSAL"
+        size = 46
+        canvas.setFillColor(colors.HexColor("#111111"))
+        canvas.setFont("Helvetica-Bold", size)
+        canvas.drawCentredString(PAGE_W / 2, PAGE_H - 161 * mm, word)
+
         canvas.restoreState()
-
-    @staticmethod
-    def _cover_art():
-        """The picture the cover is drawn with, or None."""
-
-        from app.core.config import settings
-
-        configured = (getattr(settings, "COMPANY_COVER_IMAGE", "") or "").strip()
-
-        if configured:
-            path = Path(configured)
-            if not path.is_absolute():
-                path = Path(__file__).resolve().parents[2] / configured
-        else:
-            path = DEFAULT_COVER
-
-        return path if path.exists() else None
 
     @staticmethod
     def _inner_page(company, canvas, doc):
-        """Logo top-right, navy footer bar with the website."""
+        """The tint, the logo and company line over the rule, the contacts."""
 
         canvas.saveState()
-        # The logo hangs from its top edge, and that edge sat 10mm from
-        # the paper's - inside the non-printable margin of most office
-        # printers, which is where the clipped mark came from. It now
-        # starts at the same 18mm the text does.
-        QuotationPDFService._logo(
-            canvas, PAGE_W - MARGIN - 34 * mm, PAGE_H - MARGIN, 34 * mm,
-            company["logo_path"],
+
+        canvas.setFillColor(TINT)
+        canvas.rect(0, 0, PAGE_W, PAGE_H, stroke=0, fill=1)
+
+        # The logo hangs from 12mm, clear of the non-printable edge most
+        # office printers leave.
+        QuotationPDFService._draw_image(
+            canvas, _logo_path(company["logo_path"]),
+            MARGIN, PAGE_H - 10 * mm, width=48 * mm, height=17 * mm,
+            clear_white=True,
         )
 
+        right = PAGE_W - MARGIN
         canvas.setFillColor(NAVY)
-        canvas.rect(0, 0, PAGE_W, FOOTER_H, stroke=0, fill=1)
+        canvas.setFont("Helvetica-Bold", 9.6)
+        canvas.drawRightString(right, PAGE_H - 16.5 * mm, (company["name"] or "").upper())
 
-        canvas.setFillColor(colors.white)
-        canvas.setFont("Helvetica", 7.5)
-        canvas.drawCentredString(
-            PAGE_W / 2,
-            FOOTER_H / 2 - 2.5,
-            (company["website"] or company["name"]).upper(),
+        if company["services_line"]:
+            canvas.setFillColor(MUTED)
+            canvas.setFont("Helvetica", 7.3)
+            canvas.drawRightString(
+                right, PAGE_H - 20.5 * mm,
+                "  |  ".join(_split(company["services_line"])).upper(),
+            )
+
+        canvas.setStrokeColor(MAROON)
+        canvas.setLineWidth(1.2)
+        canvas.line(MARGIN, PAGE_H - 26 * mm, right, PAGE_H - 26 * mm)
+
+        address = ", ".join(company["address"])
+        first = "  |  ".join(
+            part for part in (address, company["gstin"] and f"GSTIN: {company['gstin']}") if part
         )
+
+        if first:
+            canvas.setFillColor(MUTED)
+            canvas.setFont("Helvetica", 7.3)
+            canvas.drawCentredString(PAGE_W / 2, 15.5 * mm, first)
+
+        contacts = "  |  ".join(
+            part for part in (company["phone"], company["email"], company["website"]) if part
+        )
+
+        if contacts:
+            canvas.setFillColor(NAVY)
+            canvas.setFont("Helvetica-Bold", 10.5)
+            canvas.drawCentredString(PAGE_W / 2, 9.5 * mm, contacts)
+
         canvas.restoreState()
 
     # ------------------------------------------------------------------
-    # Sections
+    # Cover
     # ------------------------------------------------------------------
     @staticmethod
-    def _cover(quotation, company, sender, s) -> list:
-        headline = (
-            quotation.opportunity_name
-            or (quotation.items or [{}])[0].get("product")
-            or "Commercial Proposal"
-        )
+    def _bill_to(quotation) -> list[tuple[str, str]]:
+        """Who it is billed to, as (style, text) lines."""
 
-        submitted_to = [quotation.organization_name or quotation.contact_name or "-"]
-        submitted_to += _address_lines(quotation.billing_address)
+        organisation = quotation.organization_name or quotation.contact_name or "-"
+        lines = [("party_name", organisation)]
+
+        if quotation.organization_name and quotation.contact_name:
+            lines.append(("party_strong", f"Attn: {quotation.contact_name}"))
+
+        address = quotation.billing_address if isinstance(quotation.billing_address, dict) else {}
+        street = str(address.get("street") or "").strip()
+        city = str(address.get("city") or "").strip()
+        region = " ".join(
+            str(part).strip()
+            for part in (address.get("state"), address.get("zipCode") or address.get("zip_code"))
+            if str(part or "").strip()
+        )
+        country = str(address.get("country") or "").strip()
+
+        if street:
+            lines.append(("party_line", street))
+
+        rest = ", ".join(part for part in (city, region, country) if part)
+        if rest:
+            lines.append(("party_line", rest))
+
+        return lines
+
+    @staticmethod
+    def _prepared_by(company, sender) -> list[tuple[str, str]]:
+        """Whoever is sending it, over the company."""
 
         if sender:
-            submitted_by = _without_repeats([
-                sender["name"],
-                sender["title"],
-                company["name"],
-                sender["email"],
-                sender["phone"],
-            ])
+            name, title = sender["name"], sender["title"]
+            contact = "  |  ".join(part for part in (sender["phone"], sender["email"]) if part)
         else:
-            submitted_by = _without_repeats([
-                company["signatory"] or company["name"],
-                company["signatory_title"] if company["signatory"] else None,
-                company["name"] if company["signatory"] else None,
-            ])
+            name = company["signatory"] or company["name"]
+            title = company["signatory_title"] if company["signatory"] else None
+            contact = "  |  ".join(part for part in (company["phone"], company["email"]) if part)
 
-        block = Table(
-            [[
-                [
-                    Paragraph("SUBMITTED TO:", s["label"]),
-                    *[Paragraph(line, s["value"]) for line in submitted_to],
-                ],
-                [
-                    Paragraph("SUBMITTED BY:", s["label"]),
-                    *[Paragraph(line, s["value"]) for line in submitted_by],
-                ],
-            ]],
-            colWidths=[CONTENT_W * 0.5, CONTENT_W * 0.5],
+        lines = [("party_name", name)]
+        seen = {str(name or "").lower()}
+
+        for style_name, text in (
+            ("party_line", title),
+            ("party_strong", (company["name"] or "").upper()),
+            ("party_line", contact),
+        ):
+            if text and text.lower() not in seen:
+                seen.add(text.lower())
+                lines.append((style_name, text))
+
+        return lines
+
+    @staticmethod
+    def _cover(quotation, company, sender, s) -> list:
+        paragraphs = company["about_paragraphs"] or [ABOUT_FALLBACK]
+
+        flow = [
+            Paragraph(f"About {company['brand_name']}", s["about_title"]),
+            *[Paragraph(p, s["about"]) for p in paragraphs],
+        ]
+
+        if company["tagline"]:
+            flow += [Spacer(1, 5 * mm), Paragraph(company["tagline"], s["tagline"])]
+
+        details = Table(
+            [
+                [Paragraph("DOCUMENT DETAILS", s["details_title"]), ""],
+                [Paragraph("Proposal No.", s["details_label"]),
+                 Paragraph(str(quotation.quote_number or quotation.id), s["details_value"])],
+                [Paragraph("Issue Date", s["details_label"]),
+                 Paragraph(_date(quotation.quotation_date), s["details_value"])],
+                [Paragraph("Valid Until", s["details_label"]),
+                 Paragraph(_date(quotation.validation_date), s["details_value"])],
+            ],
+            colWidths=[32 * mm, 38 * mm],
         )
-        block.setStyle(TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        details.setStyle(TableStyle([
+            ("SPAN", (0, 0), (-1, 0)),
+            ("BACKGROUND", (0, 0), (-1, -1), BOX),
+            ("BOX", (0, 0), (-1, -1), 0.6, RULE),
+            ("LEFTPADDING", (0, 0), (-1, -1), 5 * mm),
+            ("LEFTPADDING", (1, 0), (1, -1), 1.5 * mm),
             ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, 0), 5 * mm),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 1),
+            ("BOTTOMPADDING", (0, -1), (-1, -1), 5 * mm),
         ]))
 
-        # The reference sits under the title, in the white band the art
-        # leaves at the top. It used to come after the picture, which on a
-        # cover that is one edge-to-edge image meant printing it over the
-        # photograph.
-        reference = Paragraph(
-            f"Reference {quotation.quote_number or quotation.id} &nbsp;|&nbsp; "
-            f"Issued {_date(quotation.quotation_date)} &nbsp;|&nbsp; "
-            f"Valid until {_date(quotation.validation_date)}",
-            s["small"],
+        inner_w = PAGE_W - 2 * COVER_MARGIN - 6 * mm
+        row = Table(
+            [[Paragraph("For order confirmation and advance payment processing", s["purpose"]), details]],
+            colWidths=[inner_w - 70 * mm, 70 * mm],
         )
+        row.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (0, 0), "BOTTOM"),
+            ("VALIGN", (1, 0), (1, 0), "TOP"),
+            ("LEFTPADDING", (0, 0), (0, 0), 1.5 * mm),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("LEFTPADDING", (1, 0), (1, 0), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
 
-        # Everything sits in the white field the art leaves at the top, so
-        # it starts high and stays tight: the photograph begins a little
-        # over a third of the way down and will not move for us.
+        def party(label, lines):
+            return [Paragraph(label, s["party_label"])] + [
+                Paragraph(text, s[style_name]) for style_name, text in lines
+            ]
+
+        parties = Table(
+            [[
+                party("BILL TO", QuotationPDFService._bill_to(quotation)),
+                party("PREPARED BY", QuotationPDFService._prepared_by(company, sender)),
+            ]],
+            colWidths=[inner_w / 2] * 2,
+        )
+        parties.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("BACKGROUND", (0, 0), (-1, -1), PANEL),
+            ("BOX", (0, 0), (-1, -1), 0.6, RULE),
+            ("LINEBEFORE", (1, 0), (1, 0), 0.6, RULE),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4.5 * mm),
+            ("TOPPADDING", (0, 0), (-1, -1), 2.5 * mm),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5 * mm),
+        ]))
+
+        # The cover is one page whatever the About text runs to: a longer
+        # text is set a little smaller rather than pushing the addresses
+        # onto the next page.
         return [
-            Spacer(1, 15 * mm),
-            Paragraph("PROPOSAL", s["cover_title"]),
-            Paragraph(headline, s["cover_sub"]),
-            Spacer(1, 2 * mm),
-            reference,
-            Spacer(1, 4 * mm),
-            block,
             NextPageTemplate("inner"),
+            KeepInFrame(
+                PAGE_W - 2 * COVER_MARGIN,
+                PAGE_H - COVER_TEXT_TOP - 14 * mm,
+                [*flow, Spacer(1, 8 * mm), row, Spacer(1, 2.5 * mm), parties],
+                mode="shrink",
+            ),
             PageBreak(),
         ]
 
-    @staticmethod
-    def _cover_image(cover_image: str | None) -> list:
-        """Room on the cover for the picture drawn behind it.
-
-        The picture itself is painted across the full width of the page by
-        _cover_page; this only holds the space open so the reference line
-        settles above it rather than on top of it.
-        """
-
-        if QuotationPDFService._cover_art() is None:
-            return []
-
-        return [Spacer(1, 26 * mm)]
-
-    @staticmethod
-    def _about(quotation, company, s) -> list:
-        """The navy panel, then what the company offers."""
-
-        paragraphs = company["about_paragraphs"] or [ABOUT_FALLBACK]
-
-        # Two columns of white text inside one navy cell, as the printed
-        # proposal sets it - but a single paragraph runs the full width
-        # rather than leaving half the panel empty.
-        if len(paragraphs) > 1:
-            half = (len(paragraphs) + 1) // 2
-            body = Table(
-                [[
-                    [Paragraph(p, s["panel_body"]) for p in paragraphs[:half]],
-                    [Paragraph(p, s["panel_body"]) for p in paragraphs[half:]],
-                ]],
-                colWidths=[(CONTENT_W - 20 * mm) * 0.5] * 2,
-            )
-            body.setStyle(TableStyle([
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (0, -1), 0),
-                ("RIGHTPADDING", (0, 0), (0, -1), 7),
-                ("LEFTPADDING", (1, 0), (1, -1), 7),
-                ("RIGHTPADDING", (1, 0), (-1, -1), 0),
-            ]))
-            columns = body
-        else:
-            columns = Paragraph(paragraphs[0], s["panel_body"])
-
-        panel = Table(
-            [
-                [Paragraph(f"About {company['name']}", s["panel_title"])],
-                [columns],
-            ],
-            colWidths=[CONTENT_W],
-        )
-        panel.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), NAVY),
-            ("LEFTPADDING", (0, 0), (-1, -1), 10 * mm),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 10 * mm),
-            ("TOPPADDING", (0, 0), (0, 0), 9 * mm),
-            ("BOTTOMPADDING", (0, 0), (0, 0), 5 * mm),
-            ("TOPPADDING", (0, 1), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 1), (-1, -1), 8 * mm),
-            ("ROUNDEDCORNERS", [10, 10, 10, 10]),
-        ]))
-
-        flow = [Spacer(1, 12 * mm), panel]
-
-        offerings = company["offerings"] or QuotationPDFService._offerings_from(quotation)
-
-        if offerings:
-            rows = []
-            for index in range(0, len(offerings), 2):
-                pair = offerings[index:index + 2]
-                rows.append([
-                    Paragraph(f"<bullet>&bull;</bullet> {pair[0]}", s["offering"]),
-                    Paragraph(
-                        f"<bullet>&bull;</bullet> {pair[1]}" if len(pair) > 1 else "",
-                        s["offering"],
-                    ),
-                ])
-
-            grid = Table(rows, colWidths=[CONTENT_W * 0.5] * 2)
-            grid.setStyle(TableStyle([
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 6 * mm),
-                ("TOPPADDING", (0, 0), (-1, -1), 3),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-            ]))
-
-            flow += [Spacer(1, 12 * mm), grid]
-
-        flow.append(PageBreak())
-
-        return flow
-
-    @staticmethod
-    def _offerings_from(quotation) -> list[str]:
-        """What is on this quotation, when no range is configured."""
-
-        seen: list[str] = []
-
-        for raw in quotation.items or []:
-            item = raw if isinstance(raw, dict) else {}
-            name = str(item.get("product") or item.get("model") or "").strip()
-
-            if name and name not in seen:
-                seen.append(name)
-
-        return seen
-
+    # ------------------------------------------------------------------
+    # The offer
+    # ------------------------------------------------------------------
     @staticmethod
     def _offer(quotation, s) -> list:
         header = [
-            Paragraph(text, s["cell_head"])
-            # HSN sits beside the description, as a tax invoice has it.
-            # The currency is said once, in the heading. Repeated on
-            # every figure it pushed the larger amounts onto a second
-            # line - "INR" over "1,54,580.00", which reads as two numbers.
-            for text in ("Sr. No", "Category", "Model", "Description",
-                         "HSN / SAC", "Qty", "Price (INR)", "GST",
-                         "Amount (INR)")
+            Paragraph(text, s["head"])
+            # The currency is said once, in the heading, so the larger
+            # amounts stay on one line.
+            for text in ("#", "PRODUCT / MODEL", "HSN", "QTY", "UNIT PRICE<br/>(INR)",
+                         "GST", "LINE AMOUNT<br/>(INR)")
         ]
 
         rows = [header]
@@ -780,127 +875,126 @@ class QuotationPDFService:
             discount = float(item.get("discount") or 0)
             tax = float(item.get("tax") if item.get("tax") is not None else gst_percent)
 
+            # Before tax, as the printed summary has it: GST is its own
+            # column here and its own line in the totals.
             net = quantity * unit_price * (1 - discount / 100)
-            tax_amount = net * tax / 100
+
+            product = str(item.get("product") or "").strip()
+            model = str(item.get("model") or "").strip()
+            code = str(item.get("sku") or item.get("description") or "").strip()
+
+            # The category over the model reads "Interactive Flat Panel /
+            # 65" Interactive Flat Panel SPX" - the same words twice. The
+            # model alone says it when it already carries the category.
+            if model and product and product.lower() in model.lower():
+                described = [model]
+            else:
+                described = [product or model or "-"]
+                if model and model.lower() != (product or "").lower():
+                    described.append(model)
+            if code:
+                described.append(f"Model: {code}")
 
             rows.append([
-                Paragraph(str(index), s["cell_serial"]),
-                Paragraph(str(item.get("product") or "-"), s["cell"]),
-                Paragraph(str(item.get("model") or "-"), s["cell"]),
-                Paragraph(str(item.get("sku") or item.get("description") or "-"), s["cell_code"]),
+                Paragraph(str(index), s["cell"]),
+                Paragraph("<br/>".join(described), s["cell_product"]),
                 Paragraph(str(item.get("hsn") or "-"), s["cell"]),
                 Paragraph(f"{quantity:g}", s["cell"]),
                 Paragraph(_money(unit_price), s["cell_money"]),
-                # The rate, not the rupees. The column is headed GST and
-                # carried the tax amount, which the Amount column already
-                # includes - so the same money was printed twice and the
-                # rate, which is what a buyer checks, was nowhere.
                 Paragraph(f"{tax:g}%", s["cell"]),
-                Paragraph(_money(net + tax_amount), s["cell_money"]),
+                Paragraph(_money(net), s["cell_money"]),
             ])
 
         if len(rows) == 1:
             rows.append(
-                [Paragraph("No items on this proposal.", s["cell"])]
-                + [Paragraph("", s["cell"])] * 8
+                [Paragraph("", s["cell"]), Paragraph("No items on this proposal.", s["cell_product"])]
+                + [Paragraph("", s["cell"])] * 5
             )
 
-        table = Table(
-            rows,
-            # Sums to the 174mm text area. Model carries the longest
-            # text on the row - '65" Interactive Flat Panel SPX (Lango
-            # V100)' - and had 21mm, which broke it over four lines; GST
-            # now holds "18%" and needs almost none, so the room goes
-            # where the words are.
-            colWidths=[9 * mm, 20 * mm, 36 * mm, 26 * mm, 18 * mm, 10 * mm,
-                       22 * mm, 11 * mm, 22 * mm],
-            repeatRows=1,
-        )
+        widths = (25, 191, 56, 30, 68, 33, 118)
+        scale = CONTENT_W / sum(widths)
+
+        table = Table(rows, colWidths=[w * scale for w in widths], repeatRows=1)
         table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), NAVY),
-            # The serial column carries the navy down the left edge, as the
-            # printed table does.
-            ("BACKGROUND", (0, 1), (0, -1), NAVY),
+            ("BACKGROUND", (0, 1), (-1, -1), colors.white),
             ("GRID", (0, 0), (-1, -1), 0.5, RULE),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, 0), 4.5),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 4.5),
+            ("TOPPADDING", (0, 1), (-1, -1), 7),
+            ("BOTTOMPADDING", (0, 1), (-1, -1), 7),
         ]))
 
-        customer = [
-            Paragraph("To,", s["body"]),
-            Paragraph(
-                f"<b>{quotation.organization_name or quotation.contact_name or '-'}</b>",
-                s["body"],
-            ),
-        ]
-
-        for line in _address_lines(quotation.billing_address):
-            customer.append(Paragraph(line, s["small"]))
-
-        return [
-            Spacer(1, 12 * mm),
-            Paragraph("Proposal", s["h2"]),
-            Spacer(1, 4 * mm),
-            *customer,
-            Spacer(1, 5 * mm),
-            table,
-        ]
+        return [Spacer(1, 4 * mm), Paragraph("SUPPLY SUMMARY", s["section"]), table]
 
     @staticmethod
     def _totals(quotation, s) -> list:
-        lines = [("Subtotal", quotation.subtotal)]
+        gst = float(quotation.gst_percent or 0)
+        lines = []
 
         # Discount and ORC are internal margin, never shown to a client.
-        if quotation.freight_charges:
-            lines.append(("Delivery", quotation.freight_charges))
-        if quotation.installation_lumpsum:
-            lines.append(("Installation", quotation.installation_lumpsum))
+        # Delivery and installation are only listed when there are any.
+        if quotation.freight_charges or quotation.installation_lumpsum:
+            lines.append(("Subtotal", quotation.subtotal))
+            if quotation.freight_charges:
+                lines.append(("Delivery", quotation.freight_charges))
+            if quotation.installation_lumpsum:
+                lines.append(("Installation", quotation.installation_lumpsum))
 
-        lines.append(("Taxable Amount", quotation.taxable_amount))
-        lines.append(
-            (f"GST ({float(quotation.gst_percent or 0):g}%)", quotation.gst_amount)
-        )
+        lines.append(("Taxable Subtotal", quotation.taxable_amount))
+        lines.append((f"GST @ {gst:g}%", quotation.gst_amount))
 
         rows = [
-            [Paragraph(label, s["cell_left"]),
-             Paragraph(f"INR {_money(value)}", s["cell_left"])]
+            [Paragraph(label, s["total_label"]), Paragraph(f"INR {_money(value)}", s["total_value"])]
             for label, value in lines
         ]
+
+        grand = len(rows)
         rows.append([
-            Paragraph("<b>Grand Total</b>", s["cell_left"]),
-            Paragraph(f"<b>INR {_money(quotation.total_payable)}</b>", s["cell_left"]),
+            Paragraph("GRAND TOTAL", s["grand_label"]),
+            Paragraph(f"INR {_money(quotation.total_payable)}", s["grand_value"]),
         ])
 
-        table = Table(rows, colWidths=[46 * mm, 38 * mm], hAlign="RIGHT")
-        table.setStyle(TableStyle([
-            ("GRID", (0, 0), (-1, -1), 0.5, RULE),
-            ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-            ("BACKGROUND", (0, -1), (-1, -1), BAND),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-        ]))
+        advance = float(quotation.advance_percent or 0)
+        total = float(quotation.total_payable or 0)
+        advance_amount = float(quotation.advance_amount or (total * advance / 100))
+
+        rows.append([
+            Paragraph(f"{advance:g}% Advance Due with Purchase Order", s["advance_label"]),
+            Paragraph(f"INR {_money(advance_amount)}", s["advance_value"]),
+        ])
 
         # The same figure in words, built from the same number. A customer
         # document carries both because digits can be altered with a pen
-        # and words cannot - and because it is what a reader checks the
-        # total against.
-        in_words = Table(
-            [[Paragraph(
-                f"<b>Amount in words:</b> {_words(quotation.total_payable)}",
-                s["cell_left"],
-            )]],
-            colWidths=[174 * mm],
-        )
-        in_words.setStyle(TableStyle([
+        # and words cannot.
+        rows.append([
+            Paragraph(
+                f'<font color="#a3324c" size="7.4">AMOUNT IN WORDS</font>&nbsp;&nbsp;'
+                f"{_words(quotation.total_payable)}",
+                s["words"],
+            ),
+            "",
+        ])
+
+        table = Table(rows, colWidths=[CONTENT_W * 0.69, CONTENT_W * 0.31])
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), PANEL),
             ("GRID", (0, 0), (-1, -1), 0.5, RULE),
-            ("BACKGROUND", (0, 0), (-1, -1), BAND),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("BACKGROUND", (0, grand), (-1, grand), NAVY),
+            ("BACKGROUND", (0, grand + 1), (-1, grand + 1), BOX),
+            ("BACKGROUND", (0, -1), (-1, -1), colors.white),
+            ("SPAN", (0, -1), (-1, -1)),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3.5 * mm),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3 * mm),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, -1), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, -1), (-1, -1), 6),
         ]))
 
-        return [Spacer(1, 5 * mm), table, Spacer(1, 3 * mm), in_words]
+        return [Spacer(1, 6 * mm), table]
 
     @staticmethod
     def payment_terms(quotation) -> list[str]:
@@ -919,70 +1013,92 @@ class QuotationPDFService:
 
     @staticmethod
     def _terms(quotation, s) -> list:
-        points = QuotationPDFService.payment_terms(quotation)
+        advance = float(quotation.advance_percent or 0)
+        total = float(quotation.total_payable or 0)
+        advance_amount = float(quotation.advance_amount or (total * advance / 100))
+        balance = quotation.on_delivery_amount or (total - advance_amount)
+
+        schedule = [
+            Paragraph("PAYMENT SCHEDULE", s["panel_label"]),
+            Paragraph(
+                f"{advance:g}% with Purchase Order&nbsp; - &nbsp;INR {_money(advance_amount)}",
+                s["panel_strong"],
+            ),
+            Paragraph(
+                f"{100 - advance:g}% against delivery&nbsp; - &nbsp;INR {_money(balance)}",
+                s["panel_line"],
+            ),
+        ]
 
         # The validity period belongs on the document itself, not only in
         # the covering email - it is the one term a client checks first.
-        points.append(
-            f"This offer is valid until {_date(quotation.validation_date)}"
-            " and is subject to reconfirmation thereafter."
-        )
+        points = [
+            f"Offer valid through {_date(quotation.validation_date)}; reconfirm thereafter.",
+            f"Taxes shown at {float(quotation.gst_percent or 0):g}%; final tax will be "
+            "charged at the rate applicable on the tax invoice date.",
+        ]
 
         for entry in quotation.terms or []:
             if isinstance(entry, dict) and entry.get("checked") and entry.get("label"):
                 points.append(str(entry["label"]))
 
+        conditions = [Paragraph("TERMS &amp; CONDITIONS", s["panel_label"])] + [
+            Paragraph(f"&bull;&nbsp; {point}", s["term"]) for point in points
+        ]
+
+        panel = Table([[schedule, conditions]], colWidths=[CONTENT_W * 0.5] * 2)
+        panel.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), PANEL),
+            ("BOX", (0, 0), (-1, -1), 0.6, RULE),
+            ("LINEBEFORE", (1, 0), (1, 0), 0.6, RULE),
+            ("VALIGN", (0, 0), (0, 0), "MIDDLE"),
+            ("VALIGN", (1, 0), (1, 0), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3.5 * mm),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3 * mm),
+            ("TOPPADDING", (0, 0), (-1, -1), 3 * mm),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3 * mm),
+        ]))
+
         flow = [
-            Paragraph("General Terms &amp; Conditions:", s["h3"]),
-            ListFlowable(
-                [ListItem(Paragraph(point, s["body"]), leftIndent=14)
-                 for point in points],
-                bulletType="bullet",
-                bulletFontSize=7,
-                leftIndent=14,
-            ),
+            Spacer(1, 6 * mm),
+            Paragraph("PAYMENT &amp; COMMERCIAL TERMS", s["section"]),
+            panel,
         ]
 
         if quotation.remarks:
-            flow += [
-                Paragraph("Remarks", s["h3"]),
-                Paragraph(str(quotation.remarks), s["body"]),
-            ]
+            remarks = Table(
+                [[[Paragraph("REMARKS", s["panel_label"]),
+                   Paragraph(str(quotation.remarks), s["panel_line"])]]],
+                colWidths=[CONTENT_W],
+            )
+            remarks.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), PANEL),
+                ("BOX", (0, 0), (-1, -1), 0.6, RULE),
+                ("LEFTPADDING", (0, 0), (-1, -1), 3.5 * mm),
+                ("TOPPADDING", (0, 0), (-1, -1), 3 * mm),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3 * mm),
+            ]))
+            flow += [Spacer(1, 3 * mm), remarks]
 
         return flow
 
     @staticmethod
     def _signature(company, sender, s) -> list:
-        """Signed by whoever is sending it, over the company's details."""
+        """Who issued it, and the space for the authorised signatory."""
 
-        block = [Paragraph("Best Regards", s["sign"])]
-
-        name = (sender and sender["name"]) or company["signatory"]
+        name = (sender and sender["name"]) or company["signatory"] or company["name"]
         title = (sender and sender["title"]) or company["signatory_title"]
 
-        for line in _without_repeats([name, title, company["name"]]):
-            block.append(Paragraph(line, s["sign"]))
+        issued = "&nbsp;&nbsp;|&nbsp;&nbsp;".join(_without_repeats([name, title]))
 
-        contact = [
-            line
-            for line in (
-                (sender and sender["phone"]) or company["phone"],
-                (sender and sender["email"]) or company["email"],
-                company["website"],
-            )
-            if line
+        return [
+            Spacer(1, 7 * mm),
+            KeepTogether([
+                Paragraph(f"Issued by:&nbsp;&nbsp;{issued}", s["issued"]),
+                Spacer(1, 7 * mm),
+                Paragraph("Authorised Signatory&nbsp;&nbsp;&nbsp;", s["signatory"]),
+            ]),
         ]
-
-        if contact:
-            block.append(Paragraph(" | ".join(contact), s["small"]))
-
-        for line in company["address"][:2]:
-            block.append(Paragraph(line, s["small"]))
-
-        if company["gstin"]:
-            block.append(Paragraph(f"GSTIN: {company['gstin']}", s["small"]))
-
-        return [Spacer(1, 10 * mm), KeepTogether(block)]
 
     # ------------------------------------------------------------------
     # Entry point
@@ -1001,19 +1117,18 @@ class QuotationPDFService:
             pagesize=A4,
             leftMargin=MARGIN,
             rightMargin=MARGIN,
-            topMargin=MARGIN,
-            bottomMargin=MARGIN,
+            topMargin=HEADER_H,
+            bottomMargin=FOOTER_H,
             title=f"Proposal {quotation.quote_number or quotation.id}",
             author=company["name"],
         )
 
         cover_frame = Frame(
-            MARGIN, MARGIN, CONTENT_W, PAGE_H - 2 * MARGIN, id="cover",
-            leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0,
+            COVER_MARGIN, 14 * mm, PAGE_W - 2 * COVER_MARGIN, PAGE_H - COVER_TEXT_TOP - 14 * mm,
+            id="cover", leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0,
         )
         inner_frame = Frame(
-            MARGIN, MARGIN + FOOTER_H, CONTENT_W,
-            PAGE_H - 2 * MARGIN - FOOTER_H, id="inner",
+            MARGIN, FOOTER_H, CONTENT_W, PAGE_H - HEADER_H - FOOTER_H, id="inner",
             leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0,
         )
 
@@ -1034,7 +1149,6 @@ class QuotationPDFService:
 
         story = [
             *QuotationPDFService._cover(quotation, company, sender, s),
-            *QuotationPDFService._about(quotation, company, s),
             *QuotationPDFService._offer(quotation, s),
             *QuotationPDFService._totals(quotation, s),
             *QuotationPDFService._terms(quotation, s),

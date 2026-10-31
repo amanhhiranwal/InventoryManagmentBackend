@@ -23,6 +23,15 @@ FIELDS: dict[str, str] = {
     "company_offerings": "COMPANY_OFFERINGS",
     "company_logo_path": "COMPANY_LOGO_PATH",
     "company_cover_image": "COMPANY_COVER_IMAGE",
+
+    # The proposal's cover and letterhead: the short name in "About
+    # Synergy", the line under the About text, the line under the company
+    # name at the top of each page, and the white mark printed over the
+    # cover photograph.
+    "company_brand_name": "COMPANY_BRAND_NAME",
+    "company_tagline": "COMPANY_TAGLINE",
+    "company_services_line": "COMPANY_SERVICES_LINE",
+    "company_cover_logo": "COMPANY_COVER_LOGO",
     "signatory_name": "SIGNATORY_NAME",
     "signatory_title": "SIGNATORY_TITLE",
 
