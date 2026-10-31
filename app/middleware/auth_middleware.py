@@ -57,6 +57,17 @@ def get_current_user(
                 detail="This account has been deactivated. Sign in again.",
             )
 
+        # Signed in before the account's sessions were ended (a welcome
+        # email with a new password does that). A token from before this
+        # check existed carries no version and reads as 0. Only older
+        # tokens are refused: a service whose copy of the user missed the
+        # bump must not lock out the sign-in that came after it.
+        if int(payload.get("sv") or 0) < int(user.session_version or 0):
+            raise HTTPException(
+                status_code=401,
+                detail="You have been signed out. Sign in again.",
+            )
+
         if user.must_change_password and not str(
             request.url.path
         ).endswith(WHILE_PASSWORD_IS_TEMPORARY):

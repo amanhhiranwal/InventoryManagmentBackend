@@ -95,6 +95,121 @@ class UserService:
         return user
 
     @staticmethod
+    def send_welcome_email(user_id: str, db: Session, current_user: dict) -> User:
+        """The super admin's one-time welcome email, with a fresh password.
+
+        Once per person. The new temporary password replaces whatever
+        they had and every earlier sign-in is ended, so the emailed one is
+        the only way in. The claim is a conditional UPDATE, so two clicks
+        at once send one email; and it is committed only once the email
+        has gone, so a failed send changes nothing and can be retried.
+        """
+
+        from datetime import datetime
+
+        from sqlalchemy import update
+
+        validate_uuid(user_id, "user_id")
+
+        user = db.query(User).filter(User.id == UUID(user_id)).first()
+
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        if str(user.id) == str(current_user.get("user_id")):
+            raise HTTPException(
+                status_code=400,
+                detail="You cannot send the welcome email to yourself - it would sign you out.",
+            )
+
+        if not user.is_active:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{user.email} is switched off. Switch the account on before welcoming them.",
+            )
+
+        temporary = PasswordService.temporary_password()
+
+        claimed = db.execute(
+            update(User)
+            .where(User.id == user.id, User.welcome_email_sent_at.is_(None))
+            .values(
+                password=PasswordService.hash_password(temporary),
+                must_change_password=True,
+                session_version=User.session_version + 1,
+                welcome_email_sent_at=datetime.utcnow(),
+            )
+            .execution_options(synchronize_session=False)
+        ).rowcount
+
+        if not claimed:
+            db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail=f"The welcome email has already been sent to {user.email}.",
+            )
+
+        db.refresh(user)
+
+        if not account_mail.send_welcome(user, temporary, db):
+            # Nothing is kept: their old password still works and the
+            # button is still there to try again.
+            db.rollback()
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"The welcome email to {user.email} could not be sent, so "
+                    "nothing was changed. Check the mail settings and try again."
+                ),
+            )
+
+        db.commit()
+        db.refresh(user)
+
+        UserService._copy_session_version(user)
+
+        return user
+
+    @staticmethod
+    def _copy_session_version(user: User) -> None:
+        """Carry the account's session number to every service's database.
+
+        Each service checks a token against its own copy of the users
+        table, so a sign-out has to reach all of them. A copy that cannot
+        be reached is logged; the account is still signed out of this one.
+        """
+
+        import logging
+        from urllib.parse import quote_plus
+
+        from sqlalchemy import create_engine, text
+
+        from app.core.config import settings
+
+        logger = logging.getLogger(__name__)
+        password = quote_plus(settings.POSTGRES_PASSWORD)
+
+        for name in ("solutions", "auth_db", "crm_db", "inventory_db", "sales_db"):
+            if name == settings.POSTGRES_DB:
+                continue
+
+            engine = create_engine(
+                f"postgresql+psycopg2://{settings.POSTGRES_USER}:{password}"
+                f"@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{name}"
+            )
+
+            try:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("UPDATE users SET session_version = :v WHERE id = :id"),
+                        {"v": user.session_version, "id": str(user.id)},
+                    )
+            except Exception:  # noqa: BLE001 - the others still need it
+                logger.exception("Could not sign %s out of %s", user.email, name)
+            finally:
+                engine.dispose()
+
+    @staticmethod
     def create(request, db: Session, current_user: dict | None = None) -> User:
         # Check if email is already taken
         email_exists = UserRepository.get_by_email(db, request.email)

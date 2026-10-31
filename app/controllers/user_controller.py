@@ -124,6 +124,9 @@ class UserController:
             # When the account was opened. Asked for on the list, where it
             # answers "is this someone we added last week or last year".
             "created_at": iso(user.created_at) if user.created_at else None,
+            # When the super admin sent the welcome email, which can only
+            # happen once; None while it has not been sent.
+            "welcome_email_sent_at": iso(user.welcome_email_sent_at),
         }
 
     @staticmethod
@@ -187,6 +190,19 @@ class UserController:
                 f"A temporary password has been emailed to {user.email}. "
                 "They will choose their own when they sign in."
             ),
+        }
+
+    @staticmethod
+    def send_welcome_email(user_id: str, db, current_user=None):
+        user = UserService.send_welcome_email(user_id, db, current_user)
+
+        return {
+            "success": True,
+            "message": (
+                f"Welcome email sent to {user.email} with a temporary "
+                "password. Any earlier sign-ins have been logged out."
+            ),
+            "data": UserController._to_response_dict(user),
         }
 
     @staticmethod

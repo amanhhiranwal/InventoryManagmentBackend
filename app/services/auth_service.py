@@ -117,6 +117,9 @@ class AuthService:
                 "first_name": user.first_name,
                 "last_name": user.last_name,
                 "permissions": permissions,
+                # Checked on every request against the account's own, so
+                # raising that one signs out every token issued before.
+                "sv": user.session_version or 0,
             }
         )
 
