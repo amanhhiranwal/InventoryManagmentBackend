@@ -1,4 +1,6 @@
-from sqlalchemy import Boolean, ForeignKey, String
+from datetime import datetime
+
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -32,6 +34,22 @@ class User(BaseModel):
         default=False,
         nullable=False,
         server_default="false",
+    )
+
+    #: Goes into every token at sign-in and is checked on every request,
+    #: so raising it signs the account out everywhere at once.
+    session_version: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False,
+        server_default="0",
+    )
+
+    #: When a super admin sent the welcome email from User Management.
+    #: It goes once per person: set, the button is spent.
+    welcome_email_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
     )
 
     phone_number: Mapped[str] = mapped_column(

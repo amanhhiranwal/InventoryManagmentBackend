@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.controllers.user_controller import UserController
 from app.database.dependencies import get_db
-from app.middleware.permission_middleware import require_permission
+from app.middleware.permission_middleware import require_permission, require_super_admin
 from app.schemas.user import (
     CreateUserRequest,
     SetUserActiveRequest,
@@ -104,6 +104,18 @@ def reset_user_password(
     """
 
     return UserController.reset_password(user_id, db, current_user)
+
+
+@router.post("/{user_id}/welcome-email")
+def send_welcome_email(
+    user_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_super_admin),
+):
+    """Super admin only, once per person: email a temporary password and
+    sign them out of every earlier session."""
+
+    return UserController.send_welcome_email(user_id, db, current_user)
 
 
 @router.put("/{user_id}")
