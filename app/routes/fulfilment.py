@@ -7,6 +7,8 @@ Access. Where an order has got to is answered by the sales order's own
 Order Process panel, so there is no separate board here.
 """
 
+from datetime import date
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -48,6 +50,8 @@ class DecisionRequest(BaseModel):
     approve: bool
     remarks: str | None = None
     advance_amount: float | None = None
+    #: Accounts' day the money arrived, when verifying or settling it.
+    received_date: date | None = None
     serials: list[SerialPick] | None = None
 
 
@@ -207,6 +211,7 @@ def decide(
         current_user,
         db,
         advance_amount=request.advance_amount,
+        received_date=request.received_date,
         serials=[pick.model_dump() for pick in request.serials or []],
     )
 

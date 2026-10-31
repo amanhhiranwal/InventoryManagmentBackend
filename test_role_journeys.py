@@ -55,6 +55,9 @@ LOGISTICS_EMAIL = "logistics@mailinator.com"
 TAG = uuid.uuid4().hex[:6]
 
 passed, failed = [], []
+
+#: What accounts enter as the day the money arrived.
+TODAY = datetime.now(timezone.utc).date().isoformat()
 section = ""
 
 
@@ -521,7 +524,7 @@ try:
     check("a rejection with no reason is refused", r.status_code >= 400, f"got {r.status_code}")
 
     r = api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
-        "approve": True, "remarks": "Advance seen in the bank.",
+        "approve": True, "remarks": "Advance seen in the bank.", "received_date": TODAY,
     })
     check("accounts verify it", r.status_code == 200, f"{r.status_code} {r.text[:160]}")
     check("the order moves to Payment Verified", order_now()["status"] == "PAYMENT_VERIFIED", order_now()["status"])
@@ -650,7 +653,7 @@ try:
     check("the salesperson cannot close it themselves", r.status_code == 403, f"got {r.status_code}")
 
     r = api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
-        "approve": True, "remarks": "Balance received in full.",
+        "approve": True, "remarks": "Balance received in full.", "received_date": TODAY,
     })
     check("accounts close the order", r.status_code == 200, f"{r.status_code} {r.text[:160]}")
     check("it is Completed", order_now()["status"] == "COMPLETED", order_now()["status"])
@@ -824,7 +827,7 @@ try:
     coordinate_order(short_order["id"])
 
     api("put", f"/fulfilment/orders/{short_order['id']}/decide", token["accounts"], json={
-        "approve": True, "remarks": "Paid up front.",
+        "approve": True, "remarks": "Paid up front.", "received_date": TODAY,
     })
 
     board = api("get", "/fulfilment/production", token["production"]).json()["data"]
