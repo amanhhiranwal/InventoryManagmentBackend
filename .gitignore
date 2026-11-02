@@ -57,3 +57,8 @@ docs/Synergy-CRM-Status.pdf
 # so the container has somewhere to write; what lands in it does not.
 uploads/attachments/*
 !uploads/attachments/.gitkeep
+
+# The logo, cover logo and cover photo uploaded through Masters > Company
+# Profile. Set per installation on that screen; the defaults ship in
+# app/assets.
+uploads/company_logos/*
