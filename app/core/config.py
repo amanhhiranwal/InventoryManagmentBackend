@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     #: on the proposal's About page.
     COMPANY_OFFERINGS: str = ""
     #: Brand logo for the proposal. Relative paths resolve against the
-    #: backend root; unset uses the bundled app/assets/brand-logo.jpg.
+    #: backend root; unset uses the bundled app/assets/brand-logo.png.
     COMPANY_LOGO_PATH: str = ""
     #: Optional picture for the proposal cover, under the addresses. Unset
     #: simply leaves the cover without one.

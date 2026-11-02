@@ -28,6 +28,7 @@ from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.platypus import (
     BaseDocTemplate,
     Frame,
@@ -64,12 +65,13 @@ MARGIN = 13 * mm
 CONTENT_W = PAGE_W - 2 * MARGIN
 
 #: Where the header ends and the footer begins on those pages.
-HEADER_H = 32 * mm
+HEADER_H = 31 * mm
 FOOTER_H = 22 * mm
 
 #: The cover's text starts under the photograph and PROPOSAL.
 COVER_TEXT_TOP = 170 * mm
 COVER_MARGIN = 10 * mm
+COVER_FOOT = 9 * mm
 
 ABOUT_FALLBACK = (
     "A technology hardware and business consulting company delivering "
@@ -86,7 +88,7 @@ SERVICES_FALLBACK = "INTERACTIVE DISPLAY | EDUCATION TECHNOLOGY | AV SOLUTIONS"
 ASSETS = Path(__file__).resolve().parents[1] / "assets"
 
 #: The colour mark at the top of every page after the cover.
-DEFAULT_LOGO = ASSETS / "brand-logo.jpg"
+DEFAULT_LOGO = ASSETS / "brand-logo.png"
 
 #: The white mark printed over the cover photograph.
 DEFAULT_COVER_LOGO = ASSETS / "proposal-cover-logo.png"
@@ -623,8 +625,9 @@ class QuotationPDFService:
 
         # Fade the foot of the picture into the page, as the printed cover
         # does - an uploaded photograph with a hard bottom edge would
-        # otherwise end in a line across the page.
-        fade = drawn * 0.28
+        # otherwise end in a line across the page. The bundled one already
+        # fades, so this only touches its last few millimetres.
+        fade = drawn * 0.14
         steps = 40
         canvas.setFillColor(colors.white)
         for step in range(steps):
@@ -642,11 +645,18 @@ class QuotationPDFService:
             PAGE_W / 2, PAGE_H - 16 * mm, width=78 * mm, height=16 * mm, centre=True,
         )
 
-        word = "PROPOSAL"
-        size = 46
-        canvas.setFillColor(colors.HexColor("#111111"))
-        canvas.setFont("Helvetica-Bold", size)
-        canvas.drawCentredString(PAGE_W / 2, PAGE_H - 161 * mm, word)
+        # As tall as the printed word and as wide: Helvetica is broader
+        # than the face the proposal was set in, so it is drawn narrower
+        # rather than smaller.
+        word, size, width = "PROPOSAL", 41.5, 70 * mm
+        natural = stringWidth(word, "Helvetica-Bold", size)
+        text = canvas.beginText()
+        text.setFont("Helvetica-Bold", size)
+        text.setFillColor(colors.HexColor("#111111"))
+        text.setHorizScale(100 * width / natural)
+        text.setTextOrigin((PAGE_W - width) / 2, PAGE_H - 161 * mm)
+        text.textLine(word)
+        canvas.drawText(text)
 
         canvas.restoreState()
 
@@ -659,11 +669,11 @@ class QuotationPDFService:
         canvas.setFillColor(TINT)
         canvas.rect(0, 0, PAGE_W, PAGE_H, stroke=0, fill=1)
 
-        # The logo hangs from 12mm, clear of the non-printable edge most
-        # office printers leave.
+        # The logo hangs from 10.5mm, clear of the non-printable edge most
+        # office printers leave, at the printed proposal's size.
         QuotationPDFService._draw_image(
             canvas, _logo_path(company["logo_path"]),
-            MARGIN, PAGE_H - 10 * mm, width=48 * mm, height=17 * mm,
+            MARGIN + 2 * mm, PAGE_H - 10.5 * mm, width=37 * mm, height=12 * mm,
             clear_white=True,
         )
 
@@ -682,7 +692,7 @@ class QuotationPDFService:
 
         canvas.setStrokeColor(MAROON)
         canvas.setLineWidth(1.2)
-        canvas.line(MARGIN, PAGE_H - 26 * mm, right, PAGE_H - 26 * mm)
+        canvas.line(MARGIN, PAGE_H - 26.5 * mm, right, PAGE_H - 26.5 * mm)
 
         address = ", ".join(company["address"])
         first = "  |  ".join(
@@ -767,13 +777,19 @@ class QuotationPDFService:
     def _cover(quotation, company, sender, s) -> list:
         paragraphs = company["about_paragraphs"] or [ABOUT_FALLBACK]
 
-        flow = [
-            Paragraph(f"About {company['brand_name']}", s["about_title"]),
-            *[Paragraph(p, s["about"]) for p in paragraphs],
-        ]
+        def about(size):
+            """The heading, the About text at ``size`` and the tagline."""
 
-        if company["tagline"]:
-            flow += [Spacer(1, 5 * mm), Paragraph(company["tagline"], s["tagline"])]
+            body = ParagraphStyle(
+                f"about_{size}", parent=s["about"], fontSize=size, leading=size * 1.63,
+            )
+            flow = [
+                Paragraph(f"About {company['brand_name']}", s["about_title"]),
+                *[Paragraph(p, body) for p in paragraphs],
+            ]
+            if company["tagline"]:
+                flow += [Spacer(1, 5 * mm), Paragraph(company["tagline"], s["tagline"])]
+            return flow
 
         details = Table(
             [
@@ -785,30 +801,30 @@ class QuotationPDFService:
                 [Paragraph("Valid Until", s["details_label"]),
                  Paragraph(_date(quotation.validation_date), s["details_value"])],
             ],
-            colWidths=[32 * mm, 38 * mm],
+            colWidths=[27 * mm, 45 * mm],
         )
         details.setStyle(TableStyle([
             ("SPAN", (0, 0), (-1, 0)),
             ("BACKGROUND", (0, 0), (-1, -1), BOX),
             ("BOX", (0, 0), (-1, -1), 0.6, RULE),
             ("LEFTPADDING", (0, 0), (-1, -1), 5 * mm),
-            ("LEFTPADDING", (1, 0), (1, -1), 1.5 * mm),
+            ("LEFTPADDING", (1, 0), (1, -1), 0),
             ("TOPPADDING", (0, 0), (-1, -1), 0),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, 0), 5 * mm),
+            ("TOPPADDING", (0, 0), (-1, 0), 6 * mm),
             ("BOTTOMPADDING", (0, 0), (-1, 0), 1),
-            ("BOTTOMPADDING", (0, -1), (-1, -1), 5 * mm),
+            ("BOTTOMPADDING", (0, -1), (-1, -1), 6 * mm),
         ]))
 
         inner_w = PAGE_W - 2 * COVER_MARGIN - 6 * mm
         row = Table(
             [[Paragraph("For order confirmation and advance payment processing", s["purpose"]), details]],
-            colWidths=[inner_w - 70 * mm, 70 * mm],
+            colWidths=[inner_w - 72 * mm, 72 * mm],
         )
         row.setStyle(TableStyle([
             ("VALIGN", (0, 0), (0, 0), "BOTTOM"),
             ("VALIGN", (1, 0), (1, 0), "TOP"),
-            ("LEFTPADDING", (0, 0), (0, 0), 1.5 * mm),
+            ("LEFTPADDING", (0, 0), (0, 0), 0),
             ("RIGHTPADDING", (0, 0), (-1, -1), 0),
             ("LEFTPADDING", (1, 0), (1, 0), 0),
             ("TOPPADDING", (0, 0), (-1, -1), 0),
@@ -837,19 +853,33 @@ class QuotationPDFService:
             ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5 * mm),
         ]))
 
-        # The cover is one page whatever the About text runs to: a longer
-        # text is set a little smaller rather than pushing the addresses
-        # onto the next page.
-        return [
-            NextPageTemplate("inner"),
-            KeepInFrame(
-                PAGE_W - 2 * COVER_MARGIN,
-                PAGE_H - COVER_TEXT_TOP - 14 * mm,
-                [*flow, Spacer(1, 8 * mm), row, Spacer(1, 2.5 * mm), parties],
-                mode="shrink",
-            ),
-            PageBreak(),
-        ]
+        # The cover is one page whatever the About text runs to. A longer
+        # text is set in a smaller size, so the document details and the
+        # addresses keep the size and place the printed proposal gives
+        # them; only a text too long even for that is shrunk as a whole.
+        frame_w = PAGE_W - 2 * COVER_MARGIN
+        frame_h = PAGE_H - COVER_TEXT_TOP - COVER_FOOT
+        tail = [Spacer(1, 4.5 * mm), row, Spacer(1, 4.5 * mm), parties]
+
+        def height(flowables):
+            return sum(
+                f.wrap(frame_w, frame_h)[1] + f.getSpaceBefore() + f.getSpaceAfter()
+                for f in flowables
+            )
+
+        tail_h = height(tail)
+        content = None
+
+        for size in (10.3, 9.8, 9.3, 8.8, 8.4, 8.0, 7.6):
+            flow = about(size)
+            if height(flow) + tail_h <= frame_h:
+                content = [*flow, *tail]
+                break
+
+        if content is None:
+            content = [KeepInFrame(frame_w, frame_h, [*about(7.6), *tail], mode="shrink")]
+
+        return [NextPageTemplate("inner"), *content, PageBreak()]
 
     # ------------------------------------------------------------------
     # The offer
@@ -926,7 +956,7 @@ class QuotationPDFService:
             ("BOTTOMPADDING", (0, 1), (-1, -1), 7),
         ]))
 
-        return [Spacer(1, 4 * mm), Paragraph("SUPPLY SUMMARY", s["section"]), table]
+        return [Paragraph("SUPPLY SUMMARY", s["section"]), table]
 
     @staticmethod
     def _totals(quotation, s) -> list:
@@ -988,13 +1018,13 @@ class QuotationPDFService:
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("LEFTPADDING", (0, 0), (-1, -1), 3.5 * mm),
             ("RIGHTPADDING", (0, 0), (-1, -1), 3 * mm),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ("TOPPADDING", (0, -1), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, -1), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 2.6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2.6),
+            ("TOPPADDING", (0, -1), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, -1), (-1, -1), 5),
         ]))
 
-        return [Spacer(1, 6 * mm), table]
+        return [Spacer(1, 4.5 * mm), table]
 
     @staticmethod
     def payment_terms(quotation) -> list[str]:
@@ -1060,7 +1090,7 @@ class QuotationPDFService:
         ]))
 
         flow = [
-            Spacer(1, 6 * mm),
+            Spacer(1, 3.5 * mm),
             Paragraph("PAYMENT &amp; COMMERCIAL TERMS", s["section"]),
             panel,
         ]
@@ -1092,10 +1122,10 @@ class QuotationPDFService:
         issued = "&nbsp;&nbsp;|&nbsp;&nbsp;".join(_without_repeats([name, title]))
 
         return [
-            Spacer(1, 7 * mm),
+            Spacer(1, 4.5 * mm),
             KeepTogether([
                 Paragraph(f"Issued by:&nbsp;&nbsp;{issued}", s["issued"]),
-                Spacer(1, 7 * mm),
+                Spacer(1, 5.5 * mm),
                 Paragraph("Authorised Signatory&nbsp;&nbsp;&nbsp;", s["signatory"]),
             ]),
         ]
@@ -1124,7 +1154,7 @@ class QuotationPDFService:
         )
 
         cover_frame = Frame(
-            COVER_MARGIN, 14 * mm, PAGE_W - 2 * COVER_MARGIN, PAGE_H - COVER_TEXT_TOP - 14 * mm,
+            COVER_MARGIN, COVER_FOOT, PAGE_W - 2 * COVER_MARGIN, PAGE_H - COVER_TEXT_TOP - COVER_FOOT,
             id="cover", leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0,
         )
         inner_frame = Frame(
