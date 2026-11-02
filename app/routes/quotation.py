@@ -66,7 +66,7 @@ def get_brand(
     screen and what the client receives cannot drift apart.
     """
 
-    from app.services.quotation_pdf_service import ABOUT_FALLBACK, QuotationPDFService
+    from app.services.quotation_pdf_service import QuotationPDFService
     from app.services.quotation_service import QuotationService
 
     # With a quotation named, the letterhead is that quotation's selling
@@ -77,13 +77,13 @@ def get_brand(
     )
 
     company = QuotationPDFService.company(db, quotation, company_id)
-    paragraphs = company["about_paragraphs"] or [ABOUT_FALLBACK]
 
     return {
         "success": True,
         "data": {
             **company,
-            "about": paragraphs,
+            # Masters' About text only, as the PDF prints it.
+            "about": company["about_paragraphs"],
             "sender": QuotationPDFService.sender(db, quotation),
         },
     }
@@ -126,7 +126,12 @@ def get_brand_logo(
 
     media_type = mimetypes.guess_type(str(path))[0] or "image/jpeg"
 
-    return FileResponse(str(path), media_type=media_type)
+    # Checked with the server on every use: the address never changes when
+    # the logo does, and a browser guessing how long to keep it went on
+    # showing the old one for days. Unchanged, the check is a bare 304.
+    return FileResponse(
+        str(path), media_type=media_type, headers={"Cache-Control": "no-cache"}
+    )
 
 
 @router.get("/")

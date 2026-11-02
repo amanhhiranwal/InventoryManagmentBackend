@@ -73,17 +73,6 @@ COVER_TEXT_TOP = 170 * mm
 COVER_MARGIN = 10 * mm
 COVER_FOOT = 9 * mm
 
-ABOUT_FALLBACK = (
-    "A technology hardware and business consulting company delivering "
-    "quality services directly and as a partner, helping organizations "
-    "connect with their customers. With a range of offerings across "
-    "technology, training, automation and support, we adapt to what our "
-    "customers need as the landscape changes."
-)
-
-#: Printed until Masters says otherwise, as the business's proposal has them.
-TAGLINE_FALLBACK = "Smarter Displays. Better Decisions."
-SERVICES_FALLBACK = "INTERACTIVE DISPLAY | EDUCATION TECHNOLOGY | AV SOLUTIONS"
 
 ASSETS = Path(__file__).resolve().parents[1] / "assets"
 
@@ -441,8 +430,10 @@ class QuotationPDFService:
             "brand_name": (
                 profile["company_brand_name"] or name.split()[0].capitalize()
             ),
-            "tagline": profile["company_tagline"] or TAGLINE_FALLBACK,
-            "services_line": profile["company_services_line"] or SERVICES_FALLBACK,
+            # Only what Masters says: a blank field prints nothing rather
+            # than a sentence written into the code.
+            "tagline": profile["company_tagline"] or None,
+            "services_line": profile["company_services_line"] or None,
             "cover_logo": profile["company_cover_logo"],
             "address": (
                 QuotationPDFService._seller_address(seller)
@@ -775,7 +766,8 @@ class QuotationPDFService:
 
     @staticmethod
     def _cover(quotation, company, sender, s) -> list:
-        paragraphs = company["about_paragraphs"] or [ABOUT_FALLBACK]
+        # From Masters only; with no About text the heading goes too.
+        paragraphs = company["about_paragraphs"]
 
         def about(size):
             """The heading, the About text at ``size`` and the tagline."""
@@ -783,10 +775,12 @@ class QuotationPDFService:
             body = ParagraphStyle(
                 f"about_{size}", parent=s["about"], fontSize=size, leading=size * 1.63,
             )
-            flow = [
-                Paragraph(f"About {company['brand_name']}", s["about_title"]),
-                *[Paragraph(p, body) for p in paragraphs],
-            ]
+            flow = []
+            if paragraphs:
+                flow = [
+                    Paragraph(f"About {company['brand_name']}", s["about_title"]),
+                    *[Paragraph(p, body) for p in paragraphs],
+                ]
             if company["tagline"]:
                 flow += [Spacer(1, 5 * mm), Paragraph(company["tagline"], s["tagline"])]
             return flow
@@ -1060,29 +1054,28 @@ class QuotationPDFService:
             ),
         ]
 
-        # The validity period belongs on the document itself, not only in
-        # the covering email - it is the one term a client checks first.
+        # The proposal's own validity date first - the one term a client
+        # checks first - then exactly the clauses ticked on the proposal.
+        # Nothing else is written in here.
         points = [
-            f"Offer valid through {_date(quotation.validation_date)}; reconfirm thereafter.",
-            f"Taxes shown at {float(quotation.gst_percent or 0):g}%; final tax will be "
-            "charged at the rate applicable on the tax invoice date.",
+            f"Offer valid through {_date(quotation.validation_date)}; reconfirm thereafter."
+        ] + [
+            str(entry["label"])
+            for entry in quotation.terms or []
+            if isinstance(entry, dict) and entry.get("checked") and entry.get("label")
         ]
-
-        for entry in quotation.terms or []:
-            if isinstance(entry, dict) and entry.get("checked") and entry.get("label"):
-                points.append(str(entry["label"]))
 
         conditions = [Paragraph("TERMS &amp; CONDITIONS", s["panel_label"])] + [
             Paragraph(f"&bull;&nbsp; {point}", s["term"]) for point in points
         ]
-
         panel = Table([[schedule, conditions]], colWidths=[CONTENT_W * 0.5] * 2)
+
         panel.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), PANEL),
             ("BOX", (0, 0), (-1, -1), 0.6, RULE),
-            ("LINEBEFORE", (1, 0), (1, 0), 0.6, RULE),
+            ("LINEBEFORE", (1, 0), (-1, -1), 0.6, RULE),
             ("VALIGN", (0, 0), (0, 0), "MIDDLE"),
-            ("VALIGN", (1, 0), (1, 0), "TOP"),
+            ("VALIGN", (1, 0), (-1, -1), "TOP"),
             ("LEFTPADDING", (0, 0), (-1, -1), 3.5 * mm),
             ("RIGHTPADDING", (0, 0), (-1, -1), 3 * mm),
             ("TOPPADDING", (0, 0), (-1, -1), 3 * mm),

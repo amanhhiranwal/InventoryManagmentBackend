@@ -18,6 +18,10 @@ router = APIRouter(
 
 LOGO_DIR = "uploads/company_logos"
 
+#: The images keep one address when they are replaced, so a browser has to
+#: ask each time rather than guess how long to keep the old one.
+NO_CACHE = {"Cache-Control": "no-cache"}
+
 
 class CompanyProfileRequest(BaseModel):
     company_legal_name: str | None = None
@@ -178,7 +182,7 @@ def get_cover_image(db: Session = Depends(get_db)):
     if path is None:
         raise HTTPException(status_code=404, detail="No cover image set.")
 
-    return FileResponse(str(path))
+    return FileResponse(str(path), headers=NO_CACHE)
 
 
 @router.post("/cover-logo")
@@ -231,7 +235,7 @@ def get_cover_logo_image(db: Session = Depends(get_db)):
     if path is None:
         raise HTTPException(status_code=404, detail="No cover logo set.")
 
-    return FileResponse(str(path))
+    return FileResponse(str(path), headers=NO_CACHE)
 
 
 @router.post("/upi-qr")
@@ -286,4 +290,4 @@ def get_upi_qr_image(db: Session = Depends(get_db)):
     if path is None or not path.exists():
         raise HTTPException(status_code=404, detail="No UPI QR set.")
 
-    return FileResponse(str(path))
+    return FileResponse(str(path), headers=NO_CACHE)

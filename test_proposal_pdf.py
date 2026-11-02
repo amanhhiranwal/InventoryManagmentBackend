@@ -31,6 +31,29 @@ def pages(pdf: bytes) -> int:
     return len(re.findall(rb"/Type\s*/Page[^s]", pdf))
 
 
+def text(pdf: bytes) -> bytes:
+    """Everything the pages draw, unpacked: reportlab compresses page
+    content, so searching the raw file finds nothing either way."""
+
+    import base64
+    import zlib
+
+    out = [pdf]
+    for match in re.finditer(rb"stream\r?\n(.*?)endstream", pdf, re.S):
+        raw = match.group(1).strip()
+        # reportlab writes page content as ASCII85 over Flate.
+        for decode in (
+            lambda data: zlib.decompress(base64.a85decode(data, adobe=True)),
+            lambda data: zlib.decompress(data),
+        ):
+            try:
+                out.append(decode(raw))
+                break
+            except Exception:  # noqa: BLE001 - images and fonts are not text
+                continue
+    return b"\n".join(out)
+
+
 def quotation(lines: int):
     """Just enough of a quotation to print."""
 
@@ -86,7 +109,32 @@ try:
 
     company = QuotationPDFService.company(db)
     check("the brand name is short", company["brand_name"] and len(company["brand_name"].split()) == 1, company["brand_name"])
-    check("a tagline and services line are printed", bool(company["tagline"] and company["services_line"]))
+
+    print("\nOnly what the proposal and Masters say")
+    check("the proposal's ticked term is printed", b"Liquidated damages capped" in text(pdf))
+    check("the validity line comes from the proposal's own date", b"Offer valid through 18 Nov 2026" in text(pdf))
+    check("no tax line of our own is added", b"Taxes shown at" not in text(pdf))
+
+    unticked = quotation(3)
+    unticked.terms = [{"checked": False, "label": "A clause left unticked."}]
+    bare = QuotationPDFService.render(unticked, db)
+    check("an unticked term is left out", b"A clause left unticked" not in text(bare))
+    check("with none ticked, only the validity line is listed", b"Offer valid through" in text(bare) and b"Liquidated" not in text(bare))
+
+    def blank(session):
+        profile = real(session)
+        profile.update(company_tagline="", company_services_line="", company_about_paragraphs=[])
+        return profile
+
+    company_profile_service.CompanyProfileService.as_lists = staticmethod(blank)
+    try:
+        empty = QuotationPDFService.company(db)
+        blank_pdf = QuotationPDFService.render(quotation(3), db)
+    finally:
+        company_profile_service.CompanyProfileService.as_lists = staticmethod(real)
+    check("a blank tagline in Masters prints none", empty["tagline"] is None)
+    check("a blank services line prints none", empty["services_line"] is None)
+    check("no About text in Masters, no About heading", b"About " not in text(blank_pdf) and pages(blank_pdf) == 2)
 
     print("\nMasters")
     admin = login(ADMIN_EMAIL, ADMIN_PASSWORD)
@@ -101,6 +149,16 @@ try:
     r = requests.get(f"{BASE}/company-profile/cover-logo/image", timeout=30)
     check("so is the cover logo", r.status_code == 200 and r.content[:4] == b"\x89PNG", f"{r.status_code}")
     default_logo = r.content
+
+    # The upload below writes over the file Masters already has, so what
+    # is there now is put back at the end, whatever happens.
+    from pathlib import Path
+
+    from app.services.quotation_pdf_service import DEFAULT_COVER_LOGO
+
+    kept_path = api("get", "/company-profile", admin).json()["data"]["company_cover_logo"]
+    kept_file = Path(kept_path).read_bytes() if kept_path and Path(kept_path).exists() else None
+    bundled_logo = DEFAULT_COVER_LOGO.read_bytes()
 
     from PIL import Image
 
@@ -120,7 +178,7 @@ try:
 
     r = api("delete", "/company-profile/cover-logo", admin)
     check("resetting goes back to the default", r.status_code == 200 and r.json()["data"]["company_cover_logo"] == "")
-    check("which is served again", requests.get(f"{BASE}/company-profile/cover-logo/image", timeout=30).content == default_logo)
+    check("which is served again", requests.get(f"{BASE}/company-profile/cover-logo/image", timeout=30).content == bundled_logo)
 
     brand = api("get", "/quotations/brand", admin).json()["data"]
     check(
@@ -134,6 +192,16 @@ except Exception as exc:  # noqa: BLE001 - the report below still has to print
     print(f"\n  STOPPED  {exc}")
 
 finally:
+    # Masters' own cover logo, as it was before the run.
+    try:
+        if kept_path:
+            if kept_file is not None:
+                Path(kept_path).write_bytes(kept_file)
+            company_profile_service.CompanyProfileService.save({"company_cover_logo": kept_path}, db)
+            print(f"\n   restored the cover logo in Masters ({kept_path})")
+    except NameError:
+        pass
+
     print(f"\n{len(passed)} passed, {len(failed)} failed")
     for name in failed:
         print(f"  FAILED  {name}")
