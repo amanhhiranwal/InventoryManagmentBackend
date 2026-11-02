@@ -29,6 +29,7 @@ from seed_sales_team import (
     email_for,
     login,
     rows,
+    seed,
     sign_off_order,
 )
 
@@ -88,7 +89,16 @@ try:
     people = {u["email"]: u for u in rows(api("get", "/users/", admin, params={"size": 500}))}
     user_id = {key: people[email_for(key)]["id"] for key in everyone}
 
-    companies = {c["company_code"]: c["id"] for c in rows(api("get", "/companies/", admin, params={"size": 200}))}
+    # The two test companies are put back if they have been removed from
+    # Masters (the team is assigned to them), and removed again at the end
+    # - the shared Companies list is not left carrying test companies.
+    def company_codes():
+        return {c["company_code"]: c["id"] for c in rows(api("get", "/companies/", admin, params={"size": 200}))}
+
+    before = company_codes()
+    seed(admin)
+    companies = company_codes()
+    created_companies = [cid for code, cid in companies.items() if code not in before]
     north, south = companies["SYN-NORTH"], companies["SYN-SOUTH"]
 
     # ================================================================ users
@@ -404,6 +414,23 @@ try:
     # ============================================================ products
     banner("6. The same product stocked by both companies")
 
+    # This section is about products kept apart by company, not about who
+    # may add one, so the Area Managers are given inventory.create for the
+    # run if Roles & Access does not grant it - and only then, so the
+    # clear-up never takes away a tick that was there before.
+    held = {
+        p.get("permission_name") or p.get("name")
+        for p in rows(api("get", f"/rbac/roles/{area_role['id']}/permissions", admin))
+    }
+    if "inventory.create" not in held:
+        r = api("post", f"/rbac/roles/{area_role['id']}/permissions/{permissions['inventory.create']}", admin)
+        if r.status_code == 200:
+            granted.append((area_role["id"], permissions["inventory.create"]))
+
+    # The permissions travel in the sign-in token, so they sign in again.
+    for key in ("am_north_1", "am_north_2", "am_south_1"):
+        token[key] = login(email_for(key), TEAM_PASSWORD)
+
     if product_type:
         serial = f"NPK-{TAG}"
         code, category = product_type["code"], product_type["category"]
@@ -519,7 +546,17 @@ finally:
         print("   removed " + ", ".join(f"{len(v)} {k}" for k, v in created.items() if v))
         print(f"   untied {len(granted)} permissions that were ticked for the test")
         print("   left behind:", left)
-        print("   the team and the two companies were kept")
+        # Last, once nothing of the run points at them: the companies this
+        # run had to create. Their team assignments go with them.
+        for company_id in globals().get("created_companies", []):
+            gone = api("delete", f"/companies/{company_id}", admin)
+            if gone.status_code >= 400:
+                print(f"   could not remove test company {company_id}: {gone.status_code} {gone.text[:120]}")
+
+        if globals().get("created_companies"):
+            print(f"   removed the {len(created_companies)} test companies this run created; the team was kept")
+        else:
+            print("   the team and the two companies were kept")
     except Exception as exc:
         print("   cleanup problem:", exc)
 
