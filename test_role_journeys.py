@@ -86,7 +86,8 @@ SIDEBARS = {
         ("Business Coordinator", ["Sales Order"]),
         ("Users", []),
         ("Technology", ["Production"]),
-        ("SCM", ["Inventory", "Logistics"]),
+        # Stock Out is the super admin's until Roles & Access hands it out.
+        ("SCM", ["Inventory", "Logistics", "Stock Out"]),
         ("Customers", []),
         ("Accounts", ["Accounts Desk"]),
         ("Reports", []),
@@ -117,18 +118,17 @@ SIDEBARS = {
     # The founder sells like the rest of the line but holds the masters
     # that decide what is sold and at what price - which is why every
     # order ends with them.
+    # As the Founder role is granted in Roles & Access today: the Accounts
+    # Desk, and of Masters only the Reporting Chart.
     "founder": [
         ("Dashboard", []),
         ("Sales", ["Leads", "Opportunity", "Proposal", "Sales Order"]),
         ("Users", []),
         ("Customers", []),
+        ("Accounts", ["Accounts Desk"]),
         ("Reports", []),
-        ("Masters", [
-            "Companies", "Locations", "Customer Type", "Product Type",
-            "Category Group", "Units", "Lead Source", "States",
-            "Bank Details", "Company Profile", "Sales Order Approval",
-            "Warranty Terms", "Reporting Chart",
-        ]),
+        ("Masters", ["Reporting Chart"]),
+        ("Workflows", []),
     ],
     # A desk gets its desk and nothing else of the sales CRM - not even the
     # dashboard, so the app drops them straight onto the screen they work.
@@ -174,6 +174,60 @@ created = {
 }
 #: serial -> what was on the shelf before this suite touched it.
 stock_before_run: dict[str, float] = {}
+
+#: The products this suite orders against. It used to find them in a seeded
+#: catalogue that has since been cleared; now it stocks whichever are
+#: missing for the run and removes exactly those at the end.
+#: serial -> (name, rate, in stock, company key or None for everyone)
+FIXTURE_PRODUCTS = {
+    "SG-IFP-75-SPX-3576": ("Interactive Flat Panel 75in", 85000.0, 12.0, None),
+    "SG-IFP-65-SPX-EDLA": ('65" Interactive Flat Panel EDLA', 70000.0, 40.0, None),
+    "SG-IFP-86-SPX-V100": ('86" Interactive Flat Panel V100', 150000.0, 3.0, None),
+    "SG-STD-TOUCH": ("Touch Standee", 45000.0, 0.0, None),
+    "SG-DEMO-NORTH": ("North Demo Kit", 1000.0, 5.0, "north"),
+    "SG-DEMO-SOUTH": ("South Demo Kit", 1000.0, 5.0, "south"),
+}
+
+#: What the run had to create, removed again in the clear-up.
+fixture_item_ids: list = []
+created_company_ids: list[str] = []
+
+
+def stock_fixtures(admin_token) -> None:
+    """The two test companies and the products above, where missing."""
+
+    from app.database.mongodb import sync_mongo_db
+    from seed_sales_team import seed
+
+    codes = lambda: {  # noqa: E731
+        c["company_code"]: c["id"]
+        for c in rows(api("get", "/companies/", admin_token, params={"size": 200}))
+    }
+
+    before = codes()
+    seed(admin_token)
+    after = codes()
+    created_company_ids.extend(cid for code, cid in after.items() if code not in before)
+    company = {"north": after.get("SYN-NORTH"), "south": after.get("SYN-SOUTH")}
+
+    items = sync_mongo_db["inventory_items"]
+
+    for serial, (name, rate, held, owner) in FIXTURE_PRODUCTS.items():
+        if items.find_one({"serial_number": serial}):
+            continue
+
+        fixture_item_ids.append(items.insert_one({
+            "name": name,
+            "serial_number": serial,
+            "product_type_code": "IFP",
+            "category": "Hardware Solutions",
+            "company_id": company[owner] if owner else None,
+            "attributes": {
+                "model_number": serial, "specification": f"{name} (role journey fixture)",
+                "hsn_code": "85285900", "unit": "Pcs", "rate": rate, "rate_per_unit": rate,
+                "dtp_rate": rate, "instock": held, "stock": held, "case_size": 1.0,
+            },
+        }).inserted_id)
 
 
 def set_stock(serial: str, quantity: float) -> None:
@@ -251,6 +305,17 @@ try:
 
     admin = token["admin"]
     owner = token["am_north_1"]
+
+    stock_fixtures(admin)
+
+    # The server prices lines from a catalogue it re-reads once a minute,
+    # so products stocked a moment ago are not priced from yet. Waited out
+    # only when this run had to stock any.
+    if fixture_item_ids:
+        import time
+
+        print("   waiting a minute for the server to read the fixture products into its price list")
+        time.sleep(62)
 
     # Each desk opens its own and nobody else's. The warehouse keeps the
     # catalogue and opens none of them.
@@ -614,8 +679,10 @@ try:
 
     # Read from the order's own detail rather than the desk queue: by now
     # it has been delivered and dropped out of the queue, which is exactly
-    # when somebody asks what was issued against it.
-    detail = api("get", f"/fulfilment/orders/{order['id']}", token["inventory"]).json()["data"]
+    # when somebody asks what was issued against it. Asked by production,
+    # the desk that issued it - a desk may open an order that has moved
+    # on, and the warehouse, which only keeps the catalogue, is not a desk.
+    detail = api("get", f"/fulfilment/orders/{order['id']}", token["production"]).json()["data"]
     movements = detail.get("stock_movements") or []
 
     check("the movement is still on the record after delivery", len(movements) == 1, str(movements))
@@ -1160,6 +1227,20 @@ finally:
             f"{len(created['quotations'])} quotations, "
             f"{len(created['customers'])} customers and what hung off them"
         )
+
+        # The fixture products and companies this run had to create - last,
+        # once no order or quotation of the run points at them.
+        if fixture_item_ids:
+            sync_mongo_db["inventory_items"].delete_many({"_id": {"$in": fixture_item_ids}})
+            print(f"   removed the {len(fixture_item_ids)} fixture products this run stocked")
+
+        for company_id in created_company_ids:
+            gone = api("delete", f"/companies/{company_id}", admin)
+            if gone.status_code >= 400:
+                print(f"   could not remove test company {company_id}: {gone.status_code} {gone.text[:90]}")
+
+        if created_company_ids:
+            print(f"   removed the {len(created_company_ids)} test companies this run created")
     except Exception as exc:  # noqa: BLE001
         print("   could not clear up:", exc)
 

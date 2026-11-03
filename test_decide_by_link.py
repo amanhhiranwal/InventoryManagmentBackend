@@ -9,15 +9,17 @@ Verifies that:
 5. ApprovalService._chain_emails sends only to actionable recipients, avoiding broadcast spam.
 
 Run with:
-    venv/bin/python test_decide_by_link.py
+    docker exec -w /app backend_app python test_decide_by_link.py
 """
 
 import sys
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+import asyncio
+from types import SimpleNamespace
+
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
 from app.database.dependencies import get_db
 from app.models.approval import ApprovalStatus, SalesApproval
@@ -28,13 +30,53 @@ from app.services.approval_service import ApprovalService
 from app.services.email_service import EmailService
 
 
+class AppClient:
+    """Calls the app the way a server would, in process.
+
+    Starlette's TestClient needs an HTTP client package the container does
+    not ship, and these checks only need a status and a page back - so the
+    request is handed to the ASGI app directly.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    def _call(self, method: str, url: str):
+        path, _, query = url.partition("?")
+        scope = {
+            "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
+            "method": method, "scheme": "http", "path": path, "raw_path": path.encode(),
+            "query_string": query.encode(), "root_path": "", "headers": [(b"host", b"testserver")],
+            "client": ("testclient", 50000), "server": ("testserver", 80),
+        }
+        sent = {"status": None, "body": b""}
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            if message["type"] == "http.response.start":
+                sent["status"] = message["status"]
+            elif message["type"] == "http.response.body":
+                sent["body"] += message.get("body", b"")
+
+        asyncio.run(self.app(scope, receive, send))
+        return SimpleNamespace(status_code=sent["status"], text=sent["body"].decode("utf-8", "replace"))
+
+    def get(self, url: str):
+        return self._call("GET", url)
+
+    def post(self, url: str):
+        return self._call("POST", url)
+
+
 def run_checks() -> int:
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
 
     mock_db = MagicMock()
     app.dependency_overrides[get_db] = lambda: mock_db
-    client = TestClient(app)
+    client = AppClient(app)
 
     user_id = str(uuid4())
     token = make_token(101, user_id, 0, "approve")
