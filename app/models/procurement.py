@@ -154,8 +154,14 @@ class PurchaseRequisition(Base):
     designation = Column(String(150), nullable=True)
     department_id = Column(Integer, ForeignKey("department.id", ondelete="SET NULL"), nullable=True, index=True)
     department_name = Column(String(150), nullable=True)
+    # Kept for requisitions raised before the company became the cost
+    # centre; nothing writes them now.
     cost_center_id = Column(Integer, ForeignKey("cost_center.id", ondelete="SET NULL"), nullable=True)
     cost_center_code = Column(String(60), nullable=True)
+    # The cost centre: which of the group's companies the purchase is for.
+    # Its name is copied so the PR still reads if the company is renamed.
+    company_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    company_name = Column(String(255), nullable=True)
     reporting_manager_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     reporting_manager_name = Column(String(200), nullable=True)
 

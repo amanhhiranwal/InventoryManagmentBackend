@@ -1,4 +1,5 @@
-"""Departments, cost centres and the requisition approval matrix."""
+"""Departments, the companies purchases are charged to, and the requisition
+approval matrix."""
 
 import json
 
@@ -8,8 +9,10 @@ from sqlalchemy.orm import Session
 
 from app.core.procurement import APPROVAL_SETTING, DEFAULT_APPROVAL_MATRIX, ApprovalStep
 from app.models.app_setting import AppSetting
-from app.models.procurement import CostCenter, Department, PurchaseRequisition
+from app.models.company import Company
+from app.models.procurement import Department, PurchaseRequisition
 from app.models.user import User
+from app.services.company_scope_service import CompanyScopeService
 from app.services.procurement.common import full_name, text, user_row
 
 
@@ -120,76 +123,19 @@ def delete_department(department_id: int, db: Session) -> None:
 
 
 # ----------------------------------------------------------------------
-# Cost centres
+# Cost centre: the company a purchase is for
 # ----------------------------------------------------------------------
-def serialize_cost_center(row: CostCenter, departments: dict | None = None) -> dict:
-    return {
-        "id": row.id,
-        "code": row.code,
-        "name": row.name,
-        "department_id": row.department_id,
-        "department_name": (departments or {}).get(row.department_id),
-        "is_active": row.is_active,
-    }
+def company_options(current_user: dict, db: Session) -> list[dict]:
+    """The active companies this person may charge a purchase to: those on
+    their profile, or every company for a super admin."""
 
-
-def list_cost_centers(db: Session, include_inactive: bool = True) -> list[dict]:
-    departments = dict(db.query(Department.id, Department.name).all())
-    query = db.query(CostCenter)
-    if not include_inactive:
-        query = query.filter(CostCenter.is_active.is_(True))
-    return [serialize_cost_center(r, departments) for r in query.order_by(CostCenter.code).all()]
-
-
-def save_cost_center(payload: dict, db: Session, cost_center_id: int | None = None) -> dict:
-    code = (text(payload.get("code"), 30) or "").upper()
-    name = text(payload.get("name"), 150)
-
-    if not code or not name:
-        raise HTTPException(status_code=400, detail="A cost centre needs a code and a name.")
-
-    department_id = payload.get("department_id") or None
-    if department_id and not db.query(Department.id).filter(Department.id == int(department_id)).first():
-        raise HTTPException(status_code=400, detail="That department does not exist.")
-
-    clash = db.query(CostCenter).filter(CostCenter.code == code)
-    if cost_center_id:
-        clash = clash.filter(CostCenter.id != cost_center_id)
-    if clash.first():
-        raise HTTPException(status_code=409, detail=f"The cost centre {code} already exists.")
-
-    if cost_center_id:
-        row = db.query(CostCenter).filter(CostCenter.id == cost_center_id).first()
-        if row is None:
-            raise HTTPException(status_code=404, detail="Cost centre not found.")
-    else:
-        row = CostCenter()
-        db.add(row)
-
-    row.code = code
-    row.name = name
-    row.department_id = int(department_id) if department_id else None
-    row.is_active = bool(payload.get("is_active", True))
-
-    db.commit()
-    db.refresh(row)
-    return serialize_cost_center(row, dict(db.query(Department.id, Department.name).all()))
-
-
-def delete_cost_center(cost_center_id: int, db: Session) -> None:
-    row = db.query(CostCenter).filter(CostCenter.id == cost_center_id).first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Cost centre not found.")
-
-    in_use = db.query(PurchaseRequisition.id).filter(PurchaseRequisition.cost_center_id == cost_center_id).count()
-    if in_use:
-        raise HTTPException(
-            status_code=409,
-            detail=f"{row.code} is on {in_use} requisition(s). Mark it inactive instead.",
-        )
-
-    db.delete(row)
-    db.commit()
+    allowed = CompanyScopeService.visible_company_ids(current_user, db)
+    query = db.query(Company).filter(Company.is_active.is_(True))
+    if allowed is not None:
+        if not allowed:
+            return []
+        query = query.filter(Company.id.in_(allowed))
+    return [{"id": str(c.id), "name": c.company_name} for c in query.order_by(Company.company_name).all()]
 
 
 # ----------------------------------------------------------------------

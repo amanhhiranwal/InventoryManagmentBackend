@@ -79,30 +79,6 @@ def delete_department(department_id: int, db: Session = Depends(get_db),
     return _ok(None, "Department removed.")
 
 
-@router.get("/cost-centers")
-def list_cost_centers(active: bool = False, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    return _ok(masters.list_cost_centers(db, include_inactive=not active))
-
-
-@router.post("/cost-centers")
-def create_cost_center(payload: Body, db: Session = Depends(get_db),
-                       current_user=Depends(require_permission("procurement_masters.manage"))):
-    return _ok(masters.save_cost_center(payload, db), "Cost centre added.")
-
-
-@router.put("/cost-centers/{cost_center_id}")
-def update_cost_center(cost_center_id: int, payload: Body, db: Session = Depends(get_db),
-                       current_user=Depends(require_permission("procurement_masters.manage"))):
-    return _ok(masters.save_cost_center(payload, db, cost_center_id), "Cost centre updated.")
-
-
-@router.delete("/cost-centers/{cost_center_id}")
-def delete_cost_center(cost_center_id: int, db: Session = Depends(get_db),
-                       current_user=Depends(require_permission("procurement_masters.manage"))):
-    masters.delete_cost_center(cost_center_id, db)
-    return _ok(None, "Cost centre removed.")
-
-
 @router.get("/procurement/approval-matrix")
 def get_matrix(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     return _ok(masters.describe_matrix(db))
@@ -133,7 +109,8 @@ def requisition_meta(db: Session = Depends(get_db), current_user=Depends(get_cur
         ],
         "priorities": list(PRIORITIES),
         "departments": masters.list_departments(db, include_inactive=False),
-        "cost_centers": masters.list_cost_centers(db, include_inactive=False),
+        # The cost centre is the company the purchase is for.
+        "companies": masters.company_options(current_user, db),
         "matrix": masters.describe_matrix(db),
         "me": {
             "id": str(me.id) if me else None,

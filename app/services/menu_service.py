@@ -85,6 +85,8 @@ RETIRED_DEFAULT_CHILDREN = {
     # The coordinator's separate queue. Their work is on the Sales Order
     # pages, where the advance is checked on the order itself.
     ("Approved Orders", "/fulfilment/coordination"),
+    # A requisition's cost centre is now the company it is for.
+    ("Cost Centers", "/cost-centers"),
 }
 
 #: Top-level menus the design moved: title -> (old defaults, new default).
@@ -263,7 +265,6 @@ DEFAULT_MENUS_DATA = [
       # What a purchase requisition is filed and charged under, and how
       # high it goes for approval by amount.
       {"title": "Departments", "icon": "LuBuilding", "path": "/departments", "permission_key": "procurement_masters.manage", "order_index": 15},
-      {"title": "Cost Centers", "icon": "LuWallet", "path": "/cost-centers", "permission_key": "procurement_masters.manage", "order_index": 16},
       {"title": "PR Approval Matrix", "icon": "LuListChecks", "path": "/pr-approval", "permission_key": "procurement_masters.manage", "order_index": 17},
     ]
   },

@@ -30,7 +30,6 @@ from app.core.procurement import (
 )
 from app.core.timezone import iso
 from app.models.procurement import (
-    CostCenter,
     Department,
     PurchaseRequisition,
     PurchaseRequisitionApproval,
@@ -212,6 +211,8 @@ def serialize(pr: PurchaseRequisition, db: Session, current_user: dict | None = 
         "department_name": pr.department_name,
         "cost_center_id": pr.cost_center_id,
         "cost_center_code": pr.cost_center_code,
+        "company_id": str(pr.company_id) if pr.company_id else None,
+        "company_name": pr.company_name,
         "reporting_manager_id": str(pr.reporting_manager_id) if pr.reporting_manager_id else None,
         "reporting_manager_name": pr.reporting_manager_name,
         "purchase_type": pr.purchase_type,
@@ -363,13 +364,16 @@ def _apply(pr: PurchaseRequisition, payload: dict, current_user: dict, db: Sessi
     pr.department_id = department.id if department else None
     pr.department_name = department.name if department else text(payload.get("department_name"), 150)
 
-    cost_center = None
-    if payload.get("cost_center_id"):
-        cost_center = db.query(CostCenter).filter(CostCenter.id == int(payload["cost_center_id"])).first()
-        if cost_center is None or not cost_center.is_active:
-            raise HTTPException(status_code=400, detail="Choose an active cost centre.")
-    pr.cost_center_id = cost_center.id if cost_center else None
-    pr.cost_center_code = f"{cost_center.code} - {cost_center.name}" if cost_center else None
+    # The cost centre is the company it is for: one of the caller's own,
+    # filled in when they have only one.
+    options = {c["id"]: c["name"] for c in masters.company_options(current_user, db)}
+    company_id = text(payload.get("company_id"), 60)
+    if not company_id and len(options) == 1:
+        company_id = next(iter(options))
+    if company_id and company_id not in options:
+        raise HTTPException(status_code=400, detail="Choose one of your companies as the cost centre.")
+    pr.company_id = company_id or None
+    pr.company_name = options.get(company_id) if company_id else None
 
     if purchase_type == "SALES_ORDER" and not can_link_sales_order(current_user, db):
         raise HTTPException(
@@ -470,7 +474,7 @@ def _apply(pr: PurchaseRequisition, payload: dict, current_user: dict, db: Sessi
     pr.estimated_total = money(total)
 
 
-def _assert_complete(pr: PurchaseRequisition, db: Session) -> None:
+def _assert_complete(pr: PurchaseRequisition, db: Session, current_user: dict) -> None:
     """Everything the form marks required, checked again on the server."""
 
     problems = []
@@ -500,8 +504,9 @@ def _assert_complete(pr: PurchaseRequisition, db: Session) -> None:
     # Only asked for once the masters exist, so a fresh install can raise PRs.
     if not pr.department_id and db.query(Department.id).filter(Department.is_active.is_(True)).first():
         problems.append("Choose the department.")
-    if not pr.cost_center_id and db.query(CostCenter.id).filter(CostCenter.is_active.is_(True)).first():
-        problems.append("Choose the cost centre.")
+    # Someone with no company on their profile has none to choose.
+    if not pr.company_id and masters.company_options(current_user, db):
+        problems.append("Choose the cost centre (company).")
 
     if pr.preferred_vendor_name and not pr.preferred_vendor_reason:
         problems.append("Say why the preferred vendor is preferred.")
@@ -535,7 +540,7 @@ def create(payload: dict, current_user: dict, db: Session) -> PurchaseRequisitio
     # Submitting straight away: check it first, so a refusal saves nothing.
     # Otherwise the draft stays behind and the corrected retry makes a second.
     if payload.get("submit"):
-        _assert_complete(pr, db)
+        _assert_complete(pr, db, current_user)
     db.flush()
 
     log(db, current_user, entity_type="requisition", entity_id=pr.id, requisition_id=pr.id,
@@ -609,7 +614,7 @@ def create_direct(payload: dict, current_user: dict, db: Session) -> PurchaseReq
     )
     db.add(pr)
     _apply(pr, payload, current_user, db, priced=True)
-    _assert_complete(pr, db)
+    _assert_complete(pr, db, current_user)
     db.flush()
 
     on_behalf = requester.id != me.id
@@ -692,7 +697,7 @@ def submit(pr_id: int, current_user: dict, db: Session) -> PurchaseRequisition:
     if pr.status not in PRStatus.EDITABLE:
         raise HTTPException(status_code=409, detail="This requisition has already been submitted.")
 
-    _assert_complete(pr, db)
+    _assert_complete(pr, db, current_user)
 
     resubmission = pr.status == PRStatus.RETURNED
     pr.approval_round = (pr.approval_round or 0) + 1

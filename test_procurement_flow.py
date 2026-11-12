@@ -500,6 +500,31 @@ try:
     r = api("post", "/procurement/requisitions", admin, json=pr_payload([{**LINE_B, "vendor_ids": [999999999]}]))
     check("an unknown vendor is refused before anything is saved", r.status_code == 400, r.text[:150])
 
+    banner("13a. The cost centre is the company")
+    admin_companies = data(api("get", "/purchase-requisitions/meta", admin))["companies"]
+    anil_companies = data(api("get", "/purchase-requisitions/meta", anil))["companies"]
+    check("a super admin may charge any company", len(admin_companies) >= 1, str(admin_companies))
+    check("someone with no company on their profile is offered none", anil_companies == [], str(anil_companies))
+    r = api("post", "/purchase-requisitions", anil, json=pr_payload([LINE_A], company_id=admin_companies[0]["id"]))
+    check("nor can they charge one that is not theirs", r.status_code == 400, r.text[:150])
+    if ok(r):
+        made["prs"].append(data(r)["id"])
+    r = api("post", "/procurement/requisitions", admin, json=pr_payload([LINE_B], company_id=admin_companies[0]["id"]))
+    check("the chosen company is kept, by name", ok(r) and data(r)["company_id"] == admin_companies[0]["id"]
+          and data(r)["company_name"] == admin_companies[0]["name"], r.text[:200])
+    if ok(r):
+        made["prs"].append(data(r)["id"])
+    if len(admin_companies) == 1:
+        r = api("post", "/procurement/requisitions", admin, json=pr_payload([LINE_B]))
+        check("with only one company it is filled in", ok(r) and data(r)["company_id"] == admin_companies[0]["id"], r.text[:200])
+        if ok(r):
+            made["prs"].append(data(r)["id"])
+    else:
+        r = api("post", "/procurement/requisitions", admin, json=pr_payload([LINE_B]))
+        check("with several companies one must be chosen", r.status_code == 400 and "cost centre" in r.text, r.text[:200])
+        if ok(r):
+            made["prs"].append(data(r)["id"])
+
     # ------------------------------------------------------------------
     banner("14. The sales order picker shows only orders the person may see")
     everyone = {o["id"] for o in data(api("get", "/purchase-requisitions/sales-orders", admin))}
