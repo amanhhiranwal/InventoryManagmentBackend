@@ -1,3 +1,5 @@
+import time
+
 from fastapi import HTTPException
 from sqlalchemy import asc
 from sqlalchemy.orm import Session
@@ -33,6 +35,44 @@ DEFAULT_WARRANTY_TERMS = [
 ]
 
 
+#: Each term's price per unit, by name. Pricing a document reads it once
+#: per line, so it is held for as long as the product catalogue is
+#: (sales_order_service.CATALOGUE_TTL_SECONDS) and dropped whenever a term
+#: is saved here.
+_TERM_PRICES: dict[str, float] | None = None
+_TERM_PRICES_READ_AT = 0.0
+TERM_PRICES_TTL_SECONDS = 60
+
+
+def _forget_term_prices() -> None:
+    global _TERM_PRICES
+    _TERM_PRICES = None
+
+
+def term_prices() -> dict[str, float]:
+    """Active terms that carry a price, as {name: rupees per unit}."""
+
+    global _TERM_PRICES, _TERM_PRICES_READ_AT
+
+    if _TERM_PRICES is None or time.monotonic() - _TERM_PRICES_READ_AT > TERM_PRICES_TTL_SECONDS:
+        from app.database.postgres import SessionLocal
+
+        db = SessionLocal()
+        try:
+            rows = (
+                db.query(WarrantyTerm.name, WarrantyTerm.price)
+                .filter(WarrantyTerm.is_active.is_(True))
+                .all()
+            )
+        finally:
+            db.close()
+
+        _TERM_PRICES = {name: float(price) for name, price in rows if price and price > 0}
+        _TERM_PRICES_READ_AT = time.monotonic()
+
+    return _TERM_PRICES
+
+
 class WarrantyTermService:
 
     @staticmethod
@@ -44,6 +84,7 @@ class WarrantyTermService:
             db.add(WarrantyTerm(**item, is_active=True))
 
         db.commit()
+        _forget_term_prices()
 
     @staticmethod
     def get_all(db: Session, include_inactive: bool = False) -> list[WarrantyTerm]:
@@ -106,6 +147,7 @@ class WarrantyTermService:
             name=name,
             years=request.years,
             is_default=request.is_default,
+            price=request.price,
             description=request.description,
             is_active=True,
         )
@@ -117,6 +159,7 @@ class WarrantyTermService:
             WarrantyTermService._clear_other_defaults(db, term.id)
 
         db.commit()
+        _forget_term_prices()
         db.refresh(term)
 
         return term
@@ -145,7 +188,7 @@ class WarrantyTermService:
 
             term.name = name
 
-        for field in ("years", "description", "is_active"):
+        for field in ("years", "price", "description", "is_active"):
             value = getattr(request, field, None)
             if value is not None:
                 setattr(term, field, value)
@@ -157,6 +200,7 @@ class WarrantyTermService:
                 WarrantyTermService._clear_other_defaults(db, term.id)
 
         db.commit()
+        _forget_term_prices()
         db.refresh(term)
 
         return term
@@ -182,5 +226,6 @@ class WarrantyTermService:
         # can look up.
         term.is_active = False
         db.commit()
+        _forget_term_prices()
 
 

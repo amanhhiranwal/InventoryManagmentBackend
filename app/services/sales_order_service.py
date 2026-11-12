@@ -305,6 +305,11 @@ def dtp_rate_for_sku(sku: str) -> float:
     return _catalogue().get(str(sku or "").upper(), {}).get("dtp", 0.0)
 
 
+#: SKU of a line that is a warranty term rather than a product:
+#: "WARRANTY:4 Years". The pickers write it; rate_for_sku prices it.
+WARRANTY_SKU_PREFIX = "WARRANTY:"
+
+
 def rate_for_sku(sku: str, price_type: str | None = None) -> float | None:
     """What the price list says this SKU costs, or None if it is not on it.
 
@@ -317,6 +322,18 @@ def rate_for_sku(sku: str, price_type: str | None = None) -> float | None:
     somebody typed by hand rather than picked, and those keep what they
     were sent. Zero means the list genuinely holds no rate.
     """
+
+    # A warranty term added as its own line, from the pickers' Warranty
+    # Terms tab: priced from the term's price on the master, never from the
+    # form. A term with no price (or gone) charges nothing.
+    if str(sku or "").upper().startswith(WARRANTY_SKU_PREFIX):
+        from app.services.warranty_term_service import term_prices
+
+        wanted = str(sku)[len(WARRANTY_SKU_PREFIX):].strip().lower()
+        return next(
+            (price for name, price in term_prices().items() if name.lower() == wanted),
+            0.0,
+        )
 
     entry = _catalogue().get(str(sku or "").upper())
 
