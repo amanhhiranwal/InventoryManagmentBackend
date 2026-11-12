@@ -332,8 +332,12 @@ def _number(value, field: str, *, positive: bool = False, allow_none: bool = Tru
     return number
 
 
-def _apply(pr: PurchaseRequisition, payload: dict, current_user: dict, db: Session) -> None:
-    """The requester's fields and lines, written onto the PR."""
+def _apply(pr: PurchaseRequisition, payload: dict, current_user: dict, db: Session, *, priced: bool = False) -> None:
+    """The requester's fields and lines, written onto the PR.
+
+    Only procurement prices a line (``priced``, from New Procurement): a
+    requester says what is needed, and any price they send is ignored.
+    """
 
     purchase_type = (text(payload.get("purchase_type")) or "").upper() or pr.purchase_type or "OTHER"
     if purchase_type not in PURCHASE_TYPES:
@@ -435,7 +439,7 @@ def _apply(pr: PurchaseRequisition, payload: dict, current_user: dict, db: Sessi
     for number, raw in enumerate(lines, start=1):
         name = text(raw.get("product_name"), 300)
         quantity = _number(raw.get("quantity"), f"Line {number} quantity", positive=True, allow_none=True)
-        price = _number(raw.get("est_unit_price"), f"Line {number} estimated unit price")
+        price = _number(raw.get("est_unit_price"), f"Line {number} estimated unit price") if priced else None
         tax = _number(raw.get("tax_percent"), f"Line {number} tax %")
         if tax is not None and tax > 100:
             raise HTTPException(status_code=400, detail=f"Line {number} tax % cannot be over 100.")
@@ -604,7 +608,7 @@ def create_direct(payload: dict, current_user: dict, db: Session) -> PurchaseReq
         assigned_name=name,
     )
     db.add(pr)
-    _apply(pr, payload, current_user, db)
+    _apply(pr, payload, current_user, db, priced=True)
     _assert_complete(pr, db)
     db.flush()
 

@@ -109,11 +109,17 @@ try:
     made["prs"].append(pr["id"])
     check("numbered PR-<year>-", pr["pr_number"].startswith(f"PR-{date.today().year}-"), pr["pr_number"])
     check("it carries no price", pr["estimated_total"] == 0, str(pr["estimated_total"]))
+    r = api("post", "/purchase-requisitions", anil, json=pr_payload([{**LINE_A, "est_unit_price": 50000}]))
+    check("a price an employee sends is ignored", ok(r) and data(r)["estimated_total"] == 0
+          and data(r)["items"][0]["est_unit_price"] is None, r.text[:200])
+    unpriced_id = data(r)["id"] if ok(r) else None
+    if ok(r):
+        made["prs"].append(data(r)["id"])
 
     r = api("post", "/purchase-requisitions", anil, json=pr_payload([LINE_A], required_by="2020-01-01", submit=True))
     check("a past required-by date is refused", r.status_code == 400, r.text[:150])
     left = [x for x in api("get", "/purchase-requisitions/mine", anil, params={"search": TAG, "size": 100}).json()["data"]
-            if x["id"] != pr["id"]]
+            if x["id"] not in (pr["id"], unpriced_id)]
     check("and nothing is saved by the refused submit", not left, str([x["pr_number"] for x in left]))
     made["prs"].extend(x["id"] for x in left)
 
@@ -479,12 +485,15 @@ try:
     check("the desk can pick who a requisition is for", any(p["id"] == deepa_id for p in people), str(people)[:150])
     check("an employee cannot list them", api("get", "/procurement/requesters", anil).status_code == 403)
     r = api("post", "/procurement/requisitions", admin, json=pr_payload(
-        [{**LINE_B, "tax_percent": 18, "vendor_ids": [vendor_ids[0], vendor_ids[1]]}], requested_for=deepa_id))
+        [{**LINE_B, "tax_percent": 18, "est_unit_price": 2000, "vendor_ids": [vendor_ids[0], vendor_ids[1]]}],
+        requested_for=deepa_id))
     check("raised for someone else, with GST and two vendors on the line", ok(r)
           and data(r)["requested_by"] == deepa_id and data(r)["procurement_status"] == "QUOTATION_COLLECTION", r.text[:200])
     if ok(r):
         made["prs"].append(data(r)["id"])
         line = data(r)["items"][0]
+        check("procurement's estimated price is kept, with GST in the total", line["est_unit_price"] == 2000
+              and abs(data(r)["estimated_total"] - 3 * 2000 * 1.18) < 0.01, str(line))
         check("the line keeps its GST and the vendors asked", line["tax_percent"] == 18
               and sorted(line["rfq_vendor_ids"]) == sorted(vendor_ids[:2]), str(line))
         check("the person it is for can open it", ok(api("get", f"/purchase-requisitions/{data(r)['id']}", deepa)))
