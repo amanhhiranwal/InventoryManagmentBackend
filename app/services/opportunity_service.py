@@ -52,7 +52,15 @@ def compute_product_totals(items) -> dict:
         taxable     = line - discount
         tax         = taxable * tax%
         total       = SUM(taxable + tax)
+
+    A warranty line must cover exactly the products on its term; see
+    sales_order_service.assert_warranty_lines.
     """
+
+    # Imported here: sales_order_service reaches back into the CRM services.
+    from app.services.sales_order_service import assert_warranty_lines
+
+    assert_warranty_lines(items)
 
     subtotal = 0.0
     discount_amount = 0.0

@@ -26,6 +26,7 @@ from app.services.email_service import EmailService
 from app.services.lead_service import get_visible_creator_user_ids
 from app.services.quotation_pdf_service import QuotationPDFService
 from app.services.sales_order_service import (
+    assert_warranty_lines,
     rate_for_sku,
     warranty_uplift_for_sku,
 )
@@ -160,6 +161,9 @@ def compute_totals(
     # "unit price 0" under a total of 147,000 is a document arguing with
     # itself.
     settled: list[dict] = []
+
+    # A warranty line must cover exactly the products on its term.
+    assert_warranty_lines([_item_dict(raw) for raw in items or []])
 
     for raw in items or []:
         item = _item_dict(raw)
