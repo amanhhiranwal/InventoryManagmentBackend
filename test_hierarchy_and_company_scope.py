@@ -99,9 +99,11 @@ try:
     # The sales chart, plus the desks an approved order passes through and
     # the catalogue role. They sit outside the reporting line on purpose -
     # they answer for the whole company, not for one region.
+    # Finance and Director approve purchase requisitions above the
+    # amount-matrix limits; they are approvers, not part of the chart.
     DESKS = {
         "Business Coordinator", "Accounts", "Production Tech Head",
-        "Logistics", "Inventory",
+        "Logistics", "Inventory", "Finance", "Director",
     }
     check(
         "the sales chart is Super Admin, Founder, CEO, AVP, Zonal Head, Area Manager",

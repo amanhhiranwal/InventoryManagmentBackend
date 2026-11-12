@@ -56,6 +56,12 @@ ALIAS_MAP = {
     },
     "unit.read": {"unit.read", "unit.view", "lead.read", "sales.menu", "inventory.read"},
     "customer.read": {"customer.read", "customer.view", "sales.menu"},
+
+    # Procurement: whoever works or approves the desk may read it, and the
+    # team that records quotations needs the vendor list to pick from.
+    "procurement.read": {"procurement.read", "procurement.manage"},
+    "vendor.read": {"vendor.read", "vendor.manage", "vendor.approve", "procurement.manage"},
+    "purchase_order.read": {"purchase_order.read", "purchase_order.manage", "purchase_order.pay"},
 }
 
 def require_permission(permission_name: str):

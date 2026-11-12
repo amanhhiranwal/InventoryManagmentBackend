@@ -85,6 +85,8 @@ RETIRED_DEFAULT_CHILDREN = {
     # The coordinator's separate queue. Their work is on the Sales Order
     # pages, where the advance is checked on the order itself.
     ("Approved Orders", "/fulfilment/coordination"),
+    # A requisition's cost centre is now the company it is for.
+    ("Cost Centers", "/cost-centers"),
 }
 
 #: Top-level menus the design moved: title -> (old defaults, new default).
@@ -260,6 +262,10 @@ DEFAULT_MENUS_DATA = [
       # seniority; this charts the people, which decides who approves a
       # given discount and who can see whose work.
       {"title": "Reporting Chart", "icon": "LuNetwork", "path": "/hierarchy", "permission_key": "user.read", "order_index": 14},
+      # What a purchase requisition is filed and charged under, and how
+      # high it goes for approval by amount.
+      {"title": "Departments", "icon": "LuBuilding", "path": "/departments", "permission_key": "procurement_masters.manage", "order_index": 15},
+      {"title": "PR Approval Matrix", "icon": "LuListChecks", "path": "/pr-approval", "permission_key": "procurement_masters.manage", "order_index": 17},
     ]
   },
   {
@@ -269,7 +275,26 @@ DEFAULT_MENUS_DATA = [
     "permission_key": "workflow.read",
     "order_index": 12,
     "children": []
-  }
+  },
+  # Buying: a requisition any employee raises, up to the purchase order.
+  # The heading carries no permission so the first two reach everyone -
+  # every employee may raise a PR, and approvals are whoever's turn it is;
+  # the procurement team's pages each need their own.
+  {
+    "title": "Procurement",
+    "icon": "LuShoppingCart",
+    "path": None,
+    "permission_key": None,
+    "order_index": 13,
+    "children": [
+      # Approvals are a tab on My Requisitions ("Waiting on me") and are
+      # decided on the requisition or PO itself, so they need no page.
+      {"title": "My Requisitions", "icon": "LuClipboardList", "path": "/procurement/requisitions", "permission_key": None, "order_index": 1},
+      {"title": "Procurement Desk", "icon": "LuBriefcase", "path": "/procurement/desk", "permission_key": "procurement.read", "order_index": 2},
+      {"title": "Purchase Orders", "icon": "LuFileCheck", "path": "/procurement/purchase-orders", "permission_key": "purchase_order.read", "order_index": 3},
+      {"title": "Vendors", "icon": "LuStore", "path": "/procurement/vendors", "permission_key": "vendor.read", "order_index": 4},
+    ]
+  },
 ]
 
 class MenuService:

@@ -22,6 +22,7 @@ def _serialise(term) -> dict:
         "name": term.name,
         "years": term.years,
         "is_default": term.is_default,
+        "price": float(term.price or 0),
         "description": term.description,
         "is_active": term.is_active,
     }

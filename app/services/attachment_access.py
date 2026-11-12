@@ -38,6 +38,10 @@ SOURCES = [
     ("sales_proforma_invoice", "attachments"),
     ("sales_opportunity", "attachments"),
     ("sales_lead", "description"),
+    ("purchase_requisition", "attachments"),
+    ("purchase_requisition_item", "attachments"),
+    ("vendor", "documents"),
+    ("vendor_quotation", "attachments"),
 ]
 
 
@@ -76,6 +80,36 @@ def _guard_for(table: str):
             return db.query(Lead).filter(Lead.id == int(lead_id)).first()
 
         return load_lead, LeadService.assert_can_modify_lead
+
+    # Procurement files follow the requisition they belong to, and the
+    # team's own records follow the team's permissions.
+    if table == "purchase_requisition":
+        from app.services.procurement import requisitions
+
+        return (lambda record_id, db: requisitions.get(int(record_id), db)), requisitions.assert_can_view
+
+    if table == "purchase_requisition_item":
+        from app.models.procurement import PurchaseRequisitionItem
+        from app.services.procurement import requisitions
+
+        def load_item(record_id, db):
+            item = db.query(PurchaseRequisitionItem).filter(PurchaseRequisitionItem.id == int(record_id)).first()
+            return requisitions.get(item.requisition_id, db) if item else None
+
+        return load_item, requisitions.assert_can_view
+
+    if table in ("vendor", "vendor_quotation"):
+        from app.services.procurement.common import has_permission
+
+        key = "vendor.read" if table == "vendor" else "procurement.read"
+        allowed = {"vendor.read": ("vendor.read", "vendor.manage", "vendor.approve", "procurement.manage"),
+                   "procurement.read": ("procurement.read", "procurement.manage")}[key]
+
+        def guard(record, current_user, db):
+            if record is None or not any(has_permission(current_user, k, db) for k in allowed):
+                raise HTTPException(status_code=403, detail="Not yours to open.")
+
+        return (lambda record_id, db: record_id), guard
 
     return None, None
 

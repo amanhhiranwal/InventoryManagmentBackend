@@ -11,6 +11,22 @@ from app.models.notification import Notification
 from app.models.opportunity import Opportunity
 from app.models.password_reset_token import PasswordResetToken
 from app.models.permission import Permission
+from app.models.procurement import (
+    CostCenter,
+    Department,
+    ProcurementActivity,
+    PurchaseOrder,
+    PurchaseOrderApproval,
+    PurchaseOrderItem,
+    PurchaseOrderPayment,
+    PurchaseRequisition,
+    PurchaseRequisitionApproval,
+    PurchaseRequisitionItem,
+    QuotationCollection,
+    Vendor,
+    VendorQuotation,
+    VendorQuotationItem,
+)
 from app.models.proforma_invoice import ProformaInvoice
 from app.models.proforma_invoice_activity import ProformaInvoiceActivity
 from app.models.quotation import Quotation

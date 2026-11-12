@@ -305,6 +305,72 @@ def dtp_rate_for_sku(sku: str) -> float:
     return _catalogue().get(str(sku or "").upper(), {}).get("dtp", 0.0)
 
 
+#: SKU of a line that is a warranty term rather than a product:
+#: "WARRANTY:4 Years". The pickers write it; rate_for_sku prices it.
+WARRANTY_SKU_PREFIX = "WARRANTY:"
+
+
+def assert_warranty_lines(items) -> None:
+    """A warranty line covers the products quoted on its term, unit for unit.
+
+    A "4 Years Warranty" line (SKU "WARRANTY:4 Years") is only allowed when
+    a product line has its Warranty set to 4 Years, and its quantity must
+    equal the total quantity of those products: six panels on 4 Years, six
+    units of 4 Years Warranty. The screens fill the quantity in; this is the
+    same rule on the server, so a document cannot be saved without it.
+    """
+
+    covered: dict[str, float] = {}
+    sold: dict[str, tuple[str, float]] = {}
+
+    for raw in items or []:
+        if isinstance(raw, dict):
+            row = raw
+        elif hasattr(raw, "model_dump"):
+            row = raw.model_dump()
+        else:
+            row = dict(raw)
+
+        quantity = _as_float(
+            row.get("quantity_case") or row.get("qty") or row.get("quantity") or 1,
+            1.0,
+        )
+        sku = str(row.get("sku") or "")
+
+        if sku.upper().startswith(WARRANTY_SKU_PREFIX):
+            term = sku[len(WARRANTY_SKU_PREFIX):].strip()
+            name, already = sold.get(term.lower(), (term, 0.0))
+            sold[term.lower()] = (name, already + quantity)
+            continue
+
+        term = str(row.get("warranty_term") or "").strip().lower()
+        if term:
+            covered[term] = covered.get(term, 0.0) + quantity
+
+    for key, (term, quantity) in sold.items():
+        units = covered.get(key, 0.0)
+
+        if units <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{term} Warranty is added, but no product has its Warranty "
+                    f"set to {term}. Set the product's Warranty to {term}, or "
+                    f"remove the {term} Warranty line."
+                ),
+            )
+
+        if abs(units - quantity) > 1e-9:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{term} Warranty is for {quantity:g} unit(s), but {units:g} "
+                    f"unit(s) of product have their Warranty set to {term}. "
+                    "The two must match."
+                ),
+            )
+
+
 def rate_for_sku(sku: str, price_type: str | None = None) -> float | None:
     """What the price list says this SKU costs, or None if it is not on it.
 
@@ -317,6 +383,18 @@ def rate_for_sku(sku: str, price_type: str | None = None) -> float | None:
     somebody typed by hand rather than picked, and those keep what they
     were sent. Zero means the list genuinely holds no rate.
     """
+
+    # A warranty term added as its own line, from the pickers' Warranty
+    # Terms tab: priced from the term's price on the master, never from the
+    # form. A term with no price (or gone) charges nothing.
+    if str(sku or "").upper().startswith(WARRANTY_SKU_PREFIX):
+        from app.services.warranty_term_service import term_prices
+
+        wanted = str(sku)[len(WARRANTY_SKU_PREFIX):].strip().lower()
+        return next(
+            (price for name, price in term_prices().items() if name.lower() == wanted),
+            0.0,
+        )
 
     entry = _catalogue().get(str(sku or "").upper())
 
@@ -506,6 +584,11 @@ def compute_order_totals(
     # into a copy: that list is what gets stored, and a line reading
     # "rate 0" under a total of 147,000 is a document arguing with itself.
     rows = _items_to_json(items) or []
+
+    # The proforma (no price type) bills an order that was checked when it
+    # was saved; it can bill part of it, so the rule is not applied there.
+    if price_type is not None:
+        assert_warranty_lines(rows)
 
     subtotal = 0.0
     discount_amount = 0.0

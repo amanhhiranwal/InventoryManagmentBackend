@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, func
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, func
 
 from app.database.base import Base
 
@@ -10,7 +10,9 @@ class WarrantyTerm(Base):
     but what they cost is not, because five years on a panel and five
     years on a camera are different undertakings. So this holds the name
     and nothing about the price; the rate for each term is held against
-    each product, on the product record.
+    each product, on the product record. A term may also carry a price per
+    unit of its own: the Add Products pickers list priced terms under a
+    Warranty Terms tab, and one is sold as its own line at that price.
 
     One term is the standard one: it is what a line falls back to, and it
     is the cover already included in the price.
@@ -29,6 +31,11 @@ class WarrantyTerm(Base):
     #: The term a line gets when nobody picks one. Exactly one should hold
     #: this, and it is the one included in the price.
     is_default = Column(Boolean, default=False, nullable=False)
+
+    #: Rupees per unit, before GST, when the term is sold as its own line
+    #: (SKU "WARRANTY:<name>", priced in sales_order_service.rate_for_sku).
+    #: The standard term stays at 0 and is not offered as a line.
+    price = Column(Float, default=0.0, nullable=True)
 
     description = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)

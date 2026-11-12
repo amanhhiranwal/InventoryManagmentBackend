@@ -172,6 +172,26 @@ def sync_db_and_seed():
                 db.add(p_obj)
         db.commit()
 
+        # Procurement's own permissions, granted to no role: a super admin
+        # has them all and Roles & Access hands them out.
+        from app.core.procurement import PERMISSIONS as PROCUREMENT_PERMISSIONS
+
+        for p_key, description in PROCUREMENT_PERMISSIONS.items():
+            p_obj = db.query(Permission).filter(Permission.permission_name == p_key).first()
+            if not p_obj:
+                db.add(Permission(permission_name=p_key, module="Procurement", description=description))
+
+        # The roles the requisition approval matrix names above the
+        # reporting manager and department head. Created empty; whoever is
+        # given one decides that step.
+        for r_name, description in (
+            ("Finance", "Approves purchase requisitions at the Finance step"),
+            ("Director", "Approves purchase requisitions at the Director / CFO step"),
+        ):
+            if not db.query(Role).filter(Role.role_name == r_name).first():
+                db.add(Role(role_name=r_name, description=description))
+        db.commit()
+
         print("All default master roles and permissions seeded successfully.")
 
         from app.services.customer_type_service import CustomerTypeService

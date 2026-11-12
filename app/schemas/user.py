@@ -15,6 +15,9 @@ class CreateUserRequest(BaseModel):
     role_ids: list[str] = []
     company_ids: list[str] = []
     reports_to_id: str | None = None
+    #: Masters > Departments. Decides who heads a purchase requisition's
+    #: Department Head approval step.
+    department_id: int | None = None
 
 
 class UpdateUserRoleRequest(BaseModel):
@@ -35,6 +38,7 @@ class UpdateUserRequest(BaseModel):
     role_ids: list[str] = []
     company_ids: list[str] = []
     reports_to_id: str | None = None
+    department_id: int | None = None
 
 
 class SetUserActiveRequest(BaseModel):

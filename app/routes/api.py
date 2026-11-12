@@ -20,6 +20,7 @@ from app.routes.order import router as order_router
 from app.routes.notification import router as notification_router
 from app.routes.product_type import router as product_type_router
 from app.routes.profile import router as profile_router
+from app.routes.procurement import router as procurement_router
 from app.routes.proforma_invoice import router as proforma_invoice_router
 from app.routes.quotation import router as quotation_router
 from app.routes.rbac import router as rbac_router
@@ -64,6 +65,7 @@ api_router.include_router(opportunity_router)
 api_router.include_router(quotation_router)
 api_router.include_router(order_router)
 api_router.include_router(proforma_invoice_router)
+api_router.include_router(procurement_router)
 api_router.include_router(notification_router)
 api_router.include_router(unit_router)
 api_router.include_router(customer_router)
