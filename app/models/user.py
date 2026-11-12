@@ -36,6 +36,15 @@ class User(BaseModel):
         server_default="false",
     )
 
+    #: The department they work in (Masters > Departments). A plain id, not
+    #: a foreign key: the users table is mirrored into databases that do
+    #: not carry the departments.
+    department_id: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+        index=True,
+    )
+
     #: Goes into every token at sign-in and is checked on every request,
     #: so raising it signs the account out everywhere at once.
     session_version: Mapped[int] = mapped_column(

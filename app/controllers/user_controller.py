@@ -121,6 +121,7 @@ class UserController:
             "is_active": user.is_active,
             "reports_to_id": str(user.reports_to_id) if user.reports_to_id else None,
             "reports_to_name": reports_to_name,
+            "department_id": getattr(user, "department_id", None),
             # When the account was opened. Asked for on the list, where it
             # answers "is this someone we added last week or last year".
             "created_at": iso(user.created_at) if user.created_at else None,

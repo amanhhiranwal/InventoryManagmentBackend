@@ -296,6 +296,7 @@ class UserService:
 
         user.roles = roles_list
         user.companies = companies_list
+        user.department_id = UserService._department(getattr(request, "department_id", None), db)
 
         created_user = UserRepository.create(db, user)
 
@@ -550,7 +551,24 @@ class UserService:
             user.reports_to_id = HierarchyService.validate_reports_to(
                 str(user.id), request.reports_to_id, request.role_ids, db
             )
+        # The same for the department.
+        if "department_id" in request.model_fields_set:
+            user.department_id = UserService._department(request.department_id, db)
 
         user.roles = roles_list
         user.companies = companies_list
         return UserRepository.update(db, user)
+
+    @staticmethod
+    def _department(department_id, db: Session) -> int | None:
+        """A department id the masters actually hold, or none."""
+
+        if not department_id:
+            return None
+
+        from app.models.procurement import Department
+
+        if not db.query(Department.id).filter(Department.id == int(department_id)).first():
+            raise HTTPException(status_code=400, detail="That department does not exist.")
+
+        return int(department_id)
