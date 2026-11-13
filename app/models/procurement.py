@@ -575,6 +575,9 @@ class PurchaseOrderPayment(Base):
 
     #: PENDING / PAID
     status = Column(String(20), nullable=False, default="PENDING")
+    #: The day the daily reminder last went out for it, so a second run
+    #: on the same day sends nothing (see payment_calendar.send_reminders).
+    last_reminded_on = Column(Date, nullable=True)
     paid_at = Column(DateTime, nullable=True)
     paid_by = Column(UUID(as_uuid=True), nullable=True)
     paid_by_name = Column(String(200), nullable=True)

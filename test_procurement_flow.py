@@ -409,6 +409,83 @@ try:
           ws["procurement_status"])
 
     # ------------------------------------------------------------------
+    banner("11a. The Payment Calendar, and the daily reminder until paid")
+    from datetime import date as _date, timedelta as _td
+
+    from sqlalchemy import text as _text
+
+    from app.database.postgres import SessionLocal as _Session
+    from app.services.procurement.payment_calendar import send_reminders
+
+    today = _date.today()
+    po_b = data(api("get", f"/purchase-orders/{po_b['id']}", admin))
+    balance_b = po_b["payments"][0]
+
+    check("an employee cannot open the calendar",
+          api("get", "/purchase-orders/payment-calendar", deepa).status_code == 403)
+    check("a bad date is refused",
+          api("get", "/purchase-orders/payment-calendar", admin, params={"start": "13/11/2026"}).status_code == 400)
+    check("'to' before 'from' is refused", api("get", "/purchase-orders/payment-calendar", admin, params={
+        "start": today.isoformat(), "end": (today - _td(days=1)).isoformat()}).status_code == 400)
+
+    # The monitors' balance falls due two days ago, unpaid.
+    s = _Session()
+    s.execute(_text("UPDATE purchase_order_payment SET due_date = :d, last_reminded_on = NULL WHERE id = :i"),
+              {"d": today - _td(days=2), "i": balance_b["id"]})
+    # The laptops' advance, paid by cheque above, fell due yesterday.
+    s.execute(_text("UPDATE purchase_order_payment SET due_date = :d WHERE id = :i"),
+              {"d": today - _td(days=1), "i": po_a["payments"][0]["id"]})
+    s.commit()
+
+    r = api("get", "/purchase-orders/payment-calendar", admin, params={
+        "start": today.isoformat(), "end": (today + _td(days=400)).isoformat()})
+    cal = data(r) if ok(r) else {"weeks": [], "summary": {}}
+    rows = [p for w in cal["weeks"] for p in w["rows"]]
+    mine = {p["id"]: p for p in rows}
+    check("the calendar opens for the desk", ok(r), r.text[:150])
+    check("an unpaid instalment from before the window still shows, as overdue",
+          mine.get(balance_b["id"], {}).get("overdue") is True, str(mine.get(balance_b["id"])))
+    check("with its PO, vendor, amount and bank transfer",
+          mine.get(balance_b["id"], {}).get("po_number") == po_b["po_number"]
+          and mine.get(balance_b["id"], {}).get("amount") == balance_b["amount"]
+          and mine.get(balance_b["id"], {}).get("mode") == "BANK_TRANSFER", str(mine.get(balance_b["id"])))
+    check("instalments are grouped by week, with what is left to pay",
+          all(w["week"] and w["pending"] <= w["total"] for w in cal["weeks"] if w["week_start"]), str(cal["weeks"])[:200])
+    advance_a = po_a["payments"][0]
+    check("a paid instalment before the window is not listed", advance_a["id"] not in mine)
+
+    payer = str(s.execute(_text("SELECT id FROM users WHERE is_super_admin = true AND is_active = true LIMIT 1")).scalar())
+    sent = send_reminders(s, today)
+    notes = s.execute(_text(
+        "SELECT count(*) FROM notifications WHERE module = 'purchase_order' AND entity_id = :po "
+        "AND action = 'Payment Due' AND user_id = CAST(:u AS uuid)"), {"po": po_b["id"], "u": payer}).scalar()
+    check("the daily run reminds about the overdue instalment", sent >= 1 and notes == 1, f"sent {sent}, notes {notes}")
+    message = s.execute(_text(
+        "SELECT message FROM notifications WHERE module = 'purchase_order' AND entity_id = :po AND action = 'Payment Due' LIMIT 1"),
+        {"po": po_b["id"]}).scalar() or ""
+    check("saying which PO, how much and how late", po_b["po_number"] in message and "overdue" in message, message)
+    check("a second run the same day sends nothing again", send_reminders(s, today) == 0)
+    send_reminders(s, today + _td(days=1))
+    notes_next = s.execute(_text(
+        "SELECT count(*) FROM notifications WHERE module = 'purchase_order' AND entity_id = :po "
+        "AND action = 'Payment Due' AND user_id = CAST(:u AS uuid)"), {"po": po_b["id"], "u": payer}).scalar()
+    check("it reminds again the next day while unpaid", notes_next == 2, f"{notes_next}")
+
+    r = api("put", f"/purchase-orders/{po_b['id']}/payments/{balance_b['id']}", admin,
+            json={"bank_name": "ICICI Bank", "reference": f"UTR{TAG}", "paid": True})
+    check("the balance is recorded paid by transfer", ok(r), r.text[:150])
+    send_reminders(s, today + _td(days=2))
+    notes_after = s.execute(_text(
+        "SELECT count(*) FROM notifications WHERE module = 'purchase_order' AND entity_id = :po "
+        "AND action = 'Payment Due' AND user_id = CAST(:u AS uuid)"), {"po": po_b["id"], "u": payer}).scalar()
+    check("once paid, the reminders stop", notes_after == 2, f"{notes_after}")
+    r = api("get", "/purchase-orders/payment-calendar", admin, params={"start": (today - _td(days=7)).isoformat()})
+    paid_row = next((p for w in data(r)["weeks"] for p in w["rows"] if p["id"] == balance_b["id"]), {}) if ok(r) else {}
+    check("and the calendar shows it paid, with its bank", paid_row.get("status") == "PAID"
+          and paid_row.get("bank_name") == "ICICI Bank" and paid_row.get("overdue") is False, str(paid_row))
+    s.close()
+
+    # ------------------------------------------------------------------
     banner("12. The amount bands on a large PO, and a rejected PR")
     big_line = {"product_name": f"Test Server {TAG}", "uom": "Nos", "quantity": 1}
     r = api("post", "/purchase-requisitions", anil, json=pr_payload([big_line], submit=True))

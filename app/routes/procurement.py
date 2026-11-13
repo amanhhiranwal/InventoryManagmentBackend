@@ -33,6 +33,7 @@ from app.models.procurement import PurchaseRequisition, Vendor
 from app.services.procurement import (
     desk,
     masters,
+    payment_calendar,
     purchase_orders,
     quotations,
     requisitions,
@@ -461,6 +462,15 @@ def quotation_status(quotation_id: int, payload: Body, db: Session = Depends(get
 # ======================================================================
 # Purchase orders
 # ======================================================================
+@router.get("/purchase-orders/payment-calendar")
+def get_payment_calendar(start: str | None = None, end: str | None = None, status: str | None = None,
+                         db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Every approved PO's instalments by week: due date, bank or cheque,
+    amount, paid. For the purchase team and accounts (checked in the
+    service: either purchase_order.read or purchase_order.pay)."""
+    return _ok(payment_calendar.calendar(current_user, db, start=start, end=end, status=status))
+
+
 @router.get("/purchase-orders")
 def list_purchase_orders(search: str | None = None, status: str | None = None, vendor_id: int | None = None,
                          requisition_id: int | None = None, page: int = 1, size: int = 20,
