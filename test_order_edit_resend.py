@@ -14,6 +14,13 @@ This runs that sequence against the API:
   * moved back with the mark-up, it keeps the selling price again;
   * an edited draft sent for approval leaves Draft and records it.
 
+Then every seeded sales role (Area Managers, Zonal Heads, AVP, CEO,
+Founder) edits a draft and presses Send For Approval, and the chain is
+checked against the approval matrix: an OEM mark-up goes to the founder,
+an end customer's 15% climbs past the raiser's ceiling, an undiscounted
+order needs nobody and is confirmed. The founder signs one; another is
+refused to a stranger, rejected, edited and sent again.
+
 Everything it creates is removed again.
 
     docker exec -w /app backend_app python test_order_edit_resend.py
@@ -57,20 +64,20 @@ dtp, ecp = entry["dtp"], entry["ecp"]
 selling = round(dtp + 1000, 2)  # above DTP, below ECP - like 70,000 on 68,000 / 79,000
 
 
-def line(rate, marked_up):
+def line(rate, marked_up, discount=0):
     return {
         "sku": sku, "product": "Interactive Flat Panel", "model": sku,
-        "qty": 1, "rate": rate, "tax_rate": 18, "discount": 0, "marked_up": marked_up,
+        "qty": 1, "rate": rate, "tax_rate": 18, "discount": discount, "marked_up": marked_up,
     }
 
 
-def new_draft(who, label, customer_type, rate, marked_up):
+def new_draft(who, label, customer_type, rate, marked_up, discount=0):
     r = api("post", "/orders", who, json={
         "customer_name": f"{label} {TAG}",
         "customer_type": customer_type,
         "order_date": datetime.now(timezone.utc).isoformat(),
         "status": "DRAFT",
-        "items": [line(rate, marked_up)],
+        "items": [line(rate, marked_up, discount)],
     })
     if r.status_code >= 400:
         raise RuntimeError(f"create: {r.status_code} {r.text[:200]}")
@@ -171,6 +178,81 @@ try:
     after = api("get", f"/orders/{plain['id']}", admin).json()["data"]
     check("so the order is confirmed rather than left in Draft",
           after["status"] == "CONFIRMED", after["status"])
+
+    # ------------------------------------------------------------------
+    # Every sales role, editing a draft and pressing Send For Approval.
+    # Who has to sign is the approval matrix's rule, as test_approval_chain
+    # states it: a dealer-channel (DTP) order goes to the founder whatever
+    # the discount; an end customer's 15% climbs past the AVP's ceiling;
+    # an undiscounted end customer order needs nobody.
+    # ------------------------------------------------------------------
+    roles = ["am_north_1", "am_north_2", "am_south_1", "zh_north", "zh_south", "avp", "ceo", "founder"]
+    token = {who: login(email_for(who), TEAM_PASSWORD) for who in roles}
+
+    chain_15 = {
+        "am_north_1": ["AVP", "CEO", "Founder"], "am_north_2": ["AVP", "CEO", "Founder"],
+        "am_south_1": ["AVP", "CEO", "Founder"], "zh_north": ["AVP", "CEO", "Founder"],
+        "zh_south": ["AVP", "CEO", "Founder"], "avp": ["CEO", "Founder"], "ceo": [], "founder": [],
+    }
+
+    def edit_and_send(who, label, customer_type, rate, marked_up, discount=0):
+        draft = new_draft(token[who], label, customer_type, rate, marked_up, discount)
+        r = api("put", f"/orders/{draft['id']}", token[who], json={"remarks": "edited before sending"})
+        if r.status_code >= 400:
+            raise RuntimeError(f"{who} edit: {r.status_code} {r.text[:200]}")
+        approval = send_up(token[who], draft, r.json()["data"].get("grand_total") or 0)
+        status = api("get", f"/orders/{draft['id']}", token[who]).json()["data"]["status"]
+        return draft, approval, status
+
+    for who in roles:
+        print(f"\n{who}: edit a draft, then Send For Approval")
+
+        expected = [] if who == "founder" else ["Founder"]
+        draft, approval, status = edit_and_send(who, f"Role OEM {who}", "OEM", selling, True)
+        got = [step["role"] for step in (approval or {}).get("steps", [])]
+        check(f"{who}: an OEM mark-up goes to {expected or 'nobody'}", got == expected, str(got))
+        check(f"{who}: and the order is {'held' if expected else 'confirmed'}",
+              status == ("PENDING_APPROVAL" if expected else "CONFIRMED"), status)
+
+        expected = chain_15[who]
+        draft, approval, status = edit_and_send(who, f"Role 15 {who}", "End Customer", ecp, False, 15)
+        got = [step["role"] for step in (approval or {}).get("steps", [])]
+        check(f"{who}: an end customer's 15% climbs {expected or 'nothing'}", got == expected, str(got))
+        check(f"{who}: and the order is {'held' if expected else 'confirmed'}",
+              status == ("PENDING_APPROVAL" if expected else "CONFIRMED"), status)
+
+        draft, approval, status = edit_and_send(who, f"Role 0 {who}", "End Customer", ecp, False)
+        check(f"{who}: an undiscounted end customer order needs nobody and is confirmed",
+              approval is None and status == "CONFIRMED", f"{approval and approval.get('steps')} / {status}")
+
+    print("\nThe founder signs an Area Manager's OEM order")
+    draft, approval, status = edit_and_send("am_north_1", "Signed OEM", "OEM", selling, True)
+    r = api("put", f"/approvals/{approval['id']}/decide", token["founder"], json={"approve": True})
+    check("the founder's approval is accepted", r.status_code < 400, f"{r.status_code} {r.text[:160]}")
+    after = api("get", f"/orders/{draft['id']}", admin).json()["data"]
+    check("the order is confirmed, still at the marked-up price",
+          after["status"] == "CONFIRMED" and float(after["items"][0]["rate"]) == selling,
+          f"{after['status']} {after['items'][0]['rate']}")
+
+    print("\nRejected, edited and sent again")
+    draft, approval, status = edit_and_send("am_north_1", "Rejected OEM", "OEM", selling, True)
+    stranger = api("put", f"/approvals/{approval['id']}/decide", token["am_south_1"],
+                   json={"approve": True})
+    check("another Area Manager cannot decide it", stranger.status_code in (403, 400), str(stranger.status_code))
+    r = api("put", f"/approvals/{approval['id']}/decide", token["founder"],
+            json={"approve": False, "remarks": "Price too low for this channel."})
+    check("the founder rejects it", r.status_code < 400, f"{r.status_code} {r.text[:160]}")
+    after = api("get", f"/orders/{draft['id']}", token["am_north_1"]).json()["data"]
+    check("the order comes back as a draft", after["status"] == "DRAFT", after["status"])
+    r = api("put", f"/orders/{draft['id']}", token["am_north_1"],
+            json={"items": [line(selling + 500, True)]})
+    check("the Area Manager edits the price", r.status_code < 400, f"{r.status_code} {r.text[:160]}")
+    again = send_up(token["am_north_1"], draft, r.json()["data"].get("grand_total") or 0)
+    after = api("get", f"/orders/{draft['id']}", token["am_north_1"]).json()["data"]
+    check("and Send For Approval raises a fresh request to the founder",
+          again is not None and again["id"] != approval["id"]
+          and [s["role"] for s in again["steps"]] == ["Founder"] and after["status"] == "PENDING_APPROVAL",
+          f"{again and again.get('steps')} / {after['status']}")
 
 except Exception as exc:  # noqa: BLE001 - reported as a failure, then cleaned up
     check("the run completes", False, repr(exc)[:200])
