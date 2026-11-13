@@ -91,6 +91,23 @@ def accounts_desk(
     }
 
 
+@router.get("/accounts/history")
+def accounts_history(
+    decision: str = "APPROVED",
+    page: int = 1,
+    size: int = 50,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_permission("payment_desk.read")),
+):
+    """What accounts already decided: advances verified and balances
+    settled (APPROVED), or orders put on hold (REJECTED), newest first."""
+
+    return {
+        "success": True,
+        "data": FulfilmentDeskService.history(ACCOUNTS, decision, current_user, db, page=page, size=size),
+    }
+
+
 @router.get("/production")
 @router.get("/procurement", include_in_schema=False)
 def production_desk(

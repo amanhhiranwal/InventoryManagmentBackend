@@ -209,6 +209,87 @@ class FulfilmentDeskService:
         }
 
     @staticmethod
+    def history(role: str, decision: str, current_user: dict, db: Session,
+                page: int = 1, size: int = 50) -> dict:
+        """What a desk has already decided, newest first: the orders it
+        approved onward, or rejected onto hold, with who, when and why.
+
+        Read from the order activity each decision writes, so it covers
+        every decision made before this screen existed too.
+        """
+
+        from app.models.sales_order_activity import SalesOrderActivity
+
+        FulfilmentDeskService.assert_staffs(role, current_user, db)
+
+        wanted = (decision or "").upper()
+        if wanted not in ("APPROVED", "REJECTED"):
+            raise HTTPException(status_code=400, detail="Decision must be APPROVED or REJECTED.")
+
+        stages = DESK_STAGES.get(role, [])
+        targets = (
+            [DESKS[stage].approves_to for stage in stages]
+            if wanted == "APPROVED"
+            else [SalesOrderStatus.ON_HOLD]
+        )
+
+        query = (
+            db.query(SalesOrderActivity, SalesOrder)
+            .join(SalesOrder, SalesOrder.id == SalesOrderActivity.sales_order_id)
+            .filter(
+                SalesOrderActivity.from_status.in_(stages),
+                SalesOrderActivity.to_status.in_(targets),
+            )
+        )
+
+        total = query.count()
+        size = min(max(size, 1), 200)
+        page = max(page, 1)
+        found = (
+            query.order_by(SalesOrderActivity.created_at.desc(), SalesOrderActivity.id.desc())
+            .offset((page - 1) * size)
+            .limit(size)
+            .all()
+        )
+
+        ids = {a.created_by for a, _ in found if a.created_by}
+        names = {
+            u.id: (f"{u.first_name or ''} {u.last_name or ''}".strip() or u.email)
+            for u in (db.query(User).filter(User.id.in_(ids)).all() if ids else [])
+        }
+
+        rows = []
+        for activity, order in found:
+            balance = activity.from_status == SalesOrderStatus.INSTALLED
+            rows.append({
+                "id": activity.id,
+                "order_id": order.id,
+                "order_number": order.order_number,
+                "customer_name": order.customer_name,
+                "company_name": order.company_name,
+                "stage": DESKS[activity.from_status].queue_label if activity.from_status in DESKS else activity.from_status,
+                "kind": "BALANCE" if balance else "ADVANCE",
+                "decision": wanted,
+                "action": activity.action,
+                "remarks": activity.description,
+                "decided_by_name": names.get(activity.created_by) or "—",
+                "decided_at": iso(activity.created_at),
+                "grand_total": float(order.grand_total or 0),
+                "amount": float(
+                    (order.grand_total or 0) - (order.advance_received or 0) if balance
+                    else (order.advance_received or 0)
+                ),
+                "received_date": (
+                    (order.balance_received_date if balance else order.advance_received_date).isoformat()
+                    if (order.balance_received_date if balance else order.advance_received_date)
+                    else None
+                ),
+                "current_status": order.status,
+            })
+
+        return {"rows": rows, "total": total, "page": page, "size": size}
+
+    @staticmethod
     def _row(order: SalesOrder, db: Session, with_stock: bool = False) -> dict:
         desk = desk_for(order.status)
 

@@ -1,9 +1,10 @@
-"""Remind accounts about PO payments that are due, every day until paid.
+"""Remind both teams about PO payments that are due, every day until paid.
 
-Run once a day by cron. Each unpaid instalment of an approved PO that falls
-due within 3 days, or is already overdue, puts one notification in the
-bell of everyone who records payments (purchase_order.pay) and of whoever
-raised the PO. Running it twice on the same day sends nothing new.
+Run by cron. Each unpaid instalment of an approved PO that falls due within
+3 days, or is already overdue, puts one notification a day in the bell of
+accounts (purchase_order.pay), procurement (purchase_order.manage) and
+whoever raised the PO, saying where it stands. Running it again on the
+same day sends nothing new.
 
     docker exec -w /app backend_app python send_payment_reminders.py
 

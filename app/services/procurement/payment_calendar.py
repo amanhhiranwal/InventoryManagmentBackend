@@ -6,10 +6,13 @@ or cheque, and what is still unpaid. Only POs that have been approved are
 included - before that the schedule can still change and nothing may be
 paid against it.
 
-The reminder is run once a day by cron (send_payment_reminders.py). It
-tells the people who record payments, and whoever raised the PO, about
-each unpaid instalment from a few days before it falls due, and every day
-after, until someone marks it paid.
+An instalment moves PENDING -> SUBMITTED (procurement sent its cheque or
+transfer details) -> APPROVED (accounts agreed) -> PAID; accounts can
+return a submission (RETURNED) for procurement to correct.
+
+The reminder is run by cron (send_payment_reminders.py). It tells both
+teams, and whoever raised the PO, about each unpaid instalment from a few
+days before it falls due, every day, until accounts mark it paid.
 """
 
 from datetime import date, timedelta
@@ -24,15 +27,27 @@ from app.services.procurement.purchase_orders import PAYABLE, link
 #: Reminders start this many days before an instalment falls due.
 REMIND_DAYS_BEFORE = 3
 
-#: Who records payments; reminded alongside whoever raised the PO.
+#: Accounts approve and pay; procurement fill in and submit. Both are
+#: reminded, with whoever raised the PO, until an instalment is paid.
 PAY_PERMISSION = "purchase_order.pay"
+SUBMIT_PERMISSION = "purchase_order.manage"
+
+#: Each status, as the calendar and the reminder say it.
+STAGES = {
+    "PENDING": "Details to submit",
+    "RETURNED": "Returned by accounts",
+    "SUBMITTED": "Awaiting accounts approval",
+    "APPROVED": "Approved, to pay",
+    "PAID": "Paid",
+}
 
 
 def assert_can_see(current_user: dict, db: Session) -> None:
-    """The purchase team and accounts: whoever may open a PO or pay one."""
+    """The purchase team and accounts: whoever may open a PO, submit its
+    payments or pay them."""
 
     if is_super_admin(current_user) or any(
-        has_permission(current_user, key, db) for key in ("purchase_order.read", PAY_PERMISSION)
+        has_permission(current_user, key, db) for key in ("purchase_order.read", SUBMIT_PERMISSION, PAY_PERMISSION)
     ):
         return
     raise HTTPException(status_code=403, detail="Permission denied. Required: purchase_order.read")
@@ -66,8 +81,8 @@ def calendar(current_user: dict, db: Session, *, start: str | None = None, end: 
         raise HTTPException(status_code=400, detail="'To' must be on or after 'From'.")
 
     wanted = (status or "").upper()
-    if wanted and wanted not in ("PENDING", "PAID"):
-        raise HTTPException(status_code=400, detail="Status must be PENDING or PAID.")
+    if wanted and wanted not in STAGES:
+        raise HTTPException(status_code=400, detail=f"Status must be one of {', '.join(STAGES)}.")
 
     query = (
         db.query(PurchaseOrderPayment, PurchaseOrder)
@@ -104,7 +119,12 @@ def calendar(current_user: dict, db: Session, *, start: str | None = None, end: 
             "cheque_date": payment.cheque_date.isoformat() if payment.cheque_date else None,
             "reference": payment.reference,
             "status": payment.status,
+            "stage": STAGES.get(payment.status, payment.status),
             "overdue": overdue,
+            "submitted_by_name": payment.submitted_by_name,
+            "approved_by_name": payment.approved_by_name,
+            "returned_reason": payment.returned_reason,
+            "returned_by_name": payment.returned_by_name,
             "paid_by_name": payment.paid_by_name,
         })
 
@@ -128,14 +148,23 @@ def calendar(current_user: dict, db: Session, *, start: str | None = None, end: 
         week["total"] = round(week["total"], 2)
         week["pending"] = round(week["pending"], 2)
 
+    def total(*statuses: str) -> float:
+        return round(sum(r["amount"] or 0 for r in rows if r["status"] in statuses), 2)
+
     return {
         "weeks": ordered,
         "summary": {
             "pending": round(sum(r["amount"] or 0 for r in rows if r["status"] != "PAID"), 2),
             "overdue": round(sum(r["amount"] or 0 for r in rows if r["overdue"]), 2),
-            "paid": round(sum(r["amount"] or 0 for r in rows if r["status"] == "PAID"), 2),
+            "with_procurement": total("PENDING", "RETURNED"),
+            "with_accounts": total("SUBMITTED"),
+            "approved": total("APPROVED"),
+            "paid": total("PAID"),
             "count": len(rows),
         },
+        # Which buttons to offer; every action is checked again on the server.
+        "can_submit": has_permission(current_user, SUBMIT_PERMISSION, db),
+        "can_approve": has_permission(current_user, PAY_PERMISSION, db),
     }
 
 
@@ -168,14 +197,19 @@ def _message(payment: PurchaseOrderPayment, po: PurchaseOrder, today: date) -> s
         else "is due today" if days == 0
         else f"is due {payment.due_date:%d %b %Y} (in {days} day(s))"
     )
-    return f"{po.po_number} to {po.vendor_name or 'the vendor'}: {payment.label} of {amount} by {how} {when}."
+    stage = STAGES.get(payment.status, payment.status)
+    return (
+        f"{po.po_number} to {po.vendor_name or 'the vendor'}: {payment.label} of {amount} by {how} {when}. "
+        f"Now: {stage}."
+    )
 
 
 def send_reminders(db: Session, today: date | None = None) -> int:
-    """One bell notification per unpaid instalment to the people who pay,
-    and to whoever raised the PO. Returns how many instalments were
-    reminded. Safe to run more than once a day: each instalment is
-    reminded at most once per day."""
+    """One bell notification per unpaid instalment to both teams - accounts
+    (who approve and pay) and procurement (who submit the details) - and
+    to whoever raised the PO, saying where it stands. Returns how many
+    instalments were reminded. Safe to run more than once a day: each
+    instalment is reminded at most once per day."""
 
     from app.services.notification_service import notify_users
 
@@ -184,7 +218,7 @@ def send_reminders(db: Session, today: date | None = None) -> int:
     if not due:
         return 0
 
-    payers = holders_of(PAY_PERMISSION, db)
+    payers = sorted(set(holders_of(PAY_PERMISSION, db)) | set(holders_of(SUBMIT_PERMISSION, db)))
 
     for payment, po in due:
         recipients = list(payers)

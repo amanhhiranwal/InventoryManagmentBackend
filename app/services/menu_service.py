@@ -200,6 +200,9 @@ DEFAULT_MENUS_DATA = [
     "order_index": 9,
     "children": [
       {"title": "Accounts Desk", "icon": "LuWallet", "path": "/fulfilment/accounts", "permission_key": "payment_desk.read", "order_index": 1},
+      # The same page as under Procurement: accounts approve and pay the
+      # instalments procurement submit.
+      {"title": "Payment Calendar", "icon": "LuCalendarDays", "path": "/procurement/payment-calendar", "permission_key": "purchase_order.pay", "order_index": 2},
     ]
   },
   {
