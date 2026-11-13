@@ -22,6 +22,10 @@ class QuotationItem(BaseModel):
     #: accepted; what it costs is read from Masters when the totals are
     #: worked out, so a figure sent alongside it is ignored.
     warranty_term: Optional[str] = None
+    #: Sold above its list price: ``unit_price`` is then the selling price
+    #: and the line takes no discount. Accepted only when the price is in
+    #: fact above the list price (sales_order_service.settle_line_price).
+    marked_up: Optional[bool] = False
 
 
 class CreateQuotationRequest(BaseModel):

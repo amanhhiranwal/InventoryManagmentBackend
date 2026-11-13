@@ -26,8 +26,10 @@ from app.services.email_service import EmailService
 from app.services.lead_service import get_visible_creator_user_ids
 from app.services.quotation_pdf_service import QuotationPDFService
 from app.services.sales_order_service import (
+    assert_no_discount_with_markup,
     assert_warranty_lines,
     rate_for_sku,
+    settle_line_price,
     warranty_uplift_for_sku,
 )
 from app.services.notification_service import NotificationService
@@ -173,9 +175,9 @@ def compute_totals(
         discount_pct = _as_float(item.get("discount"))
 
         listed = rate_for_sku(item.get("sku"), price_type)
-        unit_price = (
-            listed if listed is not None else _as_float(item.get("unit_price"))
-        )
+        # A selling price above the list price is kept (marked up, no
+        # discount); otherwise the price list decides, as before.
+        unit_price = settle_line_price(item, listed, _as_float(item.get("unit_price")), discount_pct)
 
         # The line is stored at the price it was actually costed at, so the
         # document and the totals cannot disagree later.
@@ -202,6 +204,8 @@ def compute_totals(
 
     if isinstance(items, list):
         items[:] = settled
+
+    assert_no_discount_with_markup(settled, discount_input)
 
     # A discount typed into the summary overrides the per-line total, in
     # whichever unit it was entered.
