@@ -51,11 +51,13 @@ from app.services.procurement.common import (
     activity_rows,
     actor,
     has_permission,
+    holders_of,
     is_super_admin,
     log,
     money,
     next_reference,
     notify,
+    require,
     text,
     today,
 )
@@ -228,12 +230,13 @@ def _instalments(po: PurchaseOrder) -> list[tuple[str, float, date | None]]:
 def _rebuild_schedule(po: PurchaseOrder, db: Session) -> None:
     """The instalments, laid out afresh from the terms and the total.
 
-    Only while nothing has been paid: once money has moved, the schedule
-    is a record and is kept as it is.
+    Only while every instalment is still untouched: once one has been
+    submitted to accounts, approved or paid, the schedule is a record and
+    is kept as it is.
     """
 
     existing = db.query(PurchaseOrderPayment).filter(PurchaseOrderPayment.purchase_order_id == po.id).all()
-    if any(row.status == "PAID" for row in existing):
+    if any(row.status != "PENDING" for row in existing):
         return
     for row in existing:
         db.delete(row)
@@ -705,17 +708,53 @@ def _day(value, field: str) -> date | None:
         raise HTTPException(status_code=400, detail=f"{field} is not a date.")
 
 
-def update_payment(po_id: int, payment_id: int, payload: dict, current_user: dict, db: Session) -> PurchaseOrder:
-    """The details of one instalment: how it is paid, and whether it has been.
+#: Who does what to an instalment. Procurement fills in the cheque or
+#: transfer and submits it; accounts approve it (or send it back) and
+#: then mark it paid.
+DETAILS_PERMISSION = "purchase_order.manage"
+ACCOUNTS_PERMISSION = "purchase_order.pay"
 
-    Marking an instalment paid needs the PO approved; a post-dated cheque
-    needs its number, bank and date before it is marked paid.
+#: Statuses in which procurement may still change the details.
+EDITABLE_PAYMENT = ("PENDING", "RETURNED")
+
+
+def _details_missing(row: PurchaseOrderPayment) -> str | None:
+    if row.mode == "PDC":
+        if not (row.cheque_number and row.bank_name and row.cheque_date):
+            return "Enter the cheque number, bank and cheque date first."
+    elif row.mode == "BANK_TRANSFER":
+        if not row.bank_name:
+            return "Enter the bank the transfer is made from first."
+    else:
+        return "Choose how it is paid: bank transfer or post-dated cheque."
+    return None
+
+
+def update_payment(po_id: int, payment_id: int, payload: dict, current_user: dict, db: Session) -> PurchaseOrder:
+    """Procurement filling in one instalment: how it is paid, the bank, the
+    cheque. Only while it is still with procurement - once submitted,
+    accounts have it, and a rejection hands it back.
+
+    Approving and paying are separate steps (payment_action), done by
+    accounts.
     """
+
+    require(current_user, DETAILS_PERMISSION, db)
+    if "paid" in payload:
+        raise HTTPException(
+            status_code=400,
+            detail="Submit the instalment to accounts; they approve it and mark it paid.",
+        )
 
     po = get(po_id, db, lock=True)
     if po.status == POStatus.CANCELLED:
         raise HTTPException(status_code=409, detail="This PO is cancelled.")
     row = _payment(po, payment_id, db)
+    if row.status not in EDITABLE_PAYMENT:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This instalment is {row.status.lower()}; ask accounts to send it back to change it.",
+        )
     before = {"status": row.status, "mode": row.mode, "amount": row.amount}
 
     if "mode" in payload:
@@ -731,22 +770,89 @@ def update_payment(po_id: int, payment_id: int, payload: dict, current_user: dic
     if "due_date" in payload:
         row.due_date = _day(payload.get("due_date"), "Due date")
 
-    if "paid" in payload:
-        paid = bool(payload.get("paid"))
-        if paid and po.status not in PAYABLE:
-            raise HTTPException(status_code=409, detail="Payments are recorded once the PO is approved.")
-        if paid and row.mode == "PDC" and not (row.cheque_number and row.bank_name and row.cheque_date):
-            raise HTTPException(status_code=400, detail="Enter the cheque number, bank and cheque date first.")
-        who, name = actor(current_user, db)
-        row.status = "PAID" if paid else "PENDING"
-        row.paid_at = datetime.utcnow() if paid else None
-        row.paid_by = who if paid else None
-        row.paid_by_name = name if paid else None
+    log(db, current_user, entity_type="purchase_order", entity_id=po.id, requisition_id=po.requisition_id,
+        action="Payment Updated", previous=before,
+        new={"instalment": row.label, "status": row.status, "mode": row.mode, "amount": row.amount})
+    db.commit()
+    db.refresh(po)
+    return po
+
+
+#: action -> (permission, statuses it may come from, status it goes to, log entry)
+PAYMENT_ACTIONS = {
+    "SUBMIT": (DETAILS_PERMISSION, EDITABLE_PAYMENT, "SUBMITTED", "Payment Submitted To Accounts"),
+    "APPROVE": (ACCOUNTS_PERMISSION, ("SUBMITTED",), "APPROVED", "Payment Approved By Accounts"),
+    "REJECT": (ACCOUNTS_PERMISSION, ("SUBMITTED",), "RETURNED", "Payment Returned By Accounts"),
+    "MARK_PAID": (ACCOUNTS_PERMISSION, ("APPROVED",), "PAID", "Payment Marked Paid"),
+}
+
+
+def payment_action(po_id: int, payment_id: int, action: str | None, remarks: str | None,
+                   current_user: dict, db: Session) -> PurchaseOrder:
+    """Move one instalment along: procurement submits it to accounts with
+    its details; accounts approve it or return it with a reason, then
+    mark it paid once the money has gone."""
+
+    key = (action or "").strip().upper()
+    if key not in PAYMENT_ACTIONS:
+        raise HTTPException(status_code=400, detail="Action must be SUBMIT, APPROVE, REJECT or MARK_PAID.")
+    permission, sources, target, entry = PAYMENT_ACTIONS[key]
+    require(current_user, permission, db)
+
+    po = get(po_id, db, lock=True)
+    if po.status not in PAYABLE:
+        raise HTTPException(status_code=409, detail="Payments are made once the PO is approved.")
+    row = _payment(po, payment_id, db)
+    if row.status not in sources:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This instalment is {row.status.lower()}; it cannot be {entry.split(' ')[1].lower()} now.",
+        )
+
+    note = text(remarks, 500)
+    if key == "REJECT" and not note:
+        raise HTTPException(status_code=400, detail="Say why it is being returned - procurement sees the reason.")
+    if key == "SUBMIT":
+        missing = _details_missing(row)
+        if missing:
+            raise HTTPException(status_code=400, detail=missing)
+
+    who, name = actor(current_user, db)
+    now = datetime.utcnow()
+    previous = row.status
+    row.status = target
+
+    if key == "SUBMIT":
+        row.submitted_at, row.submitted_by, row.submitted_by_name = now, who, name
+        row.returned_reason = None
+    elif key == "APPROVE":
+        row.approved_at, row.approved_by_name = now, name
+    elif key == "REJECT":
+        row.returned_reason, row.returned_at, row.returned_by_name = note, now, name
+    elif key == "MARK_PAID":
+        row.paid_at, row.paid_by, row.paid_by_name = now, who, name
+    if note and key != "REJECT":
+        row.remarks = note
 
     log(db, current_user, entity_type="purchase_order", entity_id=po.id, requisition_id=po.requisition_id,
-        action="Payment Marked Paid" if payload.get("paid") is True else "Payment Updated",
-        previous=before, new={"instalment": row.label, "status": row.status, "mode": row.mode,
-                              "amount": row.amount})
+        action=entry, remarks=note or None,
+        previous={"instalment": row.label, "status": previous},
+        new={"instalment": row.label, "status": target, "mode": row.mode, "amount": row.amount})
+
+    # Whoever acts next is told: accounts on a submission, procurement when
+    # accounts send it back. The daily reminder covers the rest. Added in
+    # this transaction (notify does not commit), so step and notice are
+    # saved together.
+    amount = f"Rs {row.amount:,.2f}"
+    if key == "SUBMIT":
+        notify(db, holders_of(ACCOUNTS_PERMISSION, db), module=MODULE, entity_id=po.id,
+               action="Payment To Approve", link=link(po), current_user=current_user,
+               message=f"{po.po_number}: {row.label} of {amount} to {po.vendor_name or 'the vendor'} is waiting for your approval.")
+    elif key == "REJECT":
+        notify(db, [row.submitted_by, po.created_by], module=MODULE, entity_id=po.id,
+               action="Payment Returned", link=link(po), current_user=current_user,
+               message=f"{po.po_number}: accounts returned {row.label} of {amount} - {note}")
+
     db.commit()
     db.refresh(po)
     return po
@@ -774,6 +880,13 @@ def payments(po: PurchaseOrder, db: Session) -> list[dict]:
             "cheque_date": r.cheque_date.isoformat() if r.cheque_date else None,
             "reference": r.reference,
             "status": r.status,
+            "submitted_at": iso(r.submitted_at),
+            "submitted_by_name": r.submitted_by_name,
+            "approved_at": iso(r.approved_at),
+            "approved_by_name": r.approved_by_name,
+            "returned_reason": r.returned_reason,
+            "returned_at": iso(r.returned_at),
+            "returned_by_name": r.returned_by_name,
             "paid_at": iso(r.paid_at),
             "paid_by_name": r.paid_by_name,
             "remarks": r.remarks,
@@ -870,6 +983,10 @@ def serialize(po: PurchaseOrder, db: Session, *, full: bool = True, current_user
     }
     if current_user is not None:
         data["can_decide"] = may_decide(step, po, current_user)
+        # Which payment steps this person may take; the server checks
+        # again on every action.
+        data["can_submit_payments"] = has_permission(current_user, DETAILS_PERMISSION, db)
+        data["can_approve_payments"] = has_permission(current_user, ACCOUNTS_PERMISSION, db)
 
     if full:
         data["items"] = [

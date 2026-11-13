@@ -53,6 +53,9 @@ class DecisionRequest(BaseModel):
     #: Accounts' day the money arrived, when verifying or settling it.
     received_date: date | None = None
     serials: list[SerialPick] | None = None
+    #: Logistics' vehicle and driver, required to mark it out for delivery.
+    vehicle_number: str | None = None
+    driver_name: str | None = None
 
 
 class DocumentRequest(BaseModel):
@@ -88,6 +91,58 @@ def accounts_desk(
     return {
         "success": True,
         "data": FulfilmentDeskService.queue(ACCOUNTS, current_user, db),
+    }
+
+
+@router.get("/accounts/history")
+def accounts_history(
+    decision: str = "APPROVED",
+    page: int = 1,
+    size: int = 50,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_permission("payment_desk.read")),
+):
+    """What accounts already decided: advances verified and balances
+    settled (APPROVED), or orders put on hold (REJECTED), newest first."""
+
+    return {
+        "success": True,
+        "data": FulfilmentDeskService.history(ACCOUNTS, decision, current_user, db, page=page, size=size),
+    }
+
+
+@router.get("/production/history")
+def production_history(
+    decision: str = "APPROVED",
+    page: int = 1,
+    size: int = 50,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_permission("production_desk.read")),
+):
+    """What production already decided: orders moved on (APPROVED) or put
+    on hold (REJECTED), newest first."""
+
+    return {
+        "success": True,
+        "data": FulfilmentDeskService.history(PRODUCTION, decision, current_user, db, page=page, size=size),
+    }
+
+
+@router.get("/logistics/history")
+def logistics_history(
+    decision: str = "APPROVED",
+    page: int = 1,
+    size: int = 50,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_permission("logistics_desk.read")),
+):
+    """What logistics already decided: dispatched, sent out for delivery
+    (with vehicle and driver) and delivered (APPROVED), or put on hold
+    (REJECTED), newest first."""
+
+    return {
+        "success": True,
+        "data": FulfilmentDeskService.history(LOGISTICS, decision, current_user, db, page=page, size=size),
     }
 
 
@@ -213,6 +268,8 @@ def decide(
         advance_amount=request.advance_amount,
         received_date=request.received_date,
         serials=[pick.model_dump() for pick in request.serials or []],
+        vehicle_number=request.vehicle_number,
+        driver_name=request.driver_name,
     )
 
     return {"success": True, "data": serialize_sales_order(order)}

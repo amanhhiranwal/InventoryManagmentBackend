@@ -428,7 +428,15 @@ try:
     check("logistics upload the docket slip", r.status_code == 200, f"{r.status_code}")
 
     for stage in ("DISPATCHED", "OUT_FOR_DELIVERY", "DELIVERED"):
-        r = decide("logistics", oid)
+        extra = {}
+        if stage == "OUT_FOR_DELIVERY":
+            r = decide("logistics", oid)
+            check("out for delivery is refused without the vehicle and driver",
+                  r.status_code == 400 and "vehicle number and driver name" in r.text, f"{r.status_code} {r.text[:120]}")
+            r = api("put", f"/orders/{oid}/status", admin, json={"status": "OUT_FOR_DELIVERY"})
+            check("not even the super admin can skip them", r.status_code == 400, f"{r.status_code} {r.text[:120]}")
+            extra = {"vehicle_number": "UP 16 BT 7788", "driver_name": "Test Driver"}
+        r = decide("logistics", oid, **extra)
         check(f"logistics mark it {stage.lower().replace('_', ' ')}", r.status_code == 200 and status_of(oid) == stage, f"{r.status_code} {status_of(oid)} {r.text[:100]}")
 
     # ============================================= 8. the activity log

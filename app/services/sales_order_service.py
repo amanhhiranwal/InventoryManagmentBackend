@@ -156,6 +156,8 @@ DESK_ONLY_STAGES = {
     SalesOrderStatus.ADVANCE_ACCEPTED,
     SalesOrderStatus.PROCUREMENT,
     SalesOrderStatus.READY,
+    # Out for delivery needs the vehicle and driver, asked on the desk.
+    SalesOrderStatus.DISPATCHED,
 }
 
 
@@ -1638,6 +1640,20 @@ class SalesOrderService:
 
         assert_desk_allows(order, target, current_user, db)
 
+        # Nobody - not even a super admin standing in for the desk - sends
+        # an order out for delivery without naming the vehicle and driver.
+        # The logistics desk asks for both when it marks it.
+        if target == SalesOrderStatus.OUT_FOR_DELIVERY and not (
+            order.delivery_vehicle_number and order.delivery_driver_name
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Mark order {order.order_number or order.id} out for delivery from the "
+                    "Logistics desk, with the vehicle number and driver name."
+                ),
+            )
+
         SalesOrderService._assert_discount_signed_off(order, target, db)
 
         if previous_status == SalesOrderStatus.DRAFT and target in (
@@ -1745,6 +1761,9 @@ def serialize_sales_order(order: SalesOrder) -> dict:
         "gst_percent": order.gst_percent if order.gst_percent is not None else 18.0,
         "advance_received": order.advance_received or 0.0,
         "outstanding_balance": order.outstanding_balance or 0.0,
+        # Who took it on its last leg, entered by logistics.
+        "delivery_vehicle_number": order.delivery_vehicle_number,
+        "delivery_driver_name": order.delivery_driver_name,
         "aging_0_30": order.aging_0_30,
         "aging_31_60": order.aging_31_60,
         "aging_61_90": order.aging_61_90,

@@ -115,6 +115,11 @@ class SalesOrder(Base):
     advance_received_date = Column(Date, nullable=True)
     balance_received_date = Column(Date, nullable=True)
 
+    #: The vehicle and driver taking the order on its last leg, entered by
+    #: logistics when marking it out for delivery - required to do so.
+    delivery_vehicle_number = Column(String(30), nullable=True)
+    delivery_driver_name = Column(String(120), nullable=True)
+
     aging_0_30 = Column(Float, default=0.0, nullable=True)
     aging_31_60 = Column(Float, default=0.0, nullable=True)
     aging_61_90 = Column(Float, default=0.0, nullable=True)

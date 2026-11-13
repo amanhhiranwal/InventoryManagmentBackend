@@ -33,6 +33,7 @@ from app.models.procurement import PurchaseRequisition, Vendor
 from app.services.procurement import (
     desk,
     masters,
+    payment_calendar,
     purchase_orders,
     quotations,
     requisitions,
@@ -461,6 +462,15 @@ def quotation_status(quotation_id: int, payload: Body, db: Session = Depends(get
 # ======================================================================
 # Purchase orders
 # ======================================================================
+@router.get("/purchase-orders/payment-calendar")
+def get_payment_calendar(start: str | None = None, end: str | None = None, status: str | None = None,
+                         db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Every approved PO's instalments by week: due date, bank or cheque,
+    amount, paid. For the purchase team and accounts (checked in the
+    service: either purchase_order.read or purchase_order.pay)."""
+    return _ok(payment_calendar.calendar(current_user, db, start=start, end=end, status=status))
+
+
 @router.get("/purchase-orders")
 def list_purchase_orders(search: str | None = None, status: str | None = None, vendor_id: int | None = None,
                          requisition_id: int | None = None, page: int = 1, size: int = 20,
@@ -523,10 +533,24 @@ def log_purchase_order_activity(po_id: int, payload: Body, db: Session = Depends
 
 @router.put("/purchase-orders/{po_id}/payments/{payment_id}")
 def update_payment(po_id: int, payment_id: int, payload: Body, db: Session = Depends(get_db),
-                   current_user=Depends(require_permission("purchase_order.pay"))):
-    """Accounts recording an instalment: its cheque or transfer, and paid."""
+                   current_user=Depends(require_permission("purchase_order.manage"))):
+    """Procurement filling in an instalment: its cheque or transfer details."""
     po = purchase_orders.update_payment(po_id, payment_id, payload, current_user, db)
-    return _ok(purchase_orders.serialize(po, db, current_user=current_user), "Payment updated.")
+    return _ok(purchase_orders.serialize(po, db, current_user=current_user), "Payment details saved.")
+
+
+@router.post("/purchase-orders/{po_id}/payments/{payment_id}/action")
+def payment_action(po_id: int, payment_id: int, payload: Body, db: Session = Depends(get_db),
+                   current_user=Depends(get_current_user)):
+    """{action: SUBMIT | APPROVE | REJECT | MARK_PAID, remarks}. Procurement
+    submits (purchase_order.manage); accounts approve, return or mark paid
+    (purchase_order.pay). Checked in the service, per action."""
+    po = purchase_orders.payment_action(po_id, payment_id, payload.get("action"), payload.get("remarks"),
+                                        current_user, db)
+    messages = {"SUBMIT": "Submitted to accounts.", "APPROVE": "Payment approved.",
+                "REJECT": "Returned to procurement.", "MARK_PAID": "Marked paid."}
+    return _ok(purchase_orders.serialize(po, db, current_user=current_user),
+               messages.get(str(payload.get("action") or "").upper(), "Payment updated."))
 
 
 @router.get("/purchase-orders/{po_id}/pdf")

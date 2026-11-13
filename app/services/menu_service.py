@@ -200,6 +200,9 @@ DEFAULT_MENUS_DATA = [
     "order_index": 9,
     "children": [
       {"title": "Accounts Desk", "icon": "LuWallet", "path": "/fulfilment/accounts", "permission_key": "payment_desk.read", "order_index": 1},
+      # The same page as under Procurement: accounts approve and pay the
+      # instalments procurement submit.
+      {"title": "Payment Calendar", "icon": "LuCalendarDays", "path": "/procurement/payment-calendar", "permission_key": "purchase_order.pay", "order_index": 2},
     ]
   },
   {
@@ -293,6 +296,8 @@ DEFAULT_MENUS_DATA = [
       {"title": "Procurement Desk", "icon": "LuBriefcase", "path": "/procurement/desk", "permission_key": "procurement.read", "order_index": 2},
       {"title": "Purchase Orders", "icon": "LuFileCheck", "path": "/procurement/purchase-orders", "permission_key": "purchase_order.read", "order_index": 3},
       {"title": "Vendors", "icon": "LuStore", "path": "/procurement/vendors", "permission_key": "vendor.read", "order_index": 4},
+      # Every approved PO's instalments by week, for whoever pays them.
+      {"title": "Payment Calendar", "icon": "LuCalendarDays", "path": "/procurement/payment-calendar", "permission_key": "purchase_order.read", "order_index": 5},
     ]
   },
 ]

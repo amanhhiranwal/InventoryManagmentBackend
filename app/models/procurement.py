@@ -573,8 +573,23 @@ class PurchaseOrderPayment(Base):
     cheque_date = Column(Date, nullable=True)
     reference = Column(String(150), nullable=True)
 
-    #: PENDING / PAID
+    #: PENDING (procurement to fill in and submit) -> SUBMITTED (with
+    #: accounts) -> APPROVED (accounts agreed the details) -> PAID.
+    #: Accounts rejecting a submission sends it to RETURNED, which
+    #: procurement corrects and submits again.
     status = Column(String(20), nullable=False, default="PENDING")
+    submitted_at = Column(DateTime, nullable=True)
+    submitted_by = Column(UUID(as_uuid=True), nullable=True)
+    submitted_by_name = Column(String(200), nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+    approved_by_name = Column(String(200), nullable=True)
+    #: Why accounts sent it back, while it is RETURNED.
+    returned_reason = Column(String(500), nullable=True)
+    returned_at = Column(DateTime, nullable=True)
+    returned_by_name = Column(String(200), nullable=True)
+    #: The day the daily reminder last went out for it, so a second run
+    #: on the same day sends nothing (see payment_calendar.send_reminders).
+    last_reminded_on = Column(Date, nullable=True)
     paid_at = Column(DateTime, nullable=True)
     paid_by = Column(UUID(as_uuid=True), nullable=True)
     paid_by_name = Column(String(200), nullable=True)

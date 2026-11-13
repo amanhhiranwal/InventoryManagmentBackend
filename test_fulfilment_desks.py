@@ -492,16 +492,31 @@ try:
             for kind in ("invoice_copy", "insurance_copy", "docket_slip"):
                 api("put", f"/fulfilment/orders/{order['id']}/documents", token["logistics"], json={"kind": kind, **uploaded})
 
+        if expected == "OUT_FOR_DELIVERY":
+            # Out for delivery names the vehicle and the driver.
+            refused = api("put", f"/fulfilment/orders/{order['id']}/decide", token[who], json={
+                "approve": True, "vehicle_number": "DL 01 AB 1234",
+            })
+            check("out for delivery is refused without the driver",
+                  refused.status_code == 400 and "driver name" in refused.text, f"{refused.status_code} {refused.text[:120]}")
+
         step = api("put", f"/fulfilment/orders/{order['id']}/decide", token[who], json={
             "approve": True, "remarks": f"Moving to {expected.lower()}.",
             # Production name a serial for every unit to mark it ready.
             **({"serials": [{"line": 0, "serial": s} for s in UNITS]} if expected == "READY" else {}),
+            **({"vehicle_number": "dl 01  ab 1234", "driver_name": f"Test Driver {TAG}"}
+               if expected == "OUT_FOR_DELIVERY" else {}),
         })
         check(
             f"{who} move it to {expected.lower()}",
             step.status_code == 200 and status_of(order["id"]) == expected,
             f"{step.status_code} {status_of(order['id'])}",
         )
+        if expected == "OUT_FOR_DELIVERY":
+            saved = step.json().get("data", {}) if step.status_code == 200 else {}
+            check("the vehicle is kept, tidied, with the driver",
+                  saved.get("delivery_vehicle_number") == "DL 01 AB 1234"
+                  and saved.get("delivery_driver_name") == f"Test Driver {TAG}", str({k: saved.get(k) for k in ("delivery_vehicle_number", "delivery_driver_name")}))
 
     # Delivered to installed is the salesperson's: they are the ones on site.
     installed = api("put", f"/orders/{order['id']}/status", owner, json={"status": "INSTALLED"})

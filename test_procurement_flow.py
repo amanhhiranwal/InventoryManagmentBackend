@@ -37,7 +37,7 @@ from seed_sales_team import ADMIN_EMAIL, ADMIN_PASSWORD, BASE, TEAM_PASSWORD, ap
 
 TAG = uuid.uuid4().hex[:5].upper()
 passed, failed = [], []
-made = {"prs": [], "vendors": [], "users": []}
+made = {"prs": [], "vendors": [], "users": [], "roles": []}
 
 
 def check(name, condition, detail=""):
@@ -348,9 +348,9 @@ try:
 
     # ------------------------------------------------------------------
     banner("10. The PO is approved by amount - and not by whoever created it")
-    r = api("put", f"/purchase-orders/{po_a['id']}/payments/{po_a['payments'][0]['id']}",
-            admin, json={"paid": True})
-    check("nothing is paid before the PO is approved", r.status_code == 409, r.text[:150])
+    r = api("post", f"/purchase-orders/{po_a['id']}/payments/{po_a['payments'][0]['id']}/action",
+            admin, json={"action": "SUBMIT"})
+    check("nothing goes to accounts before the PO is approved", r.status_code == 409, r.text[:150])
 
     r = api("post", f"/purchase-orders/{po_a['id']}/action", admin, json={"action": "SUBMIT"})
     check("submitted for approval", ok(r) and data(r)["status"] == "PENDING_APPROVAL", r.text[:150])
@@ -378,19 +378,83 @@ try:
     check("both rounds are on record", {s["round"] for s in po_a["approvals"]} == {1, 2}, str(po_a["approvals"]))
 
     # ------------------------------------------------------------------
-    banner("11. Paying it")
+    banner("11. Paying it: procurement submit, accounts approve, then pay")
     advance = po_a["payments"][0]
     url = f"/purchase-orders/{po_a['id']}/payments/{advance['id']}"
+    step_url = f"{url}/action"
+
+    def instalment(response, pid=None):
+        return next(p for p in data(response)["payments"] if p["id"] == (pid or advance["id"])) if ok(response) else {}
+
+    # A procurement-only person: may submit, may not approve or pay.
+    from app.database.postgres import SessionLocal as _S11
+    from app.models.permission import Permission as _Perm
+    from app.models.role import Role as _Role
+    from app.models.role_permission import RolePermission as _RP
+    from app.models.user import User as _User
+    from app.models.user_role import UserRole as _UR
+    from app.services.password_service import PasswordService as _PS
+
+    s11 = _S11()
+    buyer_role = _Role(role_name=f"Test Buyer {TAG}", description="test_procurement_flow")
+    s11.add(buyer_role)
+    s11.flush()
+    made["roles"].append(str(buyer_role.id))
+    manage_perm = s11.query(_Perm).filter(_Perm.permission_name == "purchase_order.manage").one()
+    s11.add(_RP(role_id=buyer_role.id, permission_id=manage_perm.id))
+    buyer = _User(first_name="Test", last_name=f"Buyer {TAG}", email=f"buyer.{TAG.lower()}@mailinator.com",
+                  password=_PS.hash_password(TEAM_PASSWORD), employee_id=f"TB-{TAG}",
+                  is_active=True, is_super_admin=False, must_change_password=False)
+    s11.add(buyer)
+    s11.flush()
+    s11.add(_UR(user_id=buyer.id, role_id=buyer_role.id))
+    s11.commit()
+    made["users"].append(str(buyer.id))
+    s11.close()
+    buyer_token = login(f"buyer.{TAG.lower()}@mailinator.com", TEAM_PASSWORD)
+
     check("the instalments take the PO's payment mode", advance["mode"] == "PDC", str(advance))
+    check("a status is waiting for procurement", advance["status"] == "PENDING", advance["status"])
     r = api("put", url, admin, json={"paid": True})
-    check("a post-dated cheque needs its details before it is paid", r.status_code == 400, r.text[:150])
-    r = api("put", url, admin, json={"cheque_number": "004512", "bank_name": "HDFC Bank",
-                                    "cheque_date": IN_A_WEEK, "paid": True})
-    paid = next(p for p in data(r)["payments"] if p["id"] == advance["id"]) if ok(r) else {}
-    check("the advance is recorded paid by cheque", ok(r) and paid.get("status") == "PAID"
-          and paid.get("cheque_number") == "004512" and paid.get("paid_by_name"), r.text[:200])
-    check("an employee cannot record payments",
-          api("put", url, deepa, json={"paid": False}).status_code == 403)
+    check("it can no longer be marked paid in one step", r.status_code == 400, r.text[:150])
+    r = api("post", step_url, buyer_token, json={"action": "SUBMIT"})
+    check("a post-dated cheque needs its details before it is submitted", r.status_code == 400, r.text[:150])
+    check("an employee cannot fill in payments",
+          api("put", url, deepa, json={"bank_name": "X"}).status_code == 403)
+    r = api("put", url, buyer_token, json={"cheque_number": "004512", "bank_name": "HDFC Bank", "cheque_date": IN_A_WEEK})
+    check("procurement enter the cheque", ok(r) and instalment(r).get("cheque_number") == "004512", r.text[:200])
+    r = api("post", step_url, buyer_token, json={"action": "SUBMIT"})
+    check("and submit it to accounts", ok(r) and instalment(r).get("status") == "SUBMITTED"
+          and instalment(r).get("submitted_by_name"), r.text[:200])
+    check("once submitted, procurement cannot change it",
+          api("put", url, buyer_token, json={"bank_name": "SBI"}).status_code == 409)
+    check("procurement cannot approve their own submission",
+          api("post", step_url, buyer_token, json={"action": "APPROVE"}).status_code == 403)
+    check("nor mark it paid", api("post", step_url, buyer_token, json={"action": "MARK_PAID"}).status_code == 403)
+    check("accounts cannot pay it before approving it",
+          api("post", step_url, admin, json={"action": "MARK_PAID"}).status_code == 409)
+    r = api("post", step_url, admin, json={"action": "REJECT"})
+    check("returning it needs a reason", r.status_code == 400, r.text[:150])
+    r = api("post", step_url, admin, json={"action": "REJECT", "remarks": "Cheque date is after the due date."})
+    check("accounts return it with the reason", ok(r) and instalment(r).get("status") == "RETURNED"
+          and instalment(r).get("returned_reason") == "Cheque date is after the due date.", r.text[:200])
+    r = api("put", url, buyer_token, json={"cheque_date": date.today().isoformat()})
+    check("procurement can correct a returned instalment", ok(r), r.text[:150])
+    r = api("post", step_url, buyer_token, json={"action": "SUBMIT"})
+    check("and submit it again, the reason cleared", ok(r) and instalment(r).get("status") == "SUBMITTED"
+          and not instalment(r).get("returned_reason"), r.text[:200])
+    r = api("post", step_url, admin, json={"action": "APPROVE"})
+    check("accounts approve it", ok(r) and instalment(r).get("status") == "APPROVED"
+          and instalment(r).get("approved_by_name"), r.text[:200])
+    r = api("post", step_url, admin, json={"action": "MARK_PAID"})
+    paid = instalment(r)
+    check("then mark it paid", ok(r) and paid.get("status") == "PAID" and paid.get("cheque_number") == "004512"
+          and paid.get("paid_by_name"), r.text[:200])
+    check("paid is final", api("post", step_url, admin, json={"action": "REJECT", "remarks": "x"}).status_code == 409)
+    trail = [a["action"] for a in data(api("get", f"/purchase-orders/{po_a['id']}", admin)).get("activity", [])]
+    check("every step is on the PO's activity",
+          all(step in trail for step in ("Payment Submitted To Accounts", "Payment Returned By Accounts",
+                                          "Payment Approved By Accounts", "Payment Marked Paid")), str(trail[:8]))
     r = api("post", f"/purchase-orders/{po_a['id']}/action", admin, json={"action": "CANCEL", "remarks": "Test"})
     check("a PO with money paid cannot be cancelled", r.status_code == 409, r.text[:150])
     for action, status in (("SEND", "SENT"), ("ACKNOWLEDGE", "ACKNOWLEDGED"), ("CLOSE", "CLOSED")):
@@ -407,6 +471,111 @@ try:
     ws = data(api("get", f"/procurement/requisitions/{pr['id']}", admin))
     check("the PR shows PO generated once every line is on an approved PO", ws["procurement_status"] == "PO_GENERATED",
           ws["procurement_status"])
+
+    # ------------------------------------------------------------------
+    banner("11a. The Payment Calendar, and the daily reminder until paid")
+    from datetime import date as _date, timedelta as _td
+
+    from sqlalchemy import text as _text
+
+    from app.database.postgres import SessionLocal as _Session
+    from app.services.procurement.payment_calendar import send_reminders
+
+    today = _date.today()
+    po_b = data(api("get", f"/purchase-orders/{po_b['id']}", admin))
+    balance_b = po_b["payments"][0]
+
+    check("an employee cannot open the calendar",
+          api("get", "/purchase-orders/payment-calendar", deepa).status_code == 403)
+    check("a bad date is refused",
+          api("get", "/purchase-orders/payment-calendar", admin, params={"start": "13/11/2026"}).status_code == 400)
+    check("'to' before 'from' is refused", api("get", "/purchase-orders/payment-calendar", admin, params={
+        "start": today.isoformat(), "end": (today - _td(days=1)).isoformat()}).status_code == 400)
+
+    # The monitors' balance falls due two days ago, unpaid.
+    s = _Session()
+    s.execute(_text("UPDATE purchase_order_payment SET due_date = :d, last_reminded_on = NULL WHERE id = :i"),
+              {"d": today - _td(days=2), "i": balance_b["id"]})
+    # The laptops' advance, paid by cheque above, fell due yesterday.
+    s.execute(_text("UPDATE purchase_order_payment SET due_date = :d WHERE id = :i"),
+              {"d": today - _td(days=1), "i": po_a["payments"][0]["id"]})
+    s.commit()
+
+    r = api("get", "/purchase-orders/payment-calendar", admin, params={
+        "start": today.isoformat(), "end": (today + _td(days=400)).isoformat()})
+    cal = data(r) if ok(r) else {"weeks": [], "summary": {}}
+    rows = [p for w in cal["weeks"] for p in w["rows"]]
+    mine = {p["id"]: p for p in rows}
+    check("the calendar opens for the desk", ok(r), r.text[:150])
+    check("an unpaid instalment from before the window still shows, as overdue",
+          mine.get(balance_b["id"], {}).get("overdue") is True, str(mine.get(balance_b["id"])))
+    check("with its PO, vendor, amount and bank transfer",
+          mine.get(balance_b["id"], {}).get("po_number") == po_b["po_number"]
+          and mine.get(balance_b["id"], {}).get("amount") == balance_b["amount"]
+          and mine.get(balance_b["id"], {}).get("mode") == "BANK_TRANSFER", str(mine.get(balance_b["id"])))
+    check("instalments are grouped by week, with what is left to pay",
+          all(w["week"] and w["pending"] <= w["total"] for w in cal["weeks"] if w["week_start"]), str(cal["weeks"])[:200])
+    advance_a = po_a["payments"][0]
+    check("a paid instalment before the window is not listed", advance_a["id"] not in mine)
+
+    payer = str(s.execute(_text("SELECT id FROM users WHERE is_super_admin = true AND is_active = true LIMIT 1")).scalar())
+    sent = send_reminders(s, today)
+    notes = s.execute(_text(
+        "SELECT count(*) FROM notifications WHERE module = 'purchase_order' AND entity_id = :po "
+        "AND action = 'Payment Due' AND user_id = CAST(:u AS uuid)"), {"po": po_b["id"], "u": payer}).scalar()
+    check("the daily run reminds about the overdue instalment", sent >= 1 and notes == 1, f"sent {sent}, notes {notes}")
+    message = s.execute(_text(
+        "SELECT message FROM notifications WHERE module = 'purchase_order' AND entity_id = :po AND action = 'Payment Due' LIMIT 1"),
+        {"po": po_b["id"]}).scalar() or ""
+    check("saying which PO, how much, how late and where it stands",
+          po_b["po_number"] in message and "overdue" in message and "Details to submit" in message, message)
+    buyer_id = made["users"][-1]
+    buyer_notes = s.execute(_text(
+        "SELECT count(*) FROM notifications WHERE module = 'purchase_order' AND entity_id = :po "
+        "AND action = 'Payment Due' AND user_id = CAST(:u AS uuid)"), {"po": po_b["id"], "u": buyer_id}).scalar()
+    check("procurement are reminded too, not only accounts", buyer_notes == 1, f"{buyer_notes}")
+    r = api("get", "/purchase-orders/payment-calendar", buyer_token)
+    check("procurement see the calendar, to submit but not to approve",
+          ok(r) and data(r)["can_submit"] is True and data(r)["can_approve"] is False, r.text[:150])
+    check("a second run the same day sends nothing again", send_reminders(s, today) == 0)
+    send_reminders(s, today + _td(days=1))
+    notes_next = s.execute(_text(
+        "SELECT count(*) FROM notifications WHERE module = 'purchase_order' AND entity_id = :po "
+        "AND action = 'Payment Due' AND user_id = CAST(:u AS uuid)"), {"po": po_b["id"], "u": payer}).scalar()
+    check("it reminds again the next day while unpaid", notes_next == 2, f"{notes_next}")
+
+    b_url = f"/purchase-orders/{po_b['id']}/payments/{balance_b['id']}"
+    r = api("put", b_url, buyer_token, json={"bank_name": "ICICI Bank", "reference": f"UTR{TAG}"})
+    r2 = api("post", f"{b_url}/action", buyer_token, json={"action": "SUBMIT"})
+    check("procurement submit the balance by transfer", ok(r) and ok(r2), r2.text[:150])
+    told = s.execute(_text(
+        "SELECT count(*) FROM notifications WHERE module = 'purchase_order' AND entity_id = :po "
+        "AND action = 'Payment To Approve' AND user_id = CAST(:u AS uuid)"), {"po": po_b["id"], "u": payer}).scalar()
+    check("accounts are told it is waiting for them", told == 1, f"{told}")
+    s.execute(_text("UPDATE purchase_order_payment SET last_reminded_on = NULL WHERE id = :i"), {"i": balance_b["id"]})
+    s.commit()
+    send_reminders(s, today + _td(days=2))
+    stage = s.execute(_text(
+        "SELECT message FROM notifications WHERE module = 'purchase_order' AND entity_id = :po "
+        "AND action = 'Payment Due' ORDER BY id DESC LIMIT 1"), {"po": po_b["id"]}).scalar() or ""
+    check("submitted but unpaid, the reminder goes on, saying it awaits accounts",
+          "Awaiting accounts approval" in stage, stage)
+    r = api("post", f"{b_url}/action", admin, json={"action": "APPROVE"})
+    r2 = api("post", f"{b_url}/action", admin, json={"action": "MARK_PAID"})
+    check("accounts approve and pay it", ok(r) and ok(r2), r2.text[:150])
+    before_stop = s.execute(_text(
+        "SELECT count(*) FROM notifications WHERE module = 'purchase_order' AND entity_id = :po "
+        "AND action = 'Payment Due' AND user_id = CAST(:u AS uuid)"), {"po": po_b["id"], "u": payer}).scalar()
+    send_reminders(s, today + _td(days=3))
+    notes_after = s.execute(_text(
+        "SELECT count(*) FROM notifications WHERE module = 'purchase_order' AND entity_id = :po "
+        "AND action = 'Payment Due' AND user_id = CAST(:u AS uuid)"), {"po": po_b["id"], "u": payer}).scalar()
+    check("once paid, the reminders stop", notes_after == before_stop, f"{before_stop} -> {notes_after}")
+    r = api("get", "/purchase-orders/payment-calendar", admin, params={"start": (today - _td(days=7)).isoformat()})
+    paid_row = next((p for w in data(r)["weeks"] for p in w["rows"] if p["id"] == balance_b["id"]), {}) if ok(r) else {}
+    check("and the calendar shows it paid, with its bank", paid_row.get("status") == "PAID"
+          and paid_row.get("bank_name") == "ICICI Bank" and paid_row.get("overdue") is False, str(paid_row))
+    s.close()
 
     # ------------------------------------------------------------------
     banner("12. The amount bands on a large PO, and a rejected PR")
@@ -661,7 +830,12 @@ finally:
         ):
             db.execute(text(sql), {"ids": ids})
         if made["users"]:
+            db.execute(text("DELETE FROM user_roles WHERE user_id = ANY(CAST(:u AS uuid[]))"), {"u": made["users"]})
             db.execute(text("DELETE FROM users WHERE id = ANY(CAST(:u AS uuid[]))"), {"u": made["users"]})
+        if made["roles"]:
+            db.execute(text("DELETE FROM role_permissions WHERE role_id = ANY(CAST(:r AS uuid[]))"), {"r": made["roles"]})
+            db.execute(text("DELETE FROM user_roles WHERE role_id = ANY(CAST(:r AS uuid[]))"), {"r": made["roles"]})
+            db.execute(text("DELETE FROM roles WHERE id = ANY(CAST(:r AS uuid[]))"), {"r": made["roles"]})
         if made["vendors"]:
             db.execute(text("DELETE FROM procurement_activity WHERE entity_type = 'vendor' AND entity_id = ANY(:v)"), {"v": made["vendors"]})
             db.execute(text("DELETE FROM vendor WHERE id = ANY(:v)"), {"v": made["vendors"]})
