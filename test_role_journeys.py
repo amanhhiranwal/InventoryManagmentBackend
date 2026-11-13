@@ -76,6 +76,11 @@ def banner(title):
     print(f"\n{title}")
 
 
+#: Every employee may raise a purchase requisition, so every sidebar ends
+#: with Procurement > My Requisitions; the rest of Procurement is the
+#: purchase team's.
+EVERYONE_PROCUREMENT = ("Procurement", ["My Requisitions"])
+
 #: Who signs in, and the sidebar their role should get. Top-level titles in
 #: order, with the children that hang off them - which is the same list the
 #: manual test script tells a tester to expect, so the two cannot drift.
@@ -89,15 +94,18 @@ SIDEBARS = {
         # Stock Out is the super admin's until Roles & Access hands it out.
         ("SCM", ["Inventory", "Logistics", "Stock Out"]),
         ("Customers", []),
-        ("Accounts", ["Accounts Desk"]),
+        # Accounts approve and pay PO instalments from the Payment Calendar.
+        ("Accounts", ["Accounts Desk", "Payment Calendar"]),
         ("Reports", []),
         ("Masters", [
             "Companies", "Locations", "Customer Type", "Product Type",
             "Category Group", "Units", "Lead Source", "States",
             "Bank Details", "Roles & Access", "Company Profile",
             "Sales Order Approval", "Warranty Terms", "Reporting Chart",
+            "Departments", "PR Approval Matrix",
         ]),
         ("Workflows", []),
+        ("Procurement", ["My Requisitions", "Procurement Desk", "Purchase Orders", "Vendors", "Payment Calendar"]),
     ],
     # The sales floor all see the same screens. What separates them is the
     # reporting line - whose records show up inside those screens - not the
@@ -114,6 +122,7 @@ SIDEBARS = {
         ("Customers", []),
         ("Reports", []),
         ("Masters", ["Reporting Chart"]),
+        EVERYONE_PROCUREMENT,
     ],
     # The founder sells like the rest of the line but holds the masters
     # that decide what is sold and at what price - which is why every
@@ -129,24 +138,30 @@ SIDEBARS = {
         ("Reports", []),
         ("Masters", ["Reporting Chart"]),
         ("Workflows", []),
+        EVERYONE_PROCUREMENT,
     ],
     # A desk gets its desk and nothing else of the sales CRM - not even the
     # dashboard, so the app drops them straight onto the screen they work.
     "accounts": [
         ("Accounts", ["Accounts Desk"]),
+        EVERYONE_PROCUREMENT,
     ],
     # The warehouse keeps the catalogue and works no desk.
     "inventory": [
         ("SCM", ["Inventory"]),
+        EVERYONE_PROCUREMENT,
     ],
     "production": [
         ("Technology", ["Production"]),
+        EVERYONE_PROCUREMENT,
     ],
     "coordinator": [
         ("Business Coordinator", ["Sales Order"]),
+        EVERYONE_PROCUREMENT,
     ],
     "logistics": [
         ("SCM", ["Logistics"]),
+        EVERYONE_PROCUREMENT,
     ],
 }
 
@@ -658,6 +673,9 @@ try:
             if desk == "admin"
             else api("put", f"/fulfilment/orders/{order['id']}/decide", token[desk], json={
                 "approve": True, "remarks": f"{label.capitalize()}.",
+                # Out for delivery names the vehicle and the driver.
+                **({"vehicle_number": "MH 12 DE 3030", "driver_name": "Test Driver"}
+                   if stage == "OUT_FOR_DELIVERY" else {}),
             })
         )
         check(f"{desk} marks it {stage} - {label}", r.status_code == 200, f"{r.status_code} {r.text[:160]}")

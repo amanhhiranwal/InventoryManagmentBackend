@@ -206,7 +206,13 @@ try:
         ("DELIVERED", "logistics"),
         ("INSTALLED", "am_north_1"),
     ):
-        r = api("put", f"/orders/{order['id']}/status", token[who], json={"status": stage})
+        if stage == "OUT_FOR_DELIVERY":
+            # Out for delivery is the logistics desk's, with the vehicle and driver.
+            r = api("put", f"/fulfilment/orders/{order['id']}/decide", token[who], json={
+                "approve": True, "vehicle_number": "HR 26 CX 4410", "driver_name": "Test Driver",
+            })
+        else:
+            r = api("put", f"/orders/{order['id']}/status", token[who], json={"status": stage})
         check(f"the order reaches {stage.lower()}", r.status_code == 200, f"{r.status_code} {r.text[:120]}")
 
     check("it is installed but not closed", order_now()["status"] == "INSTALLED", order_now()["status"])

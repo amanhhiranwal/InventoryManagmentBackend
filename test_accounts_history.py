@@ -80,6 +80,24 @@ try:
               planted not in [row["id"] for row in (api("get", "/fulfilment/accounts/history", admin,
                                                          params={"decision": "APPROVED", "size": 200}).json()["data"]["rows"])])
 
+    print("\nProduction and logistics keep the same history")
+    from app.core.fulfilment import LOGISTICS, PRODUCTION
+
+    for desk, role in (("production", PRODUCTION), ("logistics", LOGISTICS)):
+        check(f"someone outside {desk} cannot read its history",
+              api("get", f"/fulfilment/{desk}/history", outsider).status_code == 403)
+        desk_stages = DESK_STAGES[role]
+        for decision, targets in (("APPROVED", [DESKS[s].approves_to for s in desk_stages]), ("REJECTED", ["ON_HOLD"])):
+            r = api("get", f"/fulfilment/{desk}/history", admin, params={"decision": decision, "size": 200})
+            got = (r.json().get("data") or {}) if r.status_code == 200 else {}
+            want = db.execute(text(
+                "SELECT count(*) FROM sales_order_activity WHERE from_status = ANY(:f) AND to_status = ANY(:t)"),
+                {"f": desk_stages, "t": targets}).scalar()
+            check(f"{desk} {decision.lower()}: every decision on record", got.get("total") == want,
+                  f"{got.get('total')} vs {want} ({r.status_code})")
+            check(f"{desk} {decision.lower()}: shows the order value, not an advance",
+                  all(row["kind"] == "STAGE" and row["desk"] == role for row in got.get("rows") or []))
+
 finally:
     if planted:
         db.execute(text("DELETE FROM sales_order_activity WHERE id = :i"), {"i": planted})

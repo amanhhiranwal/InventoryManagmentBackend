@@ -260,7 +260,10 @@ class FulfilmentDeskService:
 
         rows = []
         for activity, order in found:
-            balance = activity.from_status == SalesOrderStatus.INSTALLED
+            # Accounts decide on money - the advance or the balance - so
+            # theirs shows that amount; the other desks show the order value.
+            money_desk = role == ACCOUNTS
+            balance = money_desk and activity.from_status == SalesOrderStatus.INSTALLED
             rows.append({
                 "id": activity.id,
                 "order_id": order.id,
@@ -268,7 +271,8 @@ class FulfilmentDeskService:
                 "customer_name": order.customer_name,
                 "company_name": order.company_name,
                 "stage": DESKS[activity.from_status].queue_label if activity.from_status in DESKS else activity.from_status,
-                "kind": "BALANCE" if balance else "ADVANCE",
+                "kind": ("BALANCE" if balance else "ADVANCE") if money_desk else "STAGE",
+                "desk": role,
                 "decision": wanted,
                 "action": activity.action,
                 "remarks": activity.description,
@@ -277,13 +281,16 @@ class FulfilmentDeskService:
                 "grand_total": float(order.grand_total or 0),
                 "amount": float(
                     (order.grand_total or 0) - (order.advance_received or 0) if balance
-                    else (order.advance_received or 0)
+                    else (order.advance_received or 0) if money_desk
+                    else (order.grand_total or 0)
                 ),
                 "received_date": (
                     (order.balance_received_date if balance else order.advance_received_date).isoformat()
-                    if (order.balance_received_date if balance else order.advance_received_date)
+                    if money_desk and (order.balance_received_date if balance else order.advance_received_date)
                     else None
                 ),
+                "vehicle_number": order.delivery_vehicle_number if role == LOGISTICS else None,
+                "driver_name": order.delivery_driver_name if role == LOGISTICS else None,
                 "current_status": order.status,
             })
 
@@ -326,6 +333,8 @@ class FulfilmentDeskService:
             "outstanding_balance": round(grand_total - paid, 2),
             "advance_received_date": iso(order.advance_received_date),
             "balance_received_date": iso(order.balance_received_date),
+            "delivery_vehicle_number": order.delivery_vehicle_number,
+            "delivery_driver_name": order.delivery_driver_name,
             "order_date": iso(order.order_date) if order.order_date else None,
             "waiting_days": _waiting_days(order),
             "items": order.items or [],
@@ -968,6 +977,8 @@ class FulfilmentDeskService:
         advance_amount: float | None = None,
         serials: list | None = None,
         received_date: date | None = None,
+        vehicle_number: str | None = None,
+        driver_name: str | None = None,
     ) -> SalesOrder:
         """Approve an order onward, or reject it and hold it with a reason.
 
@@ -1056,6 +1067,30 @@ class FulfilmentDeskService:
 
         if approve and order.status == SalesOrderStatus.PROCUREMENT:
             picks = FulfilmentDeskService.take_serials(order, serials)
+
+        # Out for delivery: logistics name the vehicle and the driver
+        # taking it, so the client and the desk know who is on the road.
+        if approve and order.status == SalesOrderStatus.DISPATCHED:
+            vehicle = " ".join((vehicle_number or "").split()).upper()
+            driver = " ".join((driver_name or "").split())
+
+            missing = [
+                label for label, value in (("vehicle number", vehicle), ("driver name", driver)) if not value
+            ]
+            if missing:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Enter the {' and '.join(missing)} before marking it out for delivery.",
+                )
+            if len(vehicle) > 30 or len(driver) > 120:
+                raise HTTPException(
+                    status_code=400,
+                    detail="The vehicle number is at most 30 characters and the driver name 120.",
+                )
+
+            order.delivery_vehicle_number = vehicle
+            order.delivery_driver_name = driver
+            notes.append(f"Vehicle {vehicle}, driver {driver}.")
 
         if approve and order.status == SalesOrderStatus.READY:
             missing = [
