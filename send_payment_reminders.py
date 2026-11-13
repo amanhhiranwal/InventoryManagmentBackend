@@ -7,9 +7,10 @@ raised the PO. Running it twice on the same day sends nothing new.
 
     docker exec -w /app backend_app python send_payment_reminders.py
 
-On the server, a crontab line such as (09:00 every day):
-
-    0 9 * * * docker exec -w /app backend_app python send_payment_reminders.py >> /var/log/payment_reminders.log 2>&1
+In production the deploy (.github/workflows/deploy.yml) installs it in the
+deploy user's crontab to run hourly in the saas_backend container, logging
+to /var/www/saas/logs/payment_reminders.log. Hourly is safe: an instalment
+is reminded at most once a day.
 """
 
 import os

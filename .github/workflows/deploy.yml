@@ -303,7 +303,30 @@ jobs:
               dc logs --tail=100 saas_backend
               exit 1
             fi
- 
+
+            # Payment reminders: send_payment_reminders.py tells accounts
+            # about every unpaid PO instalment due within 3 days or
+            # overdue. Run hourly; each instalment is reminded at most
+            # once a day, so this is one reminder a day whatever the
+            # server's timezone, and a run missed while the server was
+            # down is caught up by the next. Installed for the deploy
+            # user, replacing any earlier copy (found by its marker).
+            echo "==> Installing the payment reminder schedule..."
+            if command -v crontab >/dev/null 2>&1; then
+              mkdir -p "$APP_DIR/logs"
+              MARKER="# saas-payment-reminders"
+              REMINDER="0 * * * * docker exec -w /app saas_backend python send_payment_reminders.py >> $APP_DIR/logs/payment_reminders.log 2>&1 $MARKER"
+              # Read in full before writing, so the server's other cron
+              # entries are kept.
+              CURRENT=$(crontab -l 2>/dev/null || true)
+              { printf '%s\n' "$CURRENT" | grep -v -F "$MARKER" | grep -v '^$' || true; echo "$REMINDER"; } | crontab -
+              crontab -l | grep -F "$MARKER"
+              echo "==> Payment reminders scheduled hourly (log: $APP_DIR/logs/payment_reminders.log)."
+            else
+              echo "WARNING: crontab is not installed on this server, so payment reminders are NOT scheduled."
+              echo "WARNING: Install cron (apt-get install -y cron) and redeploy."
+            fi
+
             echo "=========================================="
             echo "Backend deployment completed successfully."
             echo "=========================================="
