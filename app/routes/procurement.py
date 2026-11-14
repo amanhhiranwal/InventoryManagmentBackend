@@ -39,7 +39,13 @@ from app.services.procurement import (
     requisitions,
     vendors,
 )
-from app.services.procurement.common import can_link_sales_order, full_name, has_permission, user_row
+from app.services.procurement.common import (
+    can_link_sales_order,
+    full_name,
+    has_permission,
+    may_raise_requisition,
+    user_row,
+)
 
 router = APIRouter(tags=["Procurement"])
 
@@ -88,6 +94,10 @@ def get_matrix(db: Session = Depends(get_db), current_user=Depends(get_current_u
 @router.put("/procurement/approval-matrix")
 def save_matrix(payload: Body, db: Session = Depends(get_db),
                 current_user=Depends(require_permission("procurement_masters.manage"))):
+    # Whole bands from the matrix page; two thresholds alone still work for
+    # older callers and keep the form's default approvers.
+    if "bands" in payload:
+        return _ok(masters.save_matrix(payload.get("bands"), db), "Approval matrix saved.")
     return _ok(masters.save_matrix_limits(payload.get("limits") or [], db), "Approval thresholds saved.")
 
 
@@ -122,6 +132,9 @@ def requisition_meta(db: Session = Depends(get_db), current_user=Depends(get_cur
             "department_name": department.name if department else None,
             "reporting_manager_id": str(manager.id) if manager else None,
             "reporting_manager_name": full_name(manager) or None,
+            # The My Requisitions tick: without it the page still shows
+            # what waits on them, but they cannot raise one.
+            "can_raise": may_raise_requisition(current_user, db),
         },
     })
 

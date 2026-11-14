@@ -48,6 +48,7 @@ from app.services.procurement.common import (
     holders_of,
     is_super_admin,
     log,
+    may_raise_requisition,
     money,
     names_for,
     notify,
@@ -172,7 +173,7 @@ def serialize_step(step: PurchaseRequisitionApproval, db: Session) -> dict:
         "round": step.round,
         "level": step.level,
         "step": step.step,
-        "step_label": ApprovalStep.LABELS.get(step.step, step.step),
+        "step_label": ApprovalStep.label(step.step),
         "approver_ids": [str(i) for i in step.approver_ids or []],
         "approver_label": step.approver_label or (", ".join(names) if names else "Super admins"),
         "decision": step.decision,
@@ -515,8 +516,23 @@ def _assert_complete(pr: PurchaseRequisition, db: Session, current_user: dict) -
         raise HTTPException(status_code=400, detail=" ".join(problems))
 
 
+def _assert_may_raise(current_user: dict, db: Session) -> None:
+    """Raising, changing or submitting a requisition needs the My
+    Requisitions tick. Every role has it unless a super admin removed it;
+    someone with no role at all may still raise one."""
+
+    if not may_raise_requisition(current_user, db):
+        raise HTTPException(
+            status_code=403,
+            detail="Your role may not raise purchase requisitions. Ask a super admin to tick "
+                   "My Requisitions for your role on Roles & Access.",
+        )
+
+
 def create(payload: dict, current_user: dict, db: Session) -> PurchaseRequisition:
     """A new PR as a draft, owned by whoever is signed in."""
+
+    _assert_may_raise(current_user, db)
 
     me = user_row(current_user.get("user_id"), db)
     if me is None:
@@ -648,6 +664,7 @@ def update(pr_id: int, payload: dict, current_user: dict, db: Session) -> Purcha
 
     if str(current_user.get("user_id") or "") != str(pr.requested_by):
         raise HTTPException(status_code=403, detail="Only the person who raised this requisition can change it.")
+    _assert_may_raise(current_user, db)
     if pr.status not in PRStatus.EDITABLE:
         raise HTTPException(
             status_code=409,
@@ -694,6 +711,7 @@ def submit(pr_id: int, current_user: dict, db: Session) -> PurchaseRequisition:
 
     if str(current_user.get("user_id") or "") != str(pr.requested_by):
         raise HTTPException(status_code=403, detail="Only the person who raised this requisition can submit it.")
+    _assert_may_raise(current_user, db)
     if pr.status not in PRStatus.EDITABLE:
         raise HTTPException(status_code=409, detail="This requisition has already been submitted.")
 
@@ -719,7 +737,7 @@ def submit(pr_id: int, current_user: dict, db: Session) -> PurchaseRequisition:
     action = "PR Resubmitted" if resubmission else "PR Submitted"
     log(db, current_user, entity_type="requisition", entity_id=pr.id, requisition_id=pr.id,
         action=action, new={"status": pr.status, "round": pr.approval_round,
-                            "chain": [ApprovalStep.LABELS.get(r.step, r.step) for r in chain]})
+                            "chain": [ApprovalStep.label(r.step) for r in chain]})
 
     notify(db, _step_people(chain[0], pr, db), module=MODULE, entity_id=pr.id,
            action=f"{action} For Your Approval",
@@ -768,7 +786,7 @@ def decide(pr_id: int, decision: str, remarks: str | None, current_user: dict, d
     step.decided_by_name = actor_name
     step.decided_at = datetime.utcnow()
     step.remarks = remarks
-    label = ApprovalStep.LABELS.get(step.step, step.step)
+    label = ApprovalStep.label(step.step)
 
     if decision == "APPROVE":
         step.decision = "APPROVED"
@@ -795,7 +813,7 @@ def decide(pr_id: int, decision: str, remarks: str | None, current_user: dict, d
             pr.current_level = following.level
             log(db, current_user, entity_type="requisition", entity_id=pr.id, requisition_id=pr.id,
                 action=f"Approved By {label}", remarks=remarks,
-                new={"next": ApprovalStep.LABELS.get(following.step, following.step)})
+                new={"next": ApprovalStep.label(following.step)})
             notify(db, _step_people(following, pr, db), module=MODULE, entity_id=pr.id,
                    action="PR Waiting For Your Approval",
                    message=f"{pr.pr_number} from {pr.requester_name} was approved by {actor_name} "
@@ -969,7 +987,7 @@ def list_for_approval(current_user: dict, db: Session) -> dict:
         for pr, row in zip(decided_prs, serialize_many(decided_prs, db, current_user)):
             step = mine[pr.id]
             row["my_decision"] = step.decision
-            row["my_step_label"] = ApprovalStep.LABELS.get(step.step, step.step)
+            row["my_step_label"] = ApprovalStep.label(step.step)
             row["my_decided_at"] = iso(step.decided_at)
             row["my_remarks"] = step.remarks
             decided.append(row)

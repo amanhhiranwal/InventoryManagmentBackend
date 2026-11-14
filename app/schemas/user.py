@@ -18,6 +18,11 @@ class CreateUserRequest(BaseModel):
     #: Masters > Departments. Decides who heads a purchase requisition's
     #: Department Head approval step.
     department_id: int | None = None
+    #: Their job title as HR writes it. Shown, never used for access.
+    designation: str | None = None
+    #: Managers they report to beside reports_to_id - two Directors over
+    #: the Founder. Both see their records; approvals follow the main one.
+    also_reports_to_ids: list[str] = []
 
 
 class UpdateUserRoleRequest(BaseModel):
@@ -39,6 +44,9 @@ class UpdateUserRequest(BaseModel):
     company_ids: list[str] = []
     reports_to_id: str | None = None
     department_id: int | None = None
+    #: Each is only changed when the form sends it.
+    designation: str | None = None
+    also_reports_to_ids: list[str] | None = None
 
 
 class SetUserActiveRequest(BaseModel):

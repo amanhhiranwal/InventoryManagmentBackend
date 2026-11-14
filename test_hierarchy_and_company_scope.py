@@ -101,9 +101,14 @@ try:
     # they answer for the whole company, not for one region.
     # Finance and Director approve purchase requisitions above the
     # amount-matrix limits; they are approvers, not part of the chart.
+    # The everyday and procurement roles HR's employee sheet maps onto
+    # (app/services/org_setup.NEW_ROLES) sit outside it the same way.
+    from app.services.org_setup import NEW_ROLES
+
     DESKS = {
         "Business Coordinator", "Accounts", "Production Tech Head",
         "Logistics", "Inventory", "Finance", "Director",
+        *NEW_ROLES,
     }
     check(
         "the sales chart is Super Admin, Founder, CEO, AVP, Zonal Head, Area Manager",
@@ -438,22 +443,31 @@ try:
         str(u.id): f"{u.first_name} {u.last_name or ''}".strip() or str(u.id)
         for u in everyone
     }
-    manager = {
-        str(u.id): (str(u.reports_to_id) if u.reports_to_id else None)
+    # Everyone each person reports to: their main manager and any they
+    # also report to (two Directors over the Founder), read straight from
+    # the tables so this stays independent of the service it checks.
+    from sqlalchemy import text as _text
+
+    managers: dict[str, set[str]] = {
+        str(u.id): ({str(u.reports_to_id)} if u.reports_to_id else set())
         for u in everyone
     }
+    for row in session.execute(_text("select user_id, manager_id from user_co_managers")):
+        managers.setdefault(str(row.user_id), set()).add(str(row.manager_id))
 
     def line_above(user_id):
-        """Everyone above this person, walking up until the top."""
+        """Everyone above this person, through every manager, to the top."""
 
-        seen, current, above = set(), manager.get(user_id), []
+        seen, queue = set(), list(managers.get(user_id, ()))
 
-        while current and current not in seen:
+        while queue:
+            current = queue.pop()
+            if current in seen or current == user_id:
+                continue
             seen.add(current)
-            above.append(current)
-            current = manager.get(current)
+            queue.extend(managers.get(current, ()))
 
-        return above
+        return seen
 
     sideways, missing = [], []
 

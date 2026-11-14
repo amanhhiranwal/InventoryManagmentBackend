@@ -279,10 +279,11 @@ DEFAULT_MENUS_DATA = [
     "order_index": 12,
     "children": []
   },
-  # Buying: a requisition any employee raises, up to the purchase order.
-  # The heading carries no permission so the first two reach everyone -
-  # every employee may raise a PR, and approvals are whoever's turn it is;
-  # the procurement team's pages each need their own.
+  # Buying: a requisition an employee raises, up to the purchase order.
+  # My Requisitions is the requisition.create tick - every role has it
+  # unless a super admin removes it - and approvers keep the page whatever
+  # their role, since "Waiting on me" lives on it (routes/menu.py). The
+  # procurement team's pages each need their own.
   {
     "title": "Procurement",
     "icon": "LuShoppingCart",
@@ -292,7 +293,7 @@ DEFAULT_MENUS_DATA = [
     "children": [
       # Approvals are a tab on My Requisitions ("Waiting on me") and are
       # decided on the requisition or PO itself, so they need no page.
-      {"title": "My Requisitions", "icon": "LuClipboardList", "path": "/procurement/requisitions", "permission_key": None, "order_index": 1},
+      {"title": "My Requisitions", "icon": "LuClipboardList", "path": "/procurement/requisitions", "permission_key": "requisition.create", "order_index": 1},
       {"title": "Procurement Desk", "icon": "LuBriefcase", "path": "/procurement/desk", "permission_key": "procurement.read", "order_index": 2},
       {"title": "Purchase Orders", "icon": "LuFileCheck", "path": "/procurement/purchase-orders", "permission_key": "purchase_order.read", "order_index": 3},
       {"title": "Vendors", "icon": "LuStore", "path": "/procurement/vendors", "permission_key": "vendor.read", "order_index": 4},

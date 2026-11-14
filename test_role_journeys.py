@@ -142,8 +142,10 @@ SIDEBARS = {
     ],
     # A desk gets its desk and nothing else of the sales CRM - not even the
     # dashboard, so the app drops them straight onto the screen they work.
+    # The Accounts role approves and pays purchase-order instalments
+    # (purchase_order.pay), so it has the Payment Calendar beside its desk.
     "accounts": [
-        ("Accounts", ["Accounts Desk"]),
+        ("Accounts", ["Accounts Desk", "Payment Calendar"]),
         EVERYONE_PROCUREMENT,
     ],
     # The warehouse keeps the catalogue and works no desk.

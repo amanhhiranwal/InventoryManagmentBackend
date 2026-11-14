@@ -71,10 +71,20 @@ class RBACService:
             description=(request.description or "").strip() or None,
         )
 
-        return RBACRepository.create_role(
+        role = RBACRepository.create_role(
             db,
             role,
         )
+
+        # Any role may raise purchase requisitions until a super admin
+        # unticks My Requisitions for it.
+        from app.services.procurement.common import grant_raise_requisition
+
+        grant_raise_requisition(db, [role.id])
+        db.commit()
+        db.refresh(role)
+
+        return role
 
     @staticmethod
     def get_roles(db: Session, current_user: dict | None = None):

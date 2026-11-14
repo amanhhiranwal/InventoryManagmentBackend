@@ -81,6 +81,13 @@ class User(BaseModel):
         nullable=True,
     )
 
+    #: Their job title as HR writes it ("Sr. Area Sales Manager"). Shown,
+    #: never checked: what someone may do comes from their role.
+    designation: Mapped[str | None] = mapped_column(
+        String(150),
+        nullable=True,
+    )
+
     from sqlalchemy.orm import relationship
 
     roles = relationship(

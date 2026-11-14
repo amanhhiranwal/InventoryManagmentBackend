@@ -538,7 +538,7 @@ def decide(po_id: int, decision: str, remarks: str | None, current_user: dict, d
     who, name = actor(current_user, db)
     now = datetime.utcnow()
     step.decided_by, step.decided_by_name, step.decided_at, step.remarks = who, name, now, remarks
-    label = ApprovalStep.LABELS.get(step.step, step.step)
+    label = ApprovalStep.label(step.step)
 
     if decision == "APPROVE":
         step.decision = "APPROVED"
@@ -555,7 +555,7 @@ def decide(po_id: int, decision: str, remarks: str | None, current_user: dict, d
             po.current_level = following.level
             log(db, current_user, entity_type="purchase_order", entity_id=po.id,
                 requisition_id=po.requisition_id, action=f"PO Approved By {label}", remarks=remarks,
-                new={"next": ApprovalStep.LABELS.get(following.step, following.step)})
+                new={"next": ApprovalStep.label(following.step)})
             notify(db, approval_chain.people(following.approver_ids, db, exclude=_creator(po)), module=MODULE,
                    entity_id=po.id, action="Purchase Order Waiting For Your Approval",
                    message=f"{po.po_number} to {po.vendor_name} - ₹{po.grand_total:,.2f} was approved by "
@@ -906,7 +906,7 @@ def serialize_step(step: PurchaseOrderApproval, db: Session) -> dict:
         "round": step.round,
         "level": step.level,
         "step": step.step,
-        "step_label": ApprovalStep.LABELS.get(step.step, step.step),
+        "step_label": ApprovalStep.label(step.step),
         "approver_label": step.approver_label or ", ".join(names_for(step.approver_ids, db)) or "Super admins",
         "decision": step.decision,
         "decided_by_name": step.decided_by_name,
