@@ -1,11 +1,11 @@
 from typing import List
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.controllers.user_controller import UserController
 from app.database.dependencies import get_db
-from app.middleware.permission_middleware import require_permission, require_super_admin
+from app.middleware.permission_middleware import require_granted, require_permission, require_super_admin
 from app.schemas.user import (
     CreateUserRequest,
     SetUserActiveRequest,
@@ -17,6 +17,60 @@ router = APIRouter(
     prefix="/users",
     tags=["Users"],
 )
+
+
+@router.get("/import/template")
+def user_import_template(current_user=Depends(require_granted("user.bulk_upload"))):
+    """The columns Users > Bulk Upload reads, with one example row."""
+
+    from fastapi.responses import Response
+
+    from app.services.user_import_service import template_csv
+
+    return Response(
+        content=template_csv(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="User_Upload_Template.csv"'},
+    )
+
+
+@router.post("/import")
+async def import_users(
+    file: UploadFile = File(...),
+    commit: bool = Form(False),
+    test_emails: bool = Form(False),
+    send_welcome: bool = Form(False),
+    start_password: str | None = Form(None),
+    db: Session = Depends(get_db),
+    # Its own tick on Roles & Access, beside Users: adding one person and
+    # adding a hundred from a file are different trusts.
+    current_user=Depends(require_granted("user.bulk_upload")),
+):
+    """Create and update people from an Excel or CSV sheet.
+
+    Called twice by the screen: without ``commit`` to show what each row
+    would do, then with it to do it. See app/services/user_import_service.
+    """
+
+    from fastapi import HTTPException
+
+    from app.services.user_import_service import run
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="That file is empty.")
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="That file is larger than 5 MB.")
+
+    result = run(content, file.filename or "", db, current_user, commit=commit, test_emails=test_emails,
+                 send_welcome=send_welcome, start_password=(start_password or "").strip() or None)
+    done = result["counts"]
+    message = (
+        f"{done.get('create', 0)} added, {done.get('update', 0)} updated, "
+        f"{done.get('deactivate', 0)} switched off, {done.get('error', 0)} refused."
+        if commit else "Here is what the upload would do."
+    )
+    return {"success": True, "message": message, "data": result}
 
 
 @router.post("/")

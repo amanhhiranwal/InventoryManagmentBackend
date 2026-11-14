@@ -35,6 +35,7 @@ from app.models.role_permission import RolePermission
 from app.models.sales_order import SalesOrder
 from app.models.state import State
 from app.models.user import User
+from app.models.user_co_manager import UserCoManager
 from app.models.user_company import UserCompany
 from app.models.user_role import UserRole
 from app.models.warranty_term import WarrantyTerm

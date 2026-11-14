@@ -94,6 +94,27 @@ class ApprovalStep:
     #: Steps decided by whoever holds the role of this name.
     ROLE_NAMES = {FINANCE: "Finance", DIRECTOR: "Director"}
 
+    #: Any other role can be a step too, set on Masters > PR Approval
+    #: Matrix: "ROLE:CEO" is decided by whoever holds the CEO role. The step
+    #: column is 40 characters, so the role name may be up to 35.
+    ROLE_PREFIX = "ROLE:"
+    MAX_ROLE_NAME = 35
+
+    @classmethod
+    def role_of(cls, step: str) -> str | None:
+        """The role that decides ``step``, if a role does."""
+        if step in cls.ROLE_NAMES:
+            return cls.ROLE_NAMES[step]
+        if str(step).startswith(cls.ROLE_PREFIX):
+            return step[len(cls.ROLE_PREFIX):] or None
+        return None
+
+    @classmethod
+    def label(cls, step: str) -> str:
+        if step in cls.LABELS:
+            return cls.LABELS[step]
+        return cls.role_of(step) or step
+
 
 #: The setting the thresholds are kept under (Masters > PR Approval Matrix).
 #: The bands are applied to the purchase order, once a vendor's price is
@@ -213,11 +234,16 @@ class POStatus:
 # ----------------------------------------------------------------------
 # Permissions
 # ----------------------------------------------------------------------
-#: Raising and approving requisitions needs no permission: every employee
-#: may raise one, and an approver is whoever the chain names. These cover
-#: the procurement team's work, and are granted to nobody by default -
-#: a super admin has them all, and Roles & Access hands them out.
+#: Raising a requisition is the "My Requisitions" tick on Roles & Access.
+#: Every role has it until a super admin takes it away (release setup
+#: grants it to each role once, and a new role starts with it). Approving
+#: needs no permission: an approver is whoever the chain names.
+RAISE_REQUISITION = "requisition.create"
+
+#: The rest cover the procurement team's work, and are granted to nobody
+#: by default - a super admin has them all, and Roles & Access hands them out.
 PERMISSIONS = {
+    RAISE_REQUISITION: "Raise purchase requisitions (every role, unless a super admin removes it)",
     "procurement.read": "See the procurement desk and approved requisitions",
     "procurement.manage": "Work requisitions: raise directly, assign, request and record quotations, compare",
     "vendor.read": "See the vendor master",

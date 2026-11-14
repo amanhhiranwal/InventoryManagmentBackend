@@ -192,22 +192,79 @@ class HierarchyService:
         if not user_id:
             return set()
 
-        users = db.query(User.id, User.reports_to_id).all()
-        managers = {
-            str(u.id): (str(u.reports_to_id) if u.reports_to_id else None)
-            for u in users
-        }
+        # Everyone below this user, however many steps down, through each
+        # person's main manager and any manager they also report to.
+        reports = HierarchyService.reports_by_manager(db)
+        return {user_id} | _descendants({user_id}, reports)
 
-        visible = {user_id}
+    @staticmethod
+    def co_managers(db: Session) -> dict[str, set[str]]:
+        """user id -> the managers they also report to (UserCoManager)."""
 
-        for other in managers:
-            if other == user_id:
+        from app.models.user_co_manager import UserCoManager
+
+        found: dict[str, set[str]] = {}
+        for row in db.query(UserCoManager.user_id, UserCoManager.manager_id).all():
+            found.setdefault(str(row.user_id), set()).add(str(row.manager_id))
+        return found
+
+    @staticmethod
+    def reports_by_manager(db: Session) -> dict[str, set[str]]:
+        """manager id -> the people who report to them, main or also."""
+
+        reports: dict[str, set[str]] = {}
+        for u in db.query(User.id, User.reports_to_id).all():
+            if u.reports_to_id:
+                reports.setdefault(str(u.reports_to_id), set()).add(str(u.id))
+        for user_id, managers in HierarchyService.co_managers(db).items():
+            for manager in managers:
+                reports.setdefault(manager, set()).add(user_id)
+        return reports
+
+    @staticmethod
+    def validate_co_managers(
+        user_id: str | None,
+        manager_ids: list[str] | None,
+        main_manager_id,
+        role_ids: list[str],
+        db: Session,
+    ) -> list[UUID]:
+        """Check the "also reports to" managers and return them as UUIDs.
+
+        Each is held to the Reports To rules (exists, not the user, role
+        above theirs), the main manager is not repeated, and none may sit
+        below the user through any line - that would be a loop.
+        """
+
+        chosen: list[UUID] = []
+        main = str(main_manager_id) if main_manager_id else None
+        below_user = (
+            _descendants({str(user_id)}, HierarchyService.reports_by_manager(db)) if user_id else set()
+        )
+
+        for manager_id in manager_ids or []:
+            if not manager_id or str(manager_id) == main:
                 continue
+            manager = HierarchyService.validate_reports_to(user_id, str(manager_id), role_ids, db)
+            if str(manager) in below_user:
+                raise HTTPException(
+                    status_code=400,
+                    detail="That would create a reporting loop: the chosen manager already reports to this user.",
+                )
+            if manager not in chosen:
+                chosen.append(manager)
 
-            if user_id in HierarchyService.manager_chain(other, managers):
-                visible.add(other)
+        return chosen
 
-        return visible
+    @staticmethod
+    def set_co_managers(user_id, manager_ids: list[UUID], db: Session) -> None:
+        """Replace who the user also reports to. Does not commit."""
+
+        from app.models.user_co_manager import UserCoManager
+
+        db.query(UserCoManager).filter(UserCoManager.user_id == UUID(str(user_id))).delete()
+        for manager_id in manager_ids:
+            db.add(UserCoManager(user_id=UUID(str(user_id)), manager_id=manager_id))
 
     @staticmethod
     def can_see_user(current_user: dict, other_user_id, db: Session) -> bool:

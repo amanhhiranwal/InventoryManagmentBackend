@@ -157,6 +157,24 @@ def approval_matrix(db: Session) -> list[dict]:
     return DEFAULT_APPROVAL_MATRIX
 
 
+def step_options(db: Session) -> list[dict]:
+    """What a band's approvers can be: the four steps of the company's PR
+    form, then any role by name (decided by whoever holds it)."""
+
+    from app.models.role import Role
+
+    fixed = [{"value": step, "label": label} for step, label in ApprovalStep.LABELS.items()]
+    covered = {name.lower() for name in ApprovalStep.ROLE_NAMES.values()}
+    roles = [
+        {"value": f"{ApprovalStep.ROLE_PREFIX}{r.role_name}", "label": r.role_name}
+        for r in db.query(Role).order_by(Role.role_name).all()
+        if r.role_name.lower() not in covered
+        and r.role_name.lower() != "super admin"
+        and len(r.role_name) <= ApprovalStep.MAX_ROLE_NAME
+    ]
+    return fixed + roles
+
+
 def describe_matrix(db: Session) -> dict:
     bands = approval_matrix(db)
     return {
@@ -164,12 +182,76 @@ def describe_matrix(db: Session) -> dict:
             {
                 "upto": band.get("upto"),
                 "steps": band.get("steps") or [],
-                "labels": [ApprovalStep.LABELS.get(s, s) for s in band.get("steps") or []],
+                "labels": [ApprovalStep.label(s) for s in band.get("steps") or []],
             }
             for band in bands
         ],
         "limits": [band.get("upto") for band in bands if band.get("upto") is not None],
+        "options": step_options(db),
     }
+
+
+#: More bands than this is a mistake rather than a policy.
+MAX_BANDS = 8
+
+
+def save_matrix(bands: list, db: Session) -> dict:
+    """Replace the whole matrix: each band's ceiling and its approvers in order.
+
+    Every band but the last needs a ceiling above the one before; the last
+    has none, so every amount lands somewhere. Each band needs at least one
+    approver, each a known step or an existing role, none twice.
+    """
+
+    if not isinstance(bands, list) or not 1 <= len(bands) <= MAX_BANDS:
+        raise HTTPException(status_code=400, detail=f"Give between 1 and {MAX_BANDS} bands.")
+
+    allowed = {option["value"] for option in step_options(db)}
+    cleaned: list[dict] = []
+    previous = 0.0
+
+    for index, band in enumerate(bands):
+        last = index == len(bands) - 1
+        where = f"Band {index + 1}"
+        if not isinstance(band, dict):
+            raise HTTPException(status_code=400, detail=f"{where} is not a band.")
+
+        upto = band.get("upto")
+        if last:
+            if upto not in (None, ""):
+                raise HTTPException(status_code=400, detail="The last band has no upper amount - it covers everything above.")
+            upto = None
+        else:
+            try:
+                upto = float(upto)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail=f"{where} needs an upper amount.")
+            if upto <= previous:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{where}'s upper amount must be more than {previous:,.0f}.",
+                )
+            previous = upto
+
+        steps = band.get("steps")
+        if not isinstance(steps, list) or not steps:
+            raise HTTPException(status_code=400, detail=f"{where} needs at least one approver.")
+        unknown = [s for s in steps if s not in allowed]
+        if unknown:
+            raise HTTPException(status_code=400, detail=f"{where}: unknown approver {unknown[0]!r}.")
+        if len(set(steps)) != len(steps):
+            raise HTTPException(status_code=400, detail=f"{where} lists the same approver twice.")
+
+        cleaned.append({"upto": upto, "steps": list(steps)})
+
+    row = db.query(AppSetting).filter(AppSetting.key == APPROVAL_SETTING).first()
+    if row is None:
+        db.add(AppSetting(key=APPROVAL_SETTING, value=json.dumps(cleaned)))
+    else:
+        row.value = json.dumps(cleaned)
+    db.commit()
+
+    return describe_matrix(db)
 
 
 def save_matrix_limits(limits: list, db: Session) -> dict:

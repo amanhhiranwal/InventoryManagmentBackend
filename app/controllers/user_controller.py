@@ -59,12 +59,12 @@ class UserController:
         }
 
     @staticmethod
-    def _to_response_dict(user, granted=None, managers=None):
+    def _to_response_dict(user, granted=None, managers=None, co_managers=None):
         """One user, as the API returns them.
 
-        ``granted`` and ``managers`` are the lookups a list builds once and
-        hands in. Without them the record is assembled on its own, which is
-        what a single-user response wants.
+        ``granted``, ``managers`` and ``co_managers`` are the lookups a list
+        builds once and hands in. Without them the record is assembled on
+        its own, which is what a single-user response wants.
         """
 
         role_ids = [str(r.id) for r in user.roles]
@@ -73,6 +73,11 @@ class UserController:
         from sqlalchemy.orm import object_session
 
         session = object_session(user)
+
+        if co_managers is None:
+            from app.services.hierarchy_service import HierarchyService
+
+            co_managers = HierarchyService.co_managers(session) if session else {}
 
         if granted is None:
             granted = (
@@ -122,6 +127,9 @@ class UserController:
             "reports_to_id": str(user.reports_to_id) if user.reports_to_id else None,
             "reports_to_name": reports_to_name,
             "department_id": getattr(user, "department_id", None),
+            "designation": getattr(user, "designation", None),
+            # Managers they report to beside reports_to_id.
+            "also_reports_to_ids": sorted(co_managers.get(str(user.id), ())),
             # When the account was opened. Asked for on the list, where it
             # answers "is this someone we added last week or last year".
             "created_at": iso(user.created_at) if user.created_at else None,
@@ -155,10 +163,14 @@ class UserController:
             db, {u.reports_to_id for u in people}
         )
 
+        from app.services.hierarchy_service import HierarchyService
+
+        co_managers = HierarchyService.co_managers(db)
+
         return {
             "success": True,
             "data": [
-                UserController._to_response_dict(u, granted, managers)
+                UserController._to_response_dict(u, granted, managers, co_managers)
                 for u in people
             ],
             "total": result["total"],

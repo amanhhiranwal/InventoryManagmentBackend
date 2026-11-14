@@ -210,7 +210,9 @@ class UserService:
                 engine.dispose()
 
     @staticmethod
-    def create(request, db: Session, current_user: dict | None = None) -> User:
+    def create(request, db: Session, current_user: dict | None = None, send_welcome: bool = True) -> User:
+        """A new account. ``send_welcome`` False is for the bulk upload,
+        which asks whether to email each person; the form always does."""
         # Check if email is already taken
         email_exists = UserRepository.get_by_email(db, request.email)
         if email_exists:
@@ -256,6 +258,9 @@ class UserService:
         reports_to = HierarchyService.validate_reports_to(
             None, getattr(request, "reports_to_id", None), request.role_ids, db
         )
+        also_reports_to = HierarchyService.validate_co_managers(
+            None, getattr(request, "also_reports_to_ids", None), reports_to, request.role_ids, db
+        )
 
         # A manager creating a user puts them in their own team unless they
         # chose someone else in it.
@@ -288,6 +293,7 @@ class UserService:
             phone_number=request.phone_number,
             employee_id=request.employee_id,
             location=getattr(request, "location", None),
+            designation=(getattr(request, "designation", None) or "").strip() or None,
             is_super_admin=False,
             is_active=True,
             must_change_password=True,
@@ -300,10 +306,15 @@ class UserService:
 
         created_user = UserRepository.create(db, user)
 
+        if also_reports_to:
+            HierarchyService.set_co_managers(created_user.id, also_reports_to, db)
+            db.commit()
+
         # The only place that password is ever written down. It is not in
         # the response and not on the screen that asked for the account,
         # so the person it belongs to is the one who learns it.
-        account_mail.send_welcome(created_user, temporary, db)
+        if send_welcome:
+            account_mail.send_welcome(created_user, temporary, db)
         
         # Mirror user record across all microservice databases
         try:
@@ -554,6 +565,16 @@ class UserService:
         # The same for the department.
         if "department_id" in request.model_fields_set:
             user.department_id = UserService._department(request.department_id, db)
+        if "designation" in request.model_fields_set:
+            user.designation = (request.designation or "").strip() or None
+        if "also_reports_to_ids" in request.model_fields_set and request.also_reports_to_ids is not None:
+            HierarchyService.set_co_managers(
+                user.id,
+                HierarchyService.validate_co_managers(
+                    str(user.id), request.also_reports_to_ids, user.reports_to_id, request.role_ids, db
+                ),
+                db,
+            )
 
         user.roles = roles_list
         user.companies = companies_list

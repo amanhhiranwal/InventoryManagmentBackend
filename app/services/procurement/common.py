@@ -74,6 +74,52 @@ def permissions_of(current_user: dict, db: Session) -> set[str]:
     return held
 
 
+def grant_raise_requisition(db: Session, role_ids: list | None = None) -> tuple[bool, int]:
+    """Give roles the My Requisitions tick (requisition.create).
+
+    ``role_ids`` None means every role. Returns whether the permission row
+    was new, and how many roles were given it. Does not commit.
+    """
+
+    from app.core.procurement import PERMISSIONS, RAISE_REQUISITION
+    from app.models.permission import Permission
+    from app.models.role import Role
+    from app.models.role_permission import RolePermission
+
+    permission = db.query(Permission).filter(Permission.permission_name == RAISE_REQUISITION).first()
+    created = permission is None
+    if created:
+        permission = Permission(permission_name=RAISE_REQUISITION, module="procurement",
+                                description=PERMISSIONS[RAISE_REQUISITION])
+        db.add(permission)
+        db.flush()
+
+    ids = role_ids if role_ids is not None else [r[0] for r in db.query(Role.id).all()]
+    held = {
+        str(r[0]) for r in db.query(RolePermission.role_id).filter(RolePermission.permission_id == permission.id)
+    }
+    granted = 0
+    for role_id in ids:
+        if str(role_id) not in held:
+            db.add(RolePermission(role_id=role_id, permission_id=permission.id))
+            granted += 1
+
+    return created, granted
+
+
+def may_raise_requisition(current_user: dict, db: Session) -> bool:
+    """The My Requisitions tick, with one exception: someone who holds no
+    role at all - so has no tick a super admin could set - may raise one,
+    as every employee always could."""
+
+    from app.core.procurement import RAISE_REQUISITION
+
+    if has_permission(current_user, RAISE_REQUISITION, db):
+        return True
+    user = user_row(current_user.get("user_id"), db)
+    return user is not None and not user.roles
+
+
 def has_permission(current_user: dict, key: str, db: Session) -> bool:
     return is_super_admin(current_user) or key in permissions_of(current_user, db)
 

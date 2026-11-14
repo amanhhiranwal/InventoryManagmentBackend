@@ -39,7 +39,8 @@ def approvers_for(step: str, *, requester_id, department_id, exclude: set[str], 
         else:
             note = "Super admins (no department head set)"
     else:
-        role = ApprovalStep.ROLE_NAMES.get(step)
+        # Finance, Director, or any role the matrix names ("ROLE:CEO").
+        role = ApprovalStep.role_of(step)
         ids = role_holders(role, db) if role else []
         if not ids:
             note = f"Super admins (nobody holds the {role} role)"
@@ -49,6 +50,44 @@ def approvers_for(step: str, *, requester_id, department_id, exclude: set[str], 
         note = "Super admins (the only approver raised this)"
 
     return ids, note
+
+
+def is_approver(user_id, db: Session) -> bool:
+    """True for anyone a requisition or PO step can name, or has named.
+
+    My Requisitions holds the "Waiting on me" tab, so a person whose role
+    has lost the right to raise requisitions still needs the page to decide
+    the ones that reach them: someone with people reporting to them, a
+    department head, a Finance or Director role holder, or anyone a step
+    already names.
+    """
+
+    from sqlalchemy import String, cast
+
+    from app.models.procurement import PurchaseOrderApproval, PurchaseRequisitionApproval
+    from app.models.user import User
+
+    me = str(user_id or "")
+    if not me:
+        return False
+
+    if db.query(User.id).filter(User.reports_to_id == me, User.is_active.is_(True)).first():
+        return True
+    if db.query(Department.id).filter(Department.head_user_id == me).first():
+        return True
+    roles = set(ApprovalStep.ROLE_NAMES.values()) | {
+        ApprovalStep.role_of(step)
+        for band in masters.approval_matrix(db) for step in band.get("steps") or []
+        if ApprovalStep.role_of(step)
+    }
+    if any(me in role_holders(role, db) for role in roles):
+        return True
+
+    named = f'%"{me}"%'
+    return any(
+        db.query(model.id).filter(cast(model.approver_ids, String).like(named)).first()
+        for model in (PurchaseRequisitionApproval, PurchaseOrderApproval)
+    )
 
 
 def build(steps: list[str], *, requester_id, department_id, exclude: set[str], db: Session) -> list[dict]:
@@ -101,11 +140,12 @@ def assert_decidable(rows: list[dict], exclude: set[str], db: Session) -> None:
     for row in rows:
         if people(row["approver_ids"], db, exclude):
             continue
-        label = ApprovalStep.LABELS.get(row["step"], row["step"])
+        label = ApprovalStep.label(row["step"])
         raise HTTPException(
             status_code=409,
             detail=(
-                f"Nobody can approve the {label} step: {_SETUP.get(row['step'], 'assign an approver')}, "
+                f"Nobody can approve the {label} step: "
+                f"{_SETUP.get(row['step']) or f'give someone the {label} role'}, "
                 "or have another super admin raise it - nobody approves what they raised themselves."
             ),
         )

@@ -41,7 +41,19 @@ def get_user_sidebar(
             for p in role_perms:
                 user_perms.add(p.permission_name)
 
-    sidebar_tree = MenuService.get_user_sidebar(user_perms, is_super_admin, db)
+    # An approver keeps My Requisitions for its "Waiting on me" tab even
+    # when their role may not raise requisitions. This only shows the page:
+    # raising one is still refused on the server without the permission.
+    from app.core.procurement import RAISE_REQUISITION
+    from app.services.procurement.approval_chain import is_approver
+
+    # Someone with no role at all may raise requisitions too, as every
+    # employee always could (procurement.common.may_raise_requisition).
+    shown = set(user_perms)
+    if user and RAISE_REQUISITION not in shown and (not user.roles or is_approver(user_id, db)):
+        shown.add(RAISE_REQUISITION)
+
+    sidebar_tree = MenuService.get_user_sidebar(shown, is_super_admin, db)
     return {
         "success": True,
         "data": sidebar_tree

@@ -188,8 +188,60 @@ def orphan_approvals(db) -> str:
     return f"{removed} cleared" if removed else "none left behind"
 
 
+def requisition_access(db) -> str:
+    """My Requisitions becomes a tick on Roles & Access (requisition.create).
+
+    It used to carry no permission at all, so every role had it and a
+    super admin could not take it away. Once, on the first deploy with this
+    release: point the existing menu row at the permission and give it to
+    every role, so nobody loses the page. A marker setting stops a later
+    run from handing it back to a role a super admin has since unticked.
+    """
+
+    from app.core.procurement import RAISE_REQUISITION
+    from app.models.menu import MenuItem
+    from app.services.procurement.common import grant_raise_requisition
+
+    marker = "requisition_access_granted"
+
+    menu = db.query(MenuItem).filter(MenuItem.path == "/procurement/requisitions").first()
+    pointed = False
+    if menu is not None and menu.permission_key != RAISE_REQUISITION:
+        menu.permission_key = RAISE_REQUISITION
+        pointed = True
+
+    if db.query(AppSetting).filter(AppSetting.key == marker).first():
+        db.commit()
+        return "menu pointed at requisition.create" if pointed else "already set up"
+
+    _, granted = grant_raise_requisition(db)
+    db.add(AppSetting(key=marker, value="1"))
+    db.commit()
+
+    return f"given to {granted} role(s)" + ("; menu pointed at requisition.create" if pointed else "")
+
+
+def departments_and_roles(db) -> str:
+    """The departments and roles HR's employee sheet maps onto
+    (app/services/org_setup.py), so people can be uploaded on any database.
+    What exists is left exactly as it is."""
+
+    from app.services.org_setup import ensure_departments, ensure_roles
+
+    departments = ensure_departments(db)
+    roles = ensure_roles(db)
+    said = []
+    if departments:
+        said.append(f"{len(departments)} departments added")
+    if roles:
+        said.append(f"roles added: {', '.join(roles)}")
+    return "; ".join(said) or "already there"
+
+
 STEPS = [
     ("Menus", menus),
+    ("Requisitions", requisition_access),
+    ("Org setup", departments_and_roles),
     ("Warranty terms", warranty_terms),
     ("Founder role", founder_role),
     ("Discount bands", discount_bands),
