@@ -72,6 +72,18 @@ def compute_product_totals(items) -> dict:
         quantity = _as_float(item.get("quantity"), 1.0)
         unit_price = _as_float(item.get("unit_price") or item.get("unitPrice"))
 
+        # Sold above its list price: the unit price is the selling price,
+        # and the line takes no discount.
+        if item.get("marked_up") and _as_float(item.get("discount")) > 0:
+            name = item.get("model") or item.get("product") or item.get("sku") or "a line"
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{name} is sold above its list price, so it takes no discount. "
+                    "Remove its discount, or bring its selling price down to the list price."
+                ),
+            )
+
         line = quantity * unit_price
         discount = line * _as_float(item.get("discount")) / 100.0
         taxable = line - discount

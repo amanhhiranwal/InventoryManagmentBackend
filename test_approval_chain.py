@@ -618,9 +618,16 @@ try:
                     coordinate_order(order["id"], round(float(invoice["grand_total"]) * 0.3, 2)),
                 )
 
-            step = api("put", f"/orders/{order['id']}/status", token[who], json={
-                "status": status, "remarks": f"Moved to {label}.",
-            })
+            if status == "OUT_FOR_DELIVERY":
+                # The logistics desk's step, with the vehicle and driver.
+                step = api("put", f"/fulfilment/orders/{order['id']}/decide", token[who], json={
+                    "approve": True, "remarks": f"Moved to {label}.",
+                    "vehicle_number": "KA 05 MN 2020", "driver_name": "Test Driver",
+                })
+            else:
+                step = api("put", f"/orders/{order['id']}/status", token[who], json={
+                    "status": status, "remarks": f"Moved to {label}.",
+                })
             check(f"the order reaches {label}", step.status_code == 200, f"{status}: {step.status_code} {step.text[:140]}")
 
             if step.status_code != 200:

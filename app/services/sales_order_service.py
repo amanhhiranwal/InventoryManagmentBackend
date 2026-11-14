@@ -312,6 +312,58 @@ def dtp_rate_for_sku(sku: str) -> float:
 WARRANTY_SKU_PREFIX = "WARRANTY:"
 
 
+def settle_line_price(item: dict, listed: float | None, sent: float, discount: float) -> float:
+    """The unit price a line is costed at, allowing a selling price above
+    the list price.
+
+    A salesperson may sell a product or a warranty for more than its list
+    price. The form says so with ``marked_up`` and sends the selling price
+    as the unit price; it is accepted only when it is above the list
+    price, so the price can be raised here but never lowered - lowering
+    stays the discount's job, with its approvals. A marked-up line takes no
+    discount at all.
+
+    Lines without the flag are priced exactly as before: from the price
+    list where the SKU is on it, else at what was sent. The line records
+    ``marked_up`` and its ``list_price`` either way.
+    """
+
+    marked_up = bool(item.get("marked_up")) and (listed is None or sent > listed + 0.005)
+
+    if marked_up and discount > 0:
+        name = item.get("model") or item.get("product") or item.get("name") or item.get("sku") or "a line"
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{name} is sold above its list price, so it takes no discount. "
+                "Remove its discount, or bring its selling price down to the list price."
+            ),
+        )
+
+    item["marked_up"] = marked_up
+    item["list_price"] = listed
+
+    if marked_up:
+        return sent
+    return listed if listed is not None else sent
+
+
+def assert_no_discount_with_markup(items, discount_input) -> None:
+    """With any line sold above its list price, the document takes no
+    overall discount either."""
+
+    if discount_input is None or _as_float(discount_input) <= 0:
+        return
+    if any(bool((row if isinstance(row, dict) else {}).get("marked_up")) for row in items or []):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "A line is sold above its list price, so this document takes no overall "
+                "discount. Clear the discount, or bring that line down to its list price."
+            ),
+        )
+
+
 def assert_warranty_lines(items) -> None:
     """A warranty line covers the products quoted on its term, unit for unit.
 
@@ -604,10 +656,13 @@ def compute_order_totals(
             1.0,
         )
         listed = rate_for_sku(row.get("sku"), price_type)
-        price = (
-            listed
-            if listed is not None
-            else _as_float(row.get("rate") or row.get("price") or 0)
+        # A selling price above the list price is kept (marked up, no
+        # discount); otherwise the price list decides, as before.
+        price = settle_line_price(
+            row,
+            listed,
+            _as_float(row.get("rate") or row.get("price") or 0),
+            _as_float(row.get("discount")),
         )
 
         # Store the line at the price it was costed at, so the document and
@@ -640,6 +695,8 @@ def compute_order_totals(
 
     if isinstance(items, list):
         items[:] = rows
+
+    assert_no_discount_with_markup(rows, discount_input)
 
     discount_mode = (discount_mode or "AMOUNT").upper()
 
