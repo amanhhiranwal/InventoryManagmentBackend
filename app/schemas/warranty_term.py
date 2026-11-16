@@ -3,6 +3,11 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+class AiRateRequest(BaseModel):
+    #: Rupees per panel, before GST. One rate for every Interactive Flat Panel.
+    price: float = Field(ge=0)
+
+
 class CreateWarrantyTermRequest(BaseModel):
     name: str
     years: int = 0

@@ -5,10 +5,11 @@ from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.middleware.permission_middleware import require_super_admin
 from app.schemas.warranty_term import (
+    AiRateRequest,
     CreateWarrantyTermRequest,
     UpdateWarrantyTermRequest,
 )
-from app.services.warranty_term_service import WarrantyTermService
+from app.services.warranty_term_service import WarrantyTermService, ai_rate, save_ai_rate
 
 router = APIRouter(
     prefix="/warranty-terms",
@@ -40,6 +41,24 @@ def get_warranty_terms(
     terms = WarrantyTermService.get_all(db, include_inactive=include_inactive)
 
     return {"success": True, "data": [_serialise(t) for t in terms]}
+
+
+@router.get("/ai")
+def get_ai_rate(current_user=Depends(get_current_user)):
+    """The AI add-on's price per Interactive Flat Panel, before GST."""
+
+    return {"success": True, "data": {"price": ai_rate()}}
+
+
+@router.put("/ai")
+def update_ai_rate(
+    request: AiRateRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_super_admin),
+):
+    """Set the AI price. Only a super admin maintains Masters."""
+
+    return {"success": True, "message": "AI price saved.", "data": {"price": save_ai_rate(db, request.price)}}
 
 
 @router.get("/rates")

@@ -26,6 +26,7 @@ from app.services.email_service import EmailService
 from app.services.lead_service import get_visible_creator_user_ids
 from app.services.quotation_pdf_service import QuotationPDFService
 from app.services.sales_order_service import (
+    assert_ai_lines,
     assert_no_discount_with_markup,
     assert_warranty_lines,
     rate_for_sku,
@@ -166,6 +167,8 @@ def compute_totals(
 
     # A warranty line must cover exactly the products on its term.
     assert_warranty_lines([_item_dict(raw) for raw in items or []])
+    # And the AI line covers exactly the panels with AI set to Yes.
+    assert_ai_lines([_item_dict(raw) for raw in items or []])
 
     for raw in items or []:
         item = _item_dict(raw)

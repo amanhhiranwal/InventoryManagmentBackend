@@ -58,9 +58,10 @@ def compute_product_totals(items) -> dict:
     """
 
     # Imported here: sales_order_service reaches back into the CRM services.
-    from app.services.sales_order_service import assert_warranty_lines
+    from app.services.sales_order_service import assert_ai_lines, assert_warranty_lines
 
     assert_warranty_lines(items)
+    assert_ai_lines(items)
 
     subtotal = 0.0
     discount_amount = 0.0
