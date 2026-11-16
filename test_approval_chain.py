@@ -749,6 +749,111 @@ try:
                     raised["id"] not in pending_ids(stranger),
                 )
 
+    # ------------------------------------- sold above its list price
+    banner("9h. Sold above its list price climbs by rank, not discount")
+
+    # A marked-up line takes no discount, so the bands have nothing to say
+    # about it. It goes to everyone above whoever raised it.
+    reference = make_order("List Reference", 0)
+    list_price = float(reference["items"][0].get("list_price") or reference["items"][0]["rate"])
+
+    def make_marked_order(label, who, customer_type=None):
+        payload = {
+            "customer_name": f"{label} {TAG}",
+            "order_date": datetime.now(timezone.utc).isoformat(),
+            "items": [{
+                "sku": "SG-IFP-65-SPX-V100",
+                "product": "Interactive Flat Panel",
+                "model": "65\" SPX",
+                "qty": 2,
+                "rate": list_price + 5000,
+                "tax_rate": 18,
+                "discount": 0,
+                "marked_up": True,
+            }],
+        }
+        if customer_type:
+            payload["customer_type"] = customer_type
+        r = api("post", "/orders", token[who], json=payload)
+        if r.status_code >= 400:
+            raise RuntimeError(f"{label}: {r.status_code} {r.text[:200]}")
+        made = r.json()["data"]
+        created_orders.append(made["id"])
+        return made
+
+    for who, expected in [
+        ("am_north_1", ["AVP", "CEO", "Founder"]),
+        ("zh_north", ["AVP", "CEO", "Founder"]),
+        ("avp", ["CEO", "Founder"]),
+        ("ceo", ["Founder"]),
+        ("founder", []),
+    ]:
+        marked = make_marked_order(f"Marked Up {who}", who)
+
+        check(
+            f"{who}: the line is kept above its list price",
+            marked["items"][0].get("marked_up") is True
+            and float(marked["items"][0]["rate"]) > list_price,
+            str(marked["items"][0]),
+        )
+
+        if expected:
+            early = api("put", f"/orders/{marked['id']}/status", token[who], json={"status": "CONFIRMED"})
+            check(
+                f"{who}: it cannot be confirmed unapproved",
+                early.status_code == 409,
+                f"got {early.status_code} {early.text[:140]}",
+            )
+
+        sent = send_up(marked, 0, who=who)
+        raised = (sent.json() or {}).get("data") if sent.status_code == 200 else None
+
+        if raised:
+            created_approvals.append(raised["id"])
+
+        got = [step["role"] for step in (raised or {}).get("steps", [])]
+        check(f"{who}: it goes to {expected or 'nobody'}", got == expected, f"got {got} {sent.text[:140]}")
+
+        if raised:
+            check(
+                f"{who}: the reason says it is above the list price",
+                "above its list price" in (raised.get("reason") or ""),
+                raised.get("reason"),
+            )
+            check(f"{who}: and it is flagged so", raised.get("above_list_price") is True)
+
+        if not expected:
+            done = api("put", f"/orders/{marked['id']}/status", token[who], json={"status": "CONFIRMED"})
+            check(
+                f"{who}: the founder's own marked-up order is theirs to confirm",
+                done.status_code == 200,
+                f"got {done.status_code} {done.text[:140]}",
+            )
+
+    # Dealer orders too: an Area Manager's marked-up dealer order climbs
+    # the whole line, not only to the founder.
+    dealer_marked = make_marked_order("Marked Up Dealer", "am_north_1", customer_type="Dealer")
+    sent = send_up(dealer_marked, 0, price_type="DP")
+    raised = (sent.json() or {}).get("data") if sent.status_code == 200 else None
+    if raised:
+        created_approvals.append(raised["id"])
+    got = [step["role"] for step in (raised or {}).get("steps", [])]
+    check("a marked-up dealer order climbs the whole line", got == ["AVP", "CEO", "Founder"], f"got {got}")
+
+    # Walk the Area Manager's all the way up: AVP, CEO, then the founder.
+    walk = make_marked_order("Marked Up Walk", "am_north_1")
+    raised = send_up(walk, 0).json()["data"]
+    created_approvals.append(raised["id"])
+
+    for approver in ("avp", "ceo", "founder"):
+        r = api("put", f"/approvals/{raised['id']}/decide", token[approver], json={"approve": True})
+        check(f"the {approver} approves the marked-up order", r.status_code == 200, f"{r.status_code} {r.text[:140]}")
+
+    check("it is fully approved", r.json()["data"].get("status") == "APPROVED", str(r.json()["data"].get("status")))
+
+    released = api("put", f"/orders/{walk['id']}/status", token["am_north_1"], json={"status": "CONFIRMED"})
+    check("and the order can then be confirmed", released.status_code == 200, f"{released.status_code} {released.text[:140]}")
+
     # ------------------------------------------- rejected, then resubmitted
     banner("9d. A rejected order comes back with its history")
 

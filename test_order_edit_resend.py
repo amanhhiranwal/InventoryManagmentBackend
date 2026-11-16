@@ -16,10 +16,10 @@ This runs that sequence against the API:
 
 Then every seeded sales role (Area Managers, Zonal Heads, AVP, CEO,
 Founder) edits a draft and presses Send For Approval, and the chain is
-checked against the approval matrix: an OEM mark-up goes to the founder,
-an end customer's 15% climbs past the raiser's ceiling, an undiscounted
+checked against the approval matrix: an OEM mark-up climbs by the
+raiser's rank (everyone above them, up to the founder), an end customer's 15% climbs past the raiser's ceiling, an undiscounted
 order needs nobody and is confirmed. The founder signs one; another is
-refused to a stranger, rejected, edited and sent again.
+refused to a stranger, rejected by the AVP, edited and sent again.
 
 Everything it creates is removed again.
 
@@ -182,8 +182,8 @@ try:
     # ------------------------------------------------------------------
     # Every sales role, editing a draft and pressing Send For Approval.
     # Who has to sign is the approval matrix's rule, as test_approval_chain
-    # states it: a dealer-channel (DTP) order goes to the founder whatever
-    # the discount; an end customer's 15% climbs past the AVP's ceiling;
+    # states it: a line sold above its list price - here on a dealer-channel
+    # (DTP) order - goes to everyone above the raiser; an end customer's 15% climbs past the AVP's ceiling;
     # an undiscounted end customer order needs nobody.
     # ------------------------------------------------------------------
     roles = ["am_north_1", "am_north_2", "am_south_1", "zh_north", "zh_south", "avp", "ceo", "founder"]
@@ -193,6 +193,13 @@ try:
         "am_north_1": ["AVP", "CEO", "Founder"], "am_north_2": ["AVP", "CEO", "Founder"],
         "am_south_1": ["AVP", "CEO", "Founder"], "zh_north": ["AVP", "CEO", "Founder"],
         "zh_south": ["AVP", "CEO", "Founder"], "avp": ["CEO", "Founder"], "ceo": [], "founder": [],
+    }
+
+    # Sold above its list price: everyone above the raiser, by rank.
+    chain_markup = {
+        "am_north_1": ["AVP", "CEO", "Founder"], "am_north_2": ["AVP", "CEO", "Founder"],
+        "am_south_1": ["AVP", "CEO", "Founder"], "zh_north": ["AVP", "CEO", "Founder"],
+        "zh_south": ["AVP", "CEO", "Founder"], "avp": ["CEO", "Founder"], "ceo": ["Founder"], "founder": [],
     }
 
     def edit_and_send(who, label, customer_type, rate, marked_up, discount=0):
@@ -207,7 +214,7 @@ try:
     for who in roles:
         print(f"\n{who}: edit a draft, then Send For Approval")
 
-        expected = [] if who == "founder" else ["Founder"]
+        expected = chain_markup[who]
         draft, approval, status = edit_and_send(who, f"Role OEM {who}", "OEM", selling, True)
         got = [step["role"] for step in (approval or {}).get("steps", [])]
         check(f"{who}: an OEM mark-up goes to {expected or 'nobody'}", got == expected, str(got))
@@ -225,10 +232,11 @@ try:
         check(f"{who}: an undiscounted end customer order needs nobody and is confirmed",
               approval is None and status == "CONFIRMED", f"{approval and approval.get('steps')} / {status}")
 
-    print("\nThe founder signs an Area Manager's OEM order")
+    print("\nThe AVP, CEO and founder sign an Area Manager's OEM order")
     draft, approval, status = edit_and_send("am_north_1", "Signed OEM", "OEM", selling, True)
-    r = api("put", f"/approvals/{approval['id']}/decide", token["founder"], json={"approve": True})
-    check("the founder's approval is accepted", r.status_code < 400, f"{r.status_code} {r.text[:160]}")
+    for approver in ("avp", "ceo", "founder"):
+        r = api("put", f"/approvals/{approval['id']}/decide", token[approver], json={"approve": True})
+        check(f"the {approver}'s approval is accepted", r.status_code < 400, f"{r.status_code} {r.text[:160]}")
     after = api("get", f"/orders/{draft['id']}", admin).json()["data"]
     check("the order is confirmed, still at the marked-up price",
           after["status"] == "CONFIRMED" and float(after["items"][0]["rate"]) == selling,
@@ -239,9 +247,9 @@ try:
     stranger = api("put", f"/approvals/{approval['id']}/decide", token["am_south_1"],
                    json={"approve": True})
     check("another Area Manager cannot decide it", stranger.status_code in (403, 400), str(stranger.status_code))
-    r = api("put", f"/approvals/{approval['id']}/decide", token["founder"],
+    r = api("put", f"/approvals/{approval['id']}/decide", token["avp"],
             json={"approve": False, "remarks": "Price too low for this channel."})
-    check("the founder rejects it", r.status_code < 400, f"{r.status_code} {r.text[:160]}")
+    check("the AVP rejects it", r.status_code < 400, f"{r.status_code} {r.text[:160]}")
     after = api("get", f"/orders/{draft['id']}", token["am_north_1"]).json()["data"]
     check("the order comes back as a draft", after["status"] == "DRAFT", after["status"])
     r = api("put", f"/orders/{draft['id']}", token["am_north_1"],
@@ -249,9 +257,9 @@ try:
     check("the Area Manager edits the price", r.status_code < 400, f"{r.status_code} {r.text[:160]}")
     again = send_up(token["am_north_1"], draft, r.json()["data"].get("grand_total") or 0)
     after = api("get", f"/orders/{draft['id']}", token["am_north_1"]).json()["data"]
-    check("and Send For Approval raises a fresh request to the founder",
+    check("and Send For Approval raises a fresh request up the whole line",
           again is not None and again["id"] != approval["id"]
-          and [s["role"] for s in again["steps"]] == ["Founder"] and after["status"] == "PENDING_APPROVAL",
+          and [s["role"] for s in again["steps"]] == ["AVP", "CEO", "Founder"] and after["status"] == "PENDING_APPROVAL",
           f"{again and again.get('steps')} / {after['status']}")
 
 except Exception as exc:  # noqa: BLE001 - reported as a failure, then cleaned up
