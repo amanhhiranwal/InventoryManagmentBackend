@@ -1,4 +1,4 @@
-from sqlalchemy import JSON, Column, DateTime, Float, Integer, String, func
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.database.base import Base
@@ -49,6 +49,9 @@ class SalesApproval(Base):
     orc_percent = Column(Float, nullable=True)
     orc_amount = Column(Float, nullable=True)
     document_value = Column(Float, nullable=True)
+    #: A line was sold above its list price, so the chain is everyone
+    #: above the raiser rather than the discount bands.
+    above_list_price = Column(Boolean, nullable=True, default=False)
 
     status = Column(String(20), nullable=False, default=ApprovalStatus.PENDING, index=True)
 

@@ -19,7 +19,6 @@ from app.core.timezone import iso
 from app.core.approvals import (
     FOUNDER,
     PriceType,
-    approval_chain,
     chain_for_raiser,
     describe_chain,
 )
@@ -279,6 +278,29 @@ class ApprovalService:
         return deepest
 
     @staticmethod
+    def above_list_price(document_type: str, document_id: int, db: Session) -> bool:
+        """Whether any line on a sales order is sold above its list price.
+
+        Read off the saved lines (settle_line_price only keeps the mark
+        when the price really is above the list), never from the form.
+        """
+
+        if document_type != ApprovalDocument.SALES_ORDER:
+            return False
+
+        from app.models.sales_order import SalesOrder
+
+        row = db.query(SalesOrder).filter(SalesOrder.id == document_id).first()
+
+        if row is None:
+            return False
+
+        return any(
+            isinstance(line, dict) and bool(line.get("marked_up"))
+            for line in (row.items or [])
+        )
+
+    @staticmethod
     def request(
         document_type: str,
         document_id: int,
@@ -341,16 +363,17 @@ class ApprovalService:
             .first()
         )
 
-        chain = approval_chain(price_type, discount_percent, db, document_type)
+        marked_up = ApprovalService.above_list_price(document_type, document_id, db)
 
         # Who actually has to sign, given who is asking. Each level owns
         # discount up to its own ceiling, and anything past that goes to
-        # everyone above them, finishing with the founder.
-        above = ApprovalService.chain_for(
-            price_type, discount_percent, requester, db, document_type
+        # everyone above them, finishing with the founder. A line sold
+        # above its list price goes to everyone above them whatever the
+        # discount.
+        chain = ApprovalService.chain_for(
+            price_type, discount_percent, requester, db, document_type,
+            above_list_price=marked_up,
         )
-
-        chain = above
 
         if not chain:
             # Nobody to ask: the discount is inside the raiser's own
@@ -382,6 +405,7 @@ class ApprovalService:
             orc_percent=orc_percent,
             orc_amount=orc_amount,
             document_value=document_value,
+            above_list_price=marked_up,
             status=ApprovalStatus.PENDING,
             current_step=0,
             steps=[
@@ -504,6 +528,7 @@ class ApprovalService:
         requester,
         db: Session,
         document_type: str | None = None,
+        above_list_price: bool = False,
     ) -> list[str]:
         """Who must approve this, given who raised it.
 
@@ -521,6 +546,7 @@ class ApprovalService:
             bool(getattr(requester, "is_super_admin", False)),
             db,
             document_type,
+            above_list_price,
         )
 
     @staticmethod
@@ -1165,6 +1191,7 @@ class ApprovalService:
                         approval.document_type,
                         [step["role"] for step in (approval.steps or [])],
                         approval.requested_by_name,
+                        bool(approval.above_list_price),
                     ),
                 ]
                 note = None
@@ -1197,6 +1224,7 @@ class ApprovalService:
                         approval.document_type,
                         [step["role"] for step in (approval.steps or [])],
                         approval.requested_by_name,
+                        bool(approval.above_list_price),
                     ),
                 ]
                 note = None
@@ -1435,5 +1463,7 @@ def serialize_approval(approval: SalesApproval, db=None) -> dict:
             approval.document_type,
             [step["role"] for step in (approval.steps or [])],
             approval.requested_by_name,
+            bool(approval.above_list_price),
         ),
+        "above_list_price": bool(approval.above_list_price),
     }

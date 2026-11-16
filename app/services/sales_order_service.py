@@ -1629,6 +1629,9 @@ class SalesOrderService:
             raiser,
             db,
             ApprovalDocument.SALES_ORDER,
+            above_list_price=ApprovalService.above_list_price(
+                ApprovalDocument.SALES_ORDER, order.id, db
+            ),
         )
 
         if not chain:
@@ -1650,16 +1653,15 @@ class SalesOrderService:
                 status_code=409,
                 detail=(
                     f"{order.order_number} is waiting on the {role} to "
-                    "approve the discount. It cannot move on until that is "
-                    "cleared."
+                    "approve it. It cannot move on until that is cleared."
                 ),
             )
 
         raise HTTPException(
             status_code=409,
             detail=(
-                f"{order.order_number} has not been approved yet. The "
-                f"discount needs {' then the '.join(chain)} - use Send For "
+                f"{order.order_number} has not been approved yet. It "
+                f"needs the {' then the '.join(chain)} - use Send For "
                 "Approval first."
             ),
         )

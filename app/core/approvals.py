@@ -158,6 +158,7 @@ def chain_for_raiser(
     is_super_admin: bool = False,
     db=None,
     document_type: str | None = None,
+    above_list_price: bool = False,
 ) -> list[str]:
     """Who must approve an order *this person* has raised.
 
@@ -182,6 +183,12 @@ def chain_for_raiser(
 
     A super admin stands outside the sales line entirely and needs
     nobody; they are the people who set the bands.
+
+    **Sold above its list price** is decided by rank, not by discount -
+    a marked-up line takes no discount at all. It goes to everyone above
+    the raiser: an Area Manager's or Zonal Head's order to the AVP, the
+    CEO and the founder; an AVP's to the CEO and the founder; a CEO's to
+    the founder. This holds on dealer orders too.
     """
 
     from app.models.approval import ApprovalDocument
@@ -197,17 +204,25 @@ def chain_for_raiser(
 
     ladder = [role for _, role in bands(db)]
 
-    if price_type == PriceType.DP:
-        return [] if FOUNDER in held else [FOUNDER]
-
-    discount = max(0.0, float(discount_percent or 0))
-
     # The highest rung the raiser stands on. Everything at or below it is
     # theirs; the rungs above it are who they have to ask.
     standing = max(
         (index for index, role in enumerate(ladder) if role in held),
         default=-1,
     )
+
+    if above_list_price:
+        if FOUNDER in held:
+            return []
+
+        above = ladder[standing + 1:]
+
+        return above if FOUNDER in above else above + [FOUNDER]
+
+    if price_type == PriceType.DP:
+        return [] if FOUNDER in held else [FOUNDER]
+
+    discount = max(0.0, float(discount_percent or 0))
 
     ceiling = (
         discount_ceiling(ladder[standing], db) if standing >= 0 else 0.0
@@ -285,6 +300,7 @@ def describe_chain(
     document_type: str | None = None,
     chain: list[str] | None = None,
     raiser: str | None = None,
+    above_list_price: bool = False,
 ) -> str:
     """One line explaining why these approvals are needed.
 
@@ -314,6 +330,20 @@ def describe_chain(
 
     if chain is None:
         chain = approval_chain(price_type, discount, db, document_type)
+
+    if above_list_price:
+        if not chain:
+            return "A line is sold above its list price, and nobody is above you to approve it."
+
+        senior = [role for role in chain if role != FOUNDER]
+
+        if not senior:
+            return f"A line is sold above its list price, so this goes to the {FOUNDER}."
+
+        return (
+            "A line is sold above its list price, so it goes to the "
+            f"{', then the '.join(senior)}, and then the {FOUNDER} commits the order."
+        )
 
     if price_type == PriceType.DP:
         return (
