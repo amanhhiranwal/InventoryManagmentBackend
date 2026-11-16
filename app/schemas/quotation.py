@@ -26,6 +26,9 @@ class QuotationItem(BaseModel):
     #: and the line takes no discount. Accepted only when the price is in
     #: fact above the list price (sales_order_service.settle_line_price).
     marked_up: Optional[bool] = False
+    #: AI is taken on this Interactive Flat Panel. Charged on its own "AI"
+    #: line (sales_order_service.assert_ai_lines), never on this one.
+    ai: Optional[bool] = False
 
 
 class CreateQuotationRequest(BaseModel):

@@ -253,6 +253,7 @@ def _catalogue() -> dict[str, dict]:
                         "attributes.rate": 1,
                         "attributes.rate_per_unit": 1,
                         "attributes.warranty_rates": 1,
+                        "product_type_code": 1,
                     },
                 ).sort("_id", 1)
             )
@@ -267,6 +268,7 @@ def _catalogue() -> dict[str, dict]:
                         attributes.get("rate") or attributes.get("rate_per_unit")
                     ),
                     "warranty_rates": attributes.get("warranty_rates") or {},
+                    "type": str(row.get("product_type_code") or "").strip().upper(),
                 }
 
             _CATALOGUE_BY_SKU = {
@@ -310,6 +312,25 @@ def dtp_rate_for_sku(sku: str) -> float:
 #: SKU of a line that is a warranty term rather than a product:
 #: "WARRANTY:4 Years". The pickers write it; rate_for_sku prices it.
 WARRANTY_SKU_PREFIX = "WARRANTY:"
+
+#: SKU of the AI add-on line, sold beside the Interactive Flat Panels whose
+#: AI is set to Yes. rate_for_sku prices it from the Warranty Terms master.
+AI_SKU = "ADDON:AI"
+
+#: Inventory product types that can take AI: interactive flat panels only,
+#: not OPS modules, standees or anything else.
+AI_PRODUCT_TYPES = {"IFP", "DISPLAY"}
+
+
+def is_ai_line(sku) -> bool:
+    return str(sku or "").strip().upper() == AI_SKU
+
+
+def takes_ai(sku) -> bool:
+    """Whether this SKU is an Interactive Flat Panel on the catalogue."""
+
+    entry = _catalogue().get(str(sku or "").strip().upper())
+    return bool(entry) and entry.get("type") in AI_PRODUCT_TYPES
 
 
 def settle_line_price(item: dict, listed: float | None, sent: float, discount: float) -> float:
@@ -360,6 +381,87 @@ def assert_no_discount_with_markup(items, discount_input) -> None:
             detail=(
                 "A line is sold above its list price, so this document takes no overall "
                 "discount. Clear the discount, or bring that line down to its list price."
+            ),
+        )
+
+
+def _line_dict(raw) -> dict:
+    if isinstance(raw, dict):
+        return raw
+    if hasattr(raw, "model_dump"):
+        return raw.model_dump()
+    return dict(raw)
+
+
+def _line_quantity(row: dict) -> float:
+    return _as_float(
+        row.get("quantity_case") or row.get("qty") or row.get("quantity") or 1,
+        1.0,
+    )
+
+
+def assert_ai_lines(items) -> None:
+    """The AI line covers the panels whose AI is Yes, unit for unit.
+
+    Only an Interactive Flat Panel may take AI. With any panel on AI the
+    document carries one "AI" line (SKU ADDON:AI) whose quantity is those
+    panels added up; an AI line with no panel on AI is refused. The screens
+    add the line and fill its quantity in; this is the same rule on the
+    server, so a document cannot be saved without it.
+    """
+
+    panels = 0.0
+    sold = 0.0
+    has_line = False
+
+    for raw in items or []:
+        row = _line_dict(raw)
+        sku = str(row.get("sku") or "")
+
+        if is_ai_line(sku):
+            has_line = True
+            sold += _line_quantity(row)
+            continue
+
+        if not row.get("ai"):
+            continue
+
+        if not takes_ai(sku):
+            name = row.get("model") or row.get("product") or row.get("name") or sku or "A line"
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{name} is not an Interactive Flat Panel, so it cannot "
+                    "have AI. Set its AI to No."
+                ),
+            )
+
+        panels += _line_quantity(row)
+
+    if has_line and panels <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "AI is added, but no Interactive Flat Panel has its AI set to "
+                "Yes. Set a panel's AI to Yes, or remove the AI line."
+            ),
+        )
+
+    if panels > 0 and not has_line:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{panels:g} panel(s) have AI set to Yes, but there is no AI "
+                "line. Add AI, or set those panels' AI to No."
+            ),
+        )
+
+    if abs(panels - sold) > 1e-9:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"AI is for {sold:g} unit(s), but {panels:g} panel(s) have AI "
+                "set to Yes. The two must match."
             ),
         )
 
@@ -437,6 +539,12 @@ def rate_for_sku(sku: str, price_type: str | None = None) -> float | None:
     somebody typed by hand rather than picked, and those keep what they
     were sent. Zero means the list genuinely holds no rate.
     """
+
+    # The AI add-on: one price per panel, from the Warranty Terms master.
+    if is_ai_line(sku):
+        from app.services.warranty_term_service import ai_rate
+
+        return ai_rate()
 
     # A warranty term added as its own line, from the pickers' Warranty
     # Terms tab: priced from the term's price on the master, never from the
@@ -643,6 +751,7 @@ def compute_order_totals(
     # was saved; it can bill part of it, so the rule is not applied there.
     if price_type is not None:
         assert_warranty_lines(rows)
+        assert_ai_lines(rows)
 
     subtotal = 0.0
     discount_amount = 0.0

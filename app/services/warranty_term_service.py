@@ -49,6 +49,46 @@ def _forget_term_prices() -> None:
     _TERM_PRICES = None
 
 
+#: The AI add-on's price per panel, before GST, as a super admin has set it
+#: on the Warranty Terms master. Read fresh every time: it is one small
+#: row, and the API runs several workers, so a cached copy in one would
+#: keep charging the old price after another saved a new one.
+AI_RATE_KEY = "ai_rate"
+
+
+def ai_rate() -> float:
+    """Rupees per panel for AI, before GST. 0 until one is set."""
+
+    from app.database.postgres import SessionLocal
+    from app.models.app_setting import AppSetting
+
+    db = SessionLocal()
+    try:
+        row = db.query(AppSetting).filter(AppSetting.key == AI_RATE_KEY).first()
+    finally:
+        db.close()
+
+    return float(row.value) if row is not None and (row.value or "").strip() else 0.0
+
+
+def save_ai_rate(db: Session, price: float) -> float:
+    """Set the AI price. New documents are priced from it straight away."""
+
+    from app.models.app_setting import AppSetting
+
+    value = round(float(price), 2)
+    row = db.query(AppSetting).filter(AppSetting.key == AI_RATE_KEY).first()
+
+    if row is None:
+        db.add(AppSetting(key=AI_RATE_KEY, value=str(value)))
+    else:
+        row.value = str(value)
+
+    db.commit()
+
+    return value
+
+
 def term_prices() -> dict[str, float]:
     """Active terms that carry a price, as {name: rupees per unit}."""
 
