@@ -268,6 +268,8 @@ DEFAULT_MENUS_DATA = [
       # What a purchase requisition is filed and charged under, and how
       # high it goes for approval by amount.
       {"title": "Departments", "icon": "LuBuilding", "path": "/departments", "permission_key": "procurement_masters.manage", "order_index": 15},
+      # What vendors supply, picked from a list on the vendor form.
+      {"title": "Product Categories", "icon": "LuTags", "path": "/product-categories", "permission_key": "procurement_masters.manage", "order_index": 16},
       {"title": "PR Approval Matrix", "icon": "LuListChecks", "path": "/pr-approval", "permission_key": "procurement_masters.manage", "order_index": 17},
     ]
   },

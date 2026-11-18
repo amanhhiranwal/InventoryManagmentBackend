@@ -116,7 +116,42 @@ def check_gstin(value: str | None, *, field: str = "GSTIN") -> str:
             "digits, a PAN, an entity digit, Z, then a checksum character."
         )
 
+    if text[:2] not in GST_STATE_CODES:
+        _fail(f"{field} “{text}” starts with {text[:2]}, which is not a GST state code.")
+
+    expected = gstin_check_digit(text)
+    if text[14] != expected:
+        _fail(
+            f"{field} “{text}” fails the GSTIN check digit (the last character "
+            f"should be {expected}). Check it for a typing mistake."
+        )
+
     return text
+
+
+#: The state and union territory codes a GSTIN can start with: 01-38, plus
+#: 97 (other territory) and 99 (centre jurisdiction).
+GST_STATE_CODES = {f"{code:02d}" for code in range(1, 39)} | {"97", "99"}
+
+_GSTIN_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+
+def gstin_check_digit(gstin: str) -> str:
+    """The 15th character the GST network computes from the first 14.
+
+    Each character's value (0-9, A-Z as 10-35) is weighted 1, 2, 1, 2 ...;
+    each product is folded as (product // 36 + product % 36) and summed;
+    the check character is (36 - sum % 36) % 36. A real GSTIN always
+    satisfies it, so a mistyped one almost never does.
+    """
+
+    total = 0
+
+    for index, char in enumerate(gstin[:14]):
+        product = _GSTIN_ALPHABET.index(char) * (2 if index % 2 else 1)
+        total += product // 36 + product % 36
+
+    return _GSTIN_ALPHABET[(36 - total % 36) % 36]
 
 
 def check_pan(value: str | None, *, field: str = "PAN") -> str:

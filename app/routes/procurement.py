@@ -34,6 +34,7 @@ from app.services.procurement import (
     desk,
     masters,
     payment_calendar,
+    product_categories,
     purchase_orders,
     quotations,
     requisitions,
@@ -84,6 +85,43 @@ def delete_department(department_id: int, db: Session = Depends(get_db),
                       current_user=Depends(require_permission("procurement_masters.manage"))):
     masters.delete_department(department_id, db)
     return _ok(None, "Department removed.")
+
+
+# A GSTIN, checked offline: format, state code, PAN and check digit. Any
+# signed-in user may ask; it reads nothing from the database.
+@router.get("/gst/verify")
+def verify_gstin(gstin: str, current_user=Depends(get_current_user)):
+    from app.services.gst_verify import verify
+
+    return _ok(verify(gstin))
+
+
+# What a vendor supplies: the Product Categories master. Read by anyone
+# who works with vendors (the vendor form's picker); kept by whoever
+# maintains the procurement masters.
+@router.get("/product-categories")
+def list_product_categories(active: bool = True, search: str | None = None, db: Session = Depends(get_db),
+                            current_user=Depends(require_permission("vendor.read"))):
+    return _ok(product_categories.list_categories(db, include_inactive=not active, search=search))
+
+
+@router.post("/product-categories")
+def create_product_category(payload: Body, db: Session = Depends(get_db),
+                            current_user=Depends(require_permission("procurement_masters.manage"))):
+    return _ok(product_categories.save_category(payload, db), "Product category added.")
+
+
+@router.put("/product-categories/{category_id}")
+def update_product_category(category_id: int, payload: Body, db: Session = Depends(get_db),
+                            current_user=Depends(require_permission("procurement_masters.manage"))):
+    return _ok(product_categories.save_category(payload, db, category_id), "Product category updated.")
+
+
+@router.delete("/product-categories/{category_id}")
+def delete_product_category(category_id: int, db: Session = Depends(get_db),
+                            current_user=Depends(require_permission("procurement_masters.manage"))):
+    product_categories.delete_category(category_id, db)
+    return _ok(None, "Product category removed.")
 
 
 @router.get("/procurement/approval-matrix")
