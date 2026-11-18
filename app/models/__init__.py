@@ -22,6 +22,7 @@ from app.models.procurement import (
     PurchaseRequisition,
     PurchaseRequisitionApproval,
     PurchaseRequisitionItem,
+    ProductCategory,
     QuotationCollection,
     Vendor,
     VendorQuotation,

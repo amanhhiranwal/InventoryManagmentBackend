@@ -238,6 +238,17 @@ def departments_and_roles(db) -> str:
     return "; ".join(said) or "already there"
 
 
+def product_categories(db) -> str:
+    """The Product Categories master, filled from the stock item list.
+    Only names it does not have yet are added, so edits made under
+    Masters are kept."""
+
+    from app.services.procurement.product_categories import seed_from_file
+
+    added = seed_from_file(db)
+    return f"{added} added" if added else "already there"
+
+
 STEPS = [
     ("Menus", menus),
     ("Requisitions", requisition_access),
@@ -246,6 +257,7 @@ STEPS = [
     ("Founder role", founder_role),
     ("Discount bands", discount_bands),
     ("Orphan approvals", orphan_approvals),
+    ("Product categories", product_categories),
 ]
 
 

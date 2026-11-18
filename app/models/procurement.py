@@ -59,6 +59,24 @@ class Department(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=True)
 
 
+class ProductCategory(Base):
+    """What a vendor supplies, picked from a list rather than typed.
+
+    Seeded from the stock item list (services/procurement/product_categories.json) and
+    kept under Masters > Product Categories. A vendor stores the names it
+    was given, so switching one off hides it from the picker without
+    changing vendors that already carry it.
+    """
+
+    __tablename__ = "product_category"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(200), nullable=False, unique=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=True)
+
+
 class CostCenter(Base):
     """What a purchase is charged to, optionally under a department."""
 
