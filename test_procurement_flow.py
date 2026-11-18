@@ -74,12 +74,24 @@ def stock_counts():
 IN_A_WEEK = (date.today() + timedelta(days=7)).isoformat()
 
 
+#: The department the test's requisitions are raised under. Once any
+#: department exists the form makes the requester choose one (its people
+#: have none on their profile), so the test chooses as a person would - a
+#: department with no head, so the approval steps it checks are unchanged.
+#: Set from /purchase-requisitions/meta once signed in; None while there
+#: are no departments, when the form does not ask.
+DEPARTMENT_ID = None
+
+
 def pr_payload(lines, **extra):
-    return {
+    payload = {
         "purchase_type": "OFFICE", "priority": "NORMAL", "required_by": IN_A_WEEK,
         "delivery_location": "Noida office, B-66 Sector 65", "purpose": f"Procurement flow test {TAG}",
-        "items": lines, **extra,
+        "items": lines,
     }
+    if DEPARTMENT_ID is not None:
+        payload["department_id"] = DEPARTMENT_ID
+    return {**payload, **extra}
 
 
 # What an employee asks for: no price - pricing is procurement's.
@@ -91,6 +103,9 @@ try:
     before_stock = stock_counts()
 
     admin = login(ADMIN_EMAIL, ADMIN_PASSWORD)
+    _departments = data(api("get", "/purchase-requisitions/meta", admin)).get("departments") or []
+    DEPARTMENT_ID = next((d["id"] for d in _departments if not d.get("head_user_id")),
+                         _departments[0]["id"] if _departments else None)
     # The KPIs before this run, so the checks below measure what it adds.
     kpi_before = data(api("get", "/procurement/analytics?days=30", admin))
     anil = login(email_for("am_north_1"), TEAM_PASSWORD)
@@ -696,10 +711,19 @@ try:
 
     # ------------------------------------------------------------------
     banner("14. The sales order picker shows only orders the person may see")
+    his = data(api("get", "/purchase-requisitions/sales-orders", anil))
+    # The picker lists each person's 20 newest, so compare by searching each
+    # of his on the super admin's side rather than comparing the two pages:
+    # once there are more than 20 orders, the admin's newest 20 need not
+    # include the older ones in his.
+    unseen = [
+        o["order_number"] for o in his
+        if o["id"] not in {x["id"] for x in data(api(
+            "get", "/purchase-requisitions/sales-orders", admin, params={"search": o["order_number"]}))}
+    ]
+    check("he sees no more than the super admin", not unseen, str(unseen))
     everyone = {o["id"] for o in data(api("get", "/purchase-requisitions/sales-orders", admin))}
-    his = {o["id"] for o in data(api("get", "/purchase-requisitions/sales-orders", anil))}
-    check("he sees no more than the super admin", his <= everyone)
-    hidden = sorted(everyone - his)
+    hidden = sorted(everyone - {o["id"] for o in his})
     if hidden:
         r = api("post", "/purchase-requisitions", anil, json=pr_payload([LINE_A], purchase_type="SALES_ORDER",
                                                                       sales_order_id=hidden[0]))
