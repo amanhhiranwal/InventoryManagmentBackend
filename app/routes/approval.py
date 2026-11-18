@@ -460,7 +460,7 @@ def _confirm_page(
     if getattr(approval, "document_value", None):
         facts.append(f"<strong>Value:</strong> INR {float(approval.document_value):,.2f}")
     if getattr(approval, "discount_percent", None):
-        facts.append(f"<strong>Discount:</strong> {round(float(approval.discount_percent or 0), 2):g}%")
+        facts.append(f"<strong>Discount:</strong> {float(approval.discount_percent):g}%")
 
     facts_html = "<br>".join(facts)
     if facts_html:
