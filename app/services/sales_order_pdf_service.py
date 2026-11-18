@@ -321,7 +321,7 @@ class SalesOrderPDFService:
                 _p(item.get("model") or item.get("description") or "-", td),
                 _p(item.get("hsn") or "-", td),
                 _p(f"{qty:g}", td),
-                _p(f"{discount:g} %", td),
+                _p(f"{round(discount, 2):g} %", td),
                 _p(f"{_number(item.get('tax_rate')):g} %", td),
                 _p(item.get("warranty_term") or "-", td),
                 _p(_rs(rate), td_r),
