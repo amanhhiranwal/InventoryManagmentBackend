@@ -46,6 +46,8 @@ def one(response):
 #: permission -> which module it belongs to, for the Roles & Access screen.
 PERMISSIONS = {
     "coordination_desk.read": ("Fulfilment", "Work the business coordinator desk: accept advances, process orders"),
+    # Read only: the orders still waiting for approval, and who has them.
+    "order.pending_approval.read": ("order", "See sales orders waiting for approval and which approver each is with (read only)"),
     "payment_desk.read": ("Fulfilment", "Work the accounts desk: verify payments, close orders"),
     "production_desk.read": ("Fulfilment", "Work the production desk: confirm stock, take orders through procurement"),
     "logistics_desk.read": ("Fulfilment", "Work the logistics desk: dispatch orders and confirm delivery"),
@@ -75,7 +77,7 @@ ROLES = {
     "Business Coordinator": (
         "Checks the advance against the payment terms, accepts it or holds "
         "the order, and processes approved orders on to accounts.",
-        ["coordination_desk.read"],
+        ["coordination_desk.read", "order.pending_approval.read"],
     ),
     # Deliberately without dashboard.read: the sales dashboard is not their
     # screen, and the app sends a role that lacks it to the first page it

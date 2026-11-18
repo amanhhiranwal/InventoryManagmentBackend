@@ -238,6 +238,54 @@ def departments_and_roles(db) -> str:
     return "; ".join(said) or "already there"
 
 
+def coordinator_pending_approvals(db) -> str:
+    """The Roles & Access tick that lets the business coordinator read the
+    sales orders waiting for approval (order.pending_approval.read).
+
+    The permission row is made if missing. Once, on the first deploy with
+    this release, it is given to the Business Coordinator role; a marker
+    setting stops a later run from handing it back to a role a super admin
+    has since unticked.
+    """
+
+    from app.models.permission import Permission
+    from app.models.role import Role
+    from app.models.role_permission import RolePermission
+    from app.services.sales_order_service import SEE_PENDING_APPROVALS
+
+    marker = "coordinator_pending_approvals_granted"
+
+    permission = db.query(Permission).filter(Permission.permission_name == SEE_PENDING_APPROVALS).first()
+    made = permission is None
+    if made:
+        permission = Permission(
+            permission_name=SEE_PENDING_APPROVALS,
+            module="order",
+            description="See sales orders waiting for approval and which approver each is with (read only)",
+        )
+        db.add(permission)
+        db.flush()
+
+    if db.query(AppSetting).filter(AppSetting.key == marker).first():
+        db.commit()
+        return "permission added" if made else "already set up"
+
+    role = db.query(Role).filter(Role.role_name == "Business Coordinator").first()
+    granted = False
+    if role is not None and not db.query(RolePermission).filter(
+        RolePermission.role_id == role.id, RolePermission.permission_id == permission.id
+    ).first():
+        db.add(RolePermission(role_id=role.id, permission_id=permission.id))
+        granted = True
+
+    db.add(AppSetting(key=marker, value="1"))
+    db.commit()
+
+    if role is None:
+        return "permission ready; no Business Coordinator role to give it to"
+    return "given to Business Coordinator" if granted else "Business Coordinator already has it"
+
+
 def product_categories(db) -> str:
     """The Product Categories master, filled from the stock item list.
     Only names it does not have yet are added, so edits made under
@@ -258,6 +306,7 @@ STEPS = [
     ("Discount bands", discount_bands),
     ("Orphan approvals", orphan_approvals),
     ("Product categories", product_categories),
+    ("Pending approvals", coordinator_pending_approvals),
 ]
 
 
