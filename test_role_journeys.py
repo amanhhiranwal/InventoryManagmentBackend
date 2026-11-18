@@ -102,7 +102,7 @@ SIDEBARS = {
             "Category Group", "Units", "Lead Source", "States",
             "Bank Details", "Roles & Access", "Company Profile",
             "Sales Order Approval", "Warranty Terms", "Reporting Chart",
-            "Departments", "PR Approval Matrix",
+            "Departments", "Product Categories", "PR Approval Matrix",
         ]),
         ("Workflows", []),
         ("Procurement", ["My Requisitions", "Procurement Desk", "Purchase Orders", "Vendors", "Payment Calendar"]),

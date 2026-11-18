@@ -222,7 +222,10 @@ try:
     listed = listed.get("items", listed) if isinstance(listed, dict) else listed
     statuses = {o["status"] for o in listed}
     check("the list holds this order, raised by somebody else", oid in {o["id"] for o in listed})
-    check("and no draft or order waiting on approval", not statuses & {"DRAFT", "PENDING_APPROVAL"}, str(statuses))
+    # Orders waiting on approval are listed when the role holds the
+    # order.pending_approval.read tick (on by default) and hidden without
+    # it - test_coordinator_pending_view.py covers both. Drafts never are.
+    check("and no draft or cancelled order", not statuses & {"DRAFT", "CANCELLED"}, str(statuses))
 
     draft = api("post", "/orders", owner, json={
         "customer_name": f"Draft {TAG}",

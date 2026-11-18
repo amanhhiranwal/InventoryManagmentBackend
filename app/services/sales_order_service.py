@@ -135,6 +135,61 @@ def coordinates_orders(current_user: dict, db: Session) -> bool:
     return holds_desk(user, BUSINESS_COORDINATOR)
 
 
+#: The Roles & Access tick that lets the business coordinator also read the
+#: orders still waiting for approval - read only, to see which approver
+#: each one is with. Given to the Business Coordinator role on release.
+SEE_PENDING_APPROVALS = "order.pending_approval.read"
+
+
+def hidden_from_coordinator(current_user: dict, db: Session) -> tuple:
+    """The statuses this coordinator does not see.
+
+    Drafts and cancelled orders always; orders waiting for approval unless
+    their role holds SEE_PENDING_APPROVALS.
+    """
+
+    from app.services.procurement.common import has_permission
+
+    if has_permission(current_user, SEE_PENDING_APPROVALS, db):
+        return tuple(
+            status
+            for status in NOT_FOR_COORDINATOR
+            if status != SalesOrderStatus.PENDING_APPROVAL
+        )
+
+    return NOT_FOR_COORDINATOR
+
+
+def waiting_on_by_order(order_ids: list[int], db: Session) -> dict[int, str]:
+    """Which approver each of these orders is waiting on, by order id.
+
+    Only orders with a pending approval appear. One query for the page.
+    """
+
+    if not order_ids:
+        return {}
+
+    pending = (
+        db.query(SalesApproval)
+        .filter(
+            SalesApproval.document_type == ApprovalDocument.SALES_ORDER,
+            SalesApproval.document_id.in_(order_ids),
+            SalesApproval.status == ApprovalStatus.PENDING,
+        )
+        .order_by(SalesApproval.id)
+        .all()
+    )
+
+    waiting = {}
+    for approval in pending:
+        steps = approval.steps or []
+        if 0 <= (approval.current_step or 0) < len(steps):
+            # The latest request wins, as in ApprovalService.latest_for.
+            waiting[approval.document_id] = steps[approval.current_step or 0]["role"]
+
+    return waiting
+
+
 def _staffs_the_desk(order: SalesOrder, current_user: dict, db: Session) -> bool:
     """Whether this user works the desk the order is sitting at."""
 
@@ -933,9 +988,10 @@ class SalesOrderService:
         """The orders this person may see, narrowed by a search."""
 
         if coordinates_orders(current_user, db):
-            # Every approved order in the business, whoever raised it.
+            # Every approved order in the business, whoever raised it -
+            # and those waiting for approval, if their role is ticked for it.
             query = SalesOrderRepository.visible_query(db, []).filter(
-                SalesOrder.status.notin_(NOT_FOR_COORDINATOR)
+                SalesOrder.status.notin_(hidden_from_coordinator(current_user, db))
             )
         else:
             query = SalesOrderRepository.visible_query(
@@ -1066,9 +1122,11 @@ class SalesOrderService:
         ):
             return
 
-        # The coordinator tracks every approved order to delivery.
-        if order.status not in NOT_FOR_COORDINATOR and coordinates_orders(
-            current_user, db
+        # The coordinator tracks every approved order to delivery, and
+        # reads the ones waiting for approval if their role is ticked for
+        # it. Opening only: editing still goes through assert_can_edit.
+        if coordinates_orders(current_user, db) and order.status not in (
+            hidden_from_coordinator(current_user, db)
         ):
             return
 

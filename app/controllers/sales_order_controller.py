@@ -1,9 +1,11 @@
 from sqlalchemy.orm import Session
 
 from app.core.timezone import iso
+from app.core.workflow_status import SalesOrderStatus
 from app.services.sales_order_service import (
     SalesOrderService,
     serialize_sales_order,
+    waiting_on_by_order,
 )
 from app.utils.user_names import get_user_names_helper
 
@@ -46,9 +48,19 @@ class SalesOrderController:
             current_user, db, search, page, size, status
         )
 
+        # Which approver each order waiting for approval is with, for the
+        # status column. One query for the page, and only when it has any.
+        waiting = waiting_on_by_order(
+            [o.id for o in orders if o.status == SalesOrderStatus.PENDING_APPROVAL],
+            db,
+        )
+
         return {
             "success": True,
-            "data": [serialize_sales_order(o) for o in orders],
+            "data": [
+                {**serialize_sales_order(o), "waiting_on": waiting.get(o.id)}
+                for o in orders
+            ],
             "total": total,
             "summary": SalesOrderService.summarise(current_user, db, search),
         }
