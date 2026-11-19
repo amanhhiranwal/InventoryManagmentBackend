@@ -73,8 +73,9 @@ try:
     )
     check(
         "and a count for each tab",
-        set(body.get("counts") or {}) == {"all", "out", "returned"}
-        and body["counts"]["all"] == body["counts"]["out"] + body["counts"]["returned"],
+        set(body.get("counts") or {}) == {"all", "out", "returned", "removed"}
+        and body["counts"]["all"]
+        == body["counts"]["out"] + body["counts"]["returned"] + body["counts"]["removed"],
         str(body.get("counts")),
     )
 
