@@ -487,8 +487,50 @@ def _return_serials(order, actor: str | None) -> list[dict]:
     return moved
 
 
-#: Tabs on the Stock Out page: everything, still out, or put back.
-STOCK_OUT_VIEWS = ("out", "returned")
+#: Why a unit left without an order: its serial was taken off the product
+#: on the Inventory page's Edit form.
+REMOVED = "removed"
+
+
+def record_removals(units: list[dict], actor: str | None) -> None:
+    """Write down each unit whose serial was taken off in an inventory edit.
+
+    The same outgoing record an order's unit gets - what, which serial, who
+    and when - with no order behind it, so Stock Out lists it under Removed.
+    ``units`` are the records as they were before the edit.
+    """
+
+    now = datetime.utcnow()
+    rows = []
+
+    for unit in units:
+        attributes = unit.get("attributes") or {}
+        before = _stock_of(unit)
+
+        rows.append({
+            "reason": REMOVED,
+            "order_id": None,
+            "item_id": str(unit["_id"]),
+            "company_id": unit.get("company_id"),
+            "serial_number": unit.get("serial_number"),
+            "product": unit.get("name"),
+            "model_number": attributes.get("model_number"),
+            "by_serial": True,
+            "direction": OUT,
+            "quantity": before,
+            "stock_before": before,
+            "stock_after": 0.0,
+            "actor": actor,
+            "created_at": now,
+        })
+
+    if rows:
+        movements_col.insert_many(rows)
+
+
+#: Tabs on the Stock Out page: everything, still out, put back, or removed
+#: in an inventory edit.
+STOCK_OUT_VIEWS = ("out", "returned", REMOVED)
 
 #: Set once this process has made sure the movement indexes exist.
 _MOVEMENT_INDEXES = False
@@ -552,9 +594,11 @@ def stock_out(
             },
         ]
 
+    # The figures are about orders: a serial removed in an inventory edit is
+    # listed, under its own tab, but is not a unit issued to anyone.
     tallied = list(
         movements_col.find(
-            base,
+            {**base, "reason": {"$ne": REMOVED}},
             {"order_id": 1, "item_id": 1, "order_number": 1, "quantity": 1, "created_at": 1},
         )
     )
@@ -617,16 +661,22 @@ def stock_out(
 
     everything = list(movements_col.find(listed).sort("created_at", -1))
 
+    def removed(row) -> bool:
+        return row.get("reason") == REMOVED
+
     counts = {
         "all": len(everything),
-        "out": sum(1 for row in everything if back(row) is None),
+        "out": sum(1 for row in everything if back(row) is None and not removed(row)),
         "returned": sum(1 for row in everything if back(row) is not None),
+        "removed": sum(1 for row in everything if removed(row)),
     }
 
     if view == "out":
-        everything = [row for row in everything if back(row) is None]
+        everything = [row for row in everything if back(row) is None and not removed(row)]
     elif view == "returned":
         everything = [row for row in everything if back(row) is not None]
+    elif view == REMOVED:
+        everything = [row for row in everything if removed(row)]
 
     page = max(1, int(page or 1))
     size = max(1, min(int(size or 20), 100))
@@ -653,6 +703,7 @@ def stock_out(
                 "created_at": iso(row.get("created_at")),
                 "returned": back(row) is not None,
                 "returned_at": iso(back(row)),
+                "removed": removed(row),
             }
             for row in window
         ],
@@ -671,7 +722,7 @@ def issued_recently(days: int = 30) -> int:
 
     try:
         out = movements_col.count_documents(
-            {"direction": OUT, "by_serial": True, "created_at": {"$gte": since}}
+            {"direction": OUT, "by_serial": True, "reason": {"$ne": REMOVED}, "created_at": {"$gte": since}}
         )
         back = movements_col.count_documents(
             {"direction": IN, "by_serial": True, "created_at": {"$gte": since}}

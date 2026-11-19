@@ -806,7 +806,15 @@ class InventoryService:
                 "$regex": f"^{re.escape(existing_model)}$", "$options": "i"
             }
 
-        siblings = list(cls.items_col.find(sibling_query, {"image_base64": 0}))
+        # A unit issued to an order has left the shelf and is not on the
+        # form's list, so it is not one of the serials being edited: left in,
+        # it would read as removed and be deleted or renamed, losing the
+        # Stock Out trail and the unit an order puts back.
+        siblings = [
+            unit
+            for unit in cls.items_col.find(sibling_query, {"image_base64": 0})
+            if not unit.get("issued")
+        ]
 
         plan = cls._plan_units(
             existing, siblings, serial_number, serial_numbers,
@@ -887,6 +895,16 @@ class InventoryService:
                 {"$set": {"attributes.instock": quantity, "attributes.stock": quantity}},
             )
 
+        # Each serial taken off in the edit is written down, as an order's
+        # units are, so Stock Out shows what left the shelf and who removed it.
+        if plan["removed"]:
+            from app.services.stock_movement_service import record_removals
+
+            record_removals(
+                plan["removed"],
+                (current_user or {}).get("name") or (current_user or {}).get("email"),
+            )
+
         return cls._decorate(
             {**doc, "_id": obj_id}, CompanyScopeService.company_names(db) if db else {}
         )
@@ -932,6 +950,7 @@ class InventoryService:
         renames: list = []
         deletes: list = []
         adds: list[str] = []
+        removed: list = []
         primary_serial = str(primary.get("serial_number") or "").strip().upper()
         primary_kept = True
 
@@ -953,9 +972,8 @@ class InventoryService:
                     if serial and serial not in wanted:
                         wanted.append(serial)
 
-            if not wanted:
-                raise HTTPException(status_code=400, detail="Keep at least one serial number on the product.")
-
+            # An empty list is allowed: every unit is gone and the product
+            # stays, as one record, at nothing in stock (see below).
             for serial in wanted:
                 if clash(serial):
                     raise HTTPException(
@@ -972,6 +990,11 @@ class InventoryService:
                 and str(u.get("serial_number") or "").strip().upper() not in wanted
             ]
 
+            # A product left at nothing keeps its record with no serial; the
+            # first serial added back goes on that record.
+            if not primary_serial and to_add:
+                primary_serial = to_add.pop(0)
+
             # A removed serial is reused for an added one before anything
             # is deleted or created.
             while dropped and to_add:
@@ -981,9 +1004,17 @@ class InventoryService:
                 else:
                     renames.append((unit["_id"], serial))
 
+            # What is left in dropped is taken off the shelf, not renamed.
+            removed = list(dropped)
+
             for unit in dropped:
                 if unit["_id"] == primary_id:
-                    primary_kept = False
+                    if wanted:
+                        primary_kept = False
+                    else:
+                        # Every serial removed: the product stays as one
+                        # record, with no serial and nothing in stock.
+                        primary_serial = ""
                 else:
                     deletes.append(unit["_id"])
 
@@ -1019,7 +1050,7 @@ class InventoryService:
 
             # Every unit then holds exactly one; a record left without a
             # serial holds none.
-            primary_stock = 1.0
+            primary_stock = 1.0 if primary_serial else 0.0
             stock = [
                 (unit["_id"], 1.0 if str(unit.get("serial_number") or "").strip() else 0.0)
                 for unit in siblings
@@ -1056,6 +1087,8 @@ class InventoryService:
             "adds": adds,
             "stock": stock,
             "first_add_stock": first_add_stock,
+            # The units whose serial was taken off, as they were before.
+            "removed": removed,
         }
 
     @classmethod
