@@ -1250,7 +1250,7 @@ class ApprovalService:
             if approval.discount_amount:
                 facts.append((
                     "Discount",
-                    f"{approval.discount_percent:g}% ({inr(approval.discount_amount)})",
+                    f"{round(float(approval.discount_percent or 0), 2):g}% ({inr(approval.discount_amount)})",
                 ))
             if approval.orc_amount:
                 facts.append((
