@@ -119,6 +119,12 @@ class Vendor(Base):
     account_number = Column(String(40), nullable=True)
     ifsc = Column(String(15), nullable=True)
     branch = Column(String(150), nullable=True)
+    #: The branch's address, filled from the IFSC lookup or typed.
+    bank_address = Column(String(500), nullable=True)
+    #: Current, CC (cash credit) or OD (overdraft).
+    account_type = Column(String(10), nullable=True)
+    #: Nine digits, from the IFSC lookup or the cheque.
+    micr = Column(String(9), nullable=True)
 
     product_categories = Column(JSON, nullable=True)
     brands = Column(JSON, nullable=True)

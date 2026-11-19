@@ -96,6 +96,15 @@ def verify_gstin(gstin: str, current_user=Depends(get_current_user)):
     return _ok(verify(gstin))
 
 
+# The bank branch behind an IFSC, for the vendor form's bank details.
+# Asks Razorpay's public IFSC service; see app/services/ifsc_lookup.py.
+@router.get("/ifsc/{code}")
+def lookup_ifsc(code: str, current_user=Depends(require_permission("vendor.read"))):
+    from app.services.ifsc_lookup import lookup
+
+    return _ok(lookup(code))
+
+
 # What a vendor supplies: the Product Categories master. Read by anyone
 # who works with vendors (the vendor form's picker); kept by whoever
 # maintains the procurement masters.

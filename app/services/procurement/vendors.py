@@ -27,6 +27,9 @@ from app.services.procurement.common import (
 )
 
 IFSC = re.compile(r"^[A-Z]{4}0[A-Z0-9]{6}$")
+MICR = re.compile(r"^\d{9}$")
+#: What a vendor's bank account can be: current, cash credit or overdraft.
+ACCOUNT_TYPES = ("Current", "CC", "OD")
 
 
 def get(vendor_id: int, db: Session) -> Vendor:
@@ -68,6 +71,14 @@ def _apply(vendor: Vendor, payload: dict) -> None:
     if ifsc and not IFSC.match(ifsc):
         raise HTTPException(status_code=400, detail=f"{ifsc} is not an IFSC - four letters, 0, then six characters.")
 
+    micr = (text(payload.get("micr"), 20) or "").replace(" ", "") or None
+    if micr and not MICR.match(micr):
+        raise HTTPException(status_code=400, detail=f"{micr} is not a MICR code - it is nine digits.")
+
+    account_type = text(payload.get("account_type"), 10)
+    if account_type and account_type not in ACCOUNT_TYPES:
+        raise HTTPException(status_code=400, detail=f"Account type is one of: {', '.join(ACCOUNT_TYPES)}.")
+
     def whole(value, field):
         if value in (None, ""):
             return None
@@ -96,6 +107,9 @@ def _apply(vendor: Vendor, payload: dict) -> None:
     vendor.account_number = text(payload.get("account_number"), 40)
     vendor.ifsc = ifsc
     vendor.branch = text(payload.get("branch"), 150)
+    vendor.bank_address = text(payload.get("bank_address"), 500)
+    vendor.account_type = account_type
+    vendor.micr = micr
     vendor.product_categories = _list_of(payload.get("product_categories"))
     vendor.brands = _list_of(payload.get("brands"))
     vendor.payment_terms = text(payload.get("payment_terms"), 300)
@@ -135,7 +149,7 @@ def create(payload: dict, current_user: dict, db: Session) -> Vendor:
 
 def update(vendor_id: int, payload: dict, current_user: dict, db: Session) -> Vendor:
     vendor = get(vendor_id, db)
-    before = {"name": vendor.name, "gstin": vendor.gstin, "account_number": vendor.account_number}
+    before = {"name": vendor.name, "gstin": vendor.gstin, "account_number": vendor.account_number, "ifsc": vendor.ifsc}
 
     _apply(vendor, payload)
 
@@ -144,9 +158,10 @@ def update(vendor_id: int, payload: dict, current_user: dict, db: Session) -> Ve
         if duplicate:
             raise HTTPException(status_code=409, detail=f"{duplicate.name} ({duplicate.vendor_code}) already has that GSTIN.")
 
-    # Changed bank details or GSTIN have to be checked again.
-    after = {"name": vendor.name, "gstin": vendor.gstin, "account_number": vendor.account_number}
-    if vendor.documents_verified and (before["gstin"] != after["gstin"] or before["account_number"] != after["account_number"]):
+    # A changed GSTIN, account number or IFSC has to be checked again: the
+    # account number and IFSC together are where the money goes.
+    after = {"name": vendor.name, "gstin": vendor.gstin, "account_number": vendor.account_number, "ifsc": vendor.ifsc}
+    if vendor.documents_verified and any(before[key] != after[key] for key in ("gstin", "account_number", "ifsc")):
         vendor.documents_verified = False
         vendor.verified_by = None
         vendor.verified_at = None
@@ -278,6 +293,9 @@ def serialize(vendor: Vendor, db: Session, *, full: bool = False) -> dict:
         "account_number": vendor.account_number,
         "ifsc": vendor.ifsc,
         "branch": vendor.branch,
+        "bank_address": vendor.bank_address,
+        "account_type": vendor.account_type,
+        "micr": vendor.micr,
         "product_categories": vendor.product_categories or [],
         "brands": vendor.brands or [],
         "payment_terms": vendor.payment_terms,
