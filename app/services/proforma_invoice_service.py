@@ -118,13 +118,53 @@ def _pick(value, fallback):
     return fallback if value is None else value
 
 
-def _totals(invoice: ProformaInvoice, **overrides) -> dict:
+def _agreed_prices(order: SalesOrder | None) -> dict[str, float]:
+    """The unit price each SKU was settled at on the sales order.
+
+    Read from the stored order, so it is the server's figure, not the
+    browser's. A SKU the order holds at two different prices is left out:
+    which one a line means cannot be told, so it is priced from the list.
+    """
+
+    prices: dict[str, float] = {}
+    unclear: set[str] = set()
+
+    for row in (order.items or []) if order is not None else []:
+        if not isinstance(row, dict):
+            continue
+
+        sku = str(row.get("sku") or "").strip().upper()
+        if not sku:
+            continue
+
+        try:
+            price = float(row.get("rate") or row.get("price") or 0)
+        except (TypeError, ValueError):
+            continue
+
+        if sku in prices and abs(prices[sku] - price) > 0.005:
+            unclear.add(sku)
+        prices[sku] = price
+
+    for sku in unclear:
+        prices.pop(sku, None)
+
+    return prices
+
+
+def _totals(invoice: ProformaInvoice, order: SalesOrder | None = None, **overrides) -> dict:
     """Every money figure on the invoice, derived from its lines and charges.
 
     Uses the sales order's own arithmetic - including any discount and ORC
     carried over from the order - so an invoice raised for a whole order
     totals exactly what the order does.
+
+    Each line is billed at the price its order agreed, not re-priced from
+    today's price list: an AI line sold at 700 printed at 0.00 once the
+    AI rate on the master no longer said 700.
     """
+
+    order = order if order is not None else invoice.sales_order
 
     totals = compute_order_totals(
         overrides.get("items", invoice.items),
@@ -142,6 +182,7 @@ def _totals(invoice: ProformaInvoice, **overrides) -> dict:
             18.0,
         ),
         advance_received=overrides.get("amount_paid", invoice.amount_paid) or 0.0,
+        agreed_prices=_agreed_prices(order),
     )
 
     totals["amount_paid"] = totals.pop("advance_received")
@@ -450,7 +491,7 @@ class ProformaInvoiceService:
             creator_name=f"{first_name} {last_name}".strip() or "User",
         )
 
-        for key, value in _totals(invoice).items():
+        for key, value in _totals(invoice, order).items():
             setattr(invoice, key, value)
 
         db.add(invoice)

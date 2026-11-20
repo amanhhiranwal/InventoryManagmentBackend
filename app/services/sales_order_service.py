@@ -761,8 +761,14 @@ def compute_order_totals(
     shifting_charges: float = 0.0,
     gst_percent: float = 18.0,
     advance_received: float = 0.0,
+    agreed_prices: dict[str, float] | None = None,
 ) -> dict:
     """Derive every money figure on the order from its line items.
+
+    ``agreed_prices`` (SKU to unit price) is for the proforma invoice: it
+    bills the prices its sales order was settled at, read from the stored
+    order on the server, rather than today's price list. A line whose SKU
+    is not in it is priced from the list as usual.
 
     Mirrors compute_totals in quotation_service so both screens agree, and
     is always recomputed on write so the stored figures cannot drift from
@@ -819,15 +825,27 @@ def compute_order_totals(
             or 1,
             1.0,
         )
-        listed = rate_for_sku(row.get("sku"), price_type)
-        # A selling price above the list price is kept (marked up, no
-        # discount); otherwise the price list decides, as before.
-        price = settle_line_price(
-            row,
-            listed,
-            _as_float(row.get("rate") or row.get("price") or 0),
-            _as_float(row.get("discount")),
-        )
+        sku_key = str(row.get("sku") or "").strip().upper()
+
+        if agreed_prices is not None and sku_key in agreed_prices:
+            # The price the order agreed - a selling price typed above the
+            # list, or a master rate changed since - is what is billed.
+            price = agreed_prices[sku_key]
+
+            # A line sold above its list price still takes no discount:
+            # settle_line_price refuses it, with its usual message.
+            if row.get("marked_up") and _as_float(row.get("discount")) > 0:
+                settle_line_price(row, None, price, _as_float(row.get("discount")))
+        else:
+            listed = rate_for_sku(row.get("sku"), price_type)
+            # A selling price above the list price is kept (marked up, no
+            # discount); otherwise the price list decides, as before.
+            price = settle_line_price(
+                row,
+                listed,
+                _as_float(row.get("rate") or row.get("price") or 0),
+                _as_float(row.get("discount")),
+            )
 
         # Store the line at the price it was costed at, so the document and
         # the totals cannot disagree later.
