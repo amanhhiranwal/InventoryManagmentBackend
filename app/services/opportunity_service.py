@@ -718,9 +718,19 @@ class OpportunityService:
             value = getattr(request, name, None)
             return value if value not in (None, "") else fallback
 
+        # Prefer clean organization name as the opportunity title
+        raw_title = getattr(request, "title", None) or lead.title
+        clean_title = raw_title
+        if clean_title and "(" in clean_title and clean_title.endswith(")"):
+            import re
+            m = re.search(r"\((.*?)\)$", clean_title)
+            if m and m.group(1).strip():
+                clean_title = m.group(1).strip()
+        final_title = clean_title or lead.organization_name or "New Opportunity"
+
         opportunity = Opportunity(
             lead_id=lead.id,
-            title=field("title", lead.title),
+            title=final_title,
             description=field("description", lead.description),
             status=OpportunityStatus.QUALIFICATION,
             deal_value=field("deal_value", 0.0) or 0.0,

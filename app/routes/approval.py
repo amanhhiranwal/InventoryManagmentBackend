@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi.responses import HTMLResponse
+from fastapi.responses import RedirectResponse
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -330,50 +330,33 @@ def decide_by_link_page(
     token: str,
     db: Session = Depends(get_db),
 ):
-    """Show the confirmation page to decide straight from the email.
+    """Direct unauthenticated email approvals are disabled.
 
-    GET only renders the confirmation page and never alters state, so
-    automated email security crawlers (SafeLinks, anti-phishing bots,
-    preview bots) cannot accidentally approve or reject deals.
+    Redirect the user to the document in the CRM where they must be logged in.
     """
-
     from app.services.approval_link_service import read_token
+    from app.services.approval_service import DOCUMENT_LINKS
+    from app.services.company_profile_service import app_url
+    from app.models.approval import SalesApproval
 
     claim = read_token(token)
-
-    if claim is None:
-        return _link_page(
-            "That link is no longer valid",
-            "It may have expired, or the decision may already have been "
-            "made. Open the CRM and the request will be in your queue if "
-            "it is still waiting.",
-            ok=False,
+    if claim is not None:
+        approval = (
+            db.query(SalesApproval)
+            .filter(SalesApproval.id == claim.get("approval_id"))
+            .first()
         )
+        if approval:
+            template = DOCUMENT_LINKS.get(approval.document_type)
+            if template:
+                link = template.format(id=approval.document_id)
+                return RedirectResponse(
+                    url=app_url(link, db),
+                    status_code=303,
+                )
 
-    try:
-        approval, _ = ApprovalService.validate_link(
-            claim["approval_id"],
-            claim["user_id"],
-            claim["step"],
-            db,
-        )
-    except HTTPException as refused:
-        return _link_page("That link cannot be used", str(refused.detail), ok=False)
-
-    decision = claim["decision"]
-    action_text = "Approve" if decision == "approve" else "Reject"
-    action_color = "#15803d" if decision == "approve" else "#b91c1c"
-    doc_label = DOCUMENT_LABELS.get(approval.document_type, "Document")
-    doc_num = approval.document_number or f"#{approval.document_id}"
-
-    return _confirm_page(
-        token=token,
-        doc_label=doc_label,
-        doc_num=doc_num,
-        action_text=action_text,
-        action_color=action_color,
-        approval=approval,
-    )
+    base = app_url(db)
+    return RedirectResponse(url=f"{base}/login", status_code=303)
 
 
 @router.post("/decide-by-link")
@@ -382,137 +365,13 @@ async def execute_decide_by_link(
     token: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """Execute the decision once the user confirms via the web form.
+    """Direct unauthenticated email decisions are refused.
 
-    Takes the token from query param or form data and applies the decision.
+    Users must log in to the CRM to review and sign off on approvals.
     """
-
-    from app.services.approval_link_service import read_token
-
-    if not token:
-        try:
-            form = await request.form()
-            token = form.get("token")
-        except Exception:
-            token = None
-
-    claim = read_token(token) if token else None
-
-    if claim is None:
-        return _link_page(
-            "That link is no longer valid",
-            "It may have expired, or the decision may already have been "
-            "made. Open the CRM and the request will be in your queue if "
-            "it is still waiting.",
-            ok=False,
-        )
-
-    try:
-        approval = ApprovalService.decide_by_link(
-            claim["approval_id"],
-            claim["user_id"],
-            claim["step"],
-            claim["decision"] == "approve",
-            db,
-        )
-    except HTTPException as refused:
-        return _link_page("That link cannot be used", str(refused.detail), ok=False)
-
-    decided = "approved" if claim["decision"] == "approve" else "rejected"
-    waiting = (
-        approval.steps[approval.current_step]["role"]
-        if approval.status == ApprovalStatus.PENDING and approval.steps
-        else None
-    )
-
-    after = (
-        f"It now goes to the {waiting}."
-        if waiting
-        else "Nothing further is needed."
-    )
-
-    return _link_page(
-        f"{approval.document_number or 'The request'} has been {decided}",
-        after,
-        ok=True,
-    )
-
-
-def _confirm_page(
-    token: str,
-    doc_label: str,
-    doc_num: str,
-    action_text: str,
-    action_color: str,
-    approval,
-) -> HTMLResponse:
-    """A confirmation page requiring a human click, preventing automated email scanner bots from triggering decisions."""
-    from html import escape
-
-    safe_token = escape(token)
-    safe_label = escape(doc_label)
-    safe_num = escape(doc_num)
-    safe_action = escape(action_text)
-
-    facts = []
-    if getattr(approval, "requested_by_name", None):
-        facts.append(f"<strong>Raised by:</strong> {escape(approval.requested_by_name)}")
-    if getattr(approval, "document_value", None):
-        facts.append(f"<strong>Value:</strong> INR {float(approval.document_value):,.2f}")
-    if getattr(approval, "discount_percent", None):
-        facts.append(f"<strong>Discount:</strong> {round(float(approval.discount_percent or 0), 2):g}%")
-
-    facts_html = "<br>".join(facts)
-    if facts_html:
-        facts_html = f'<div style="margin:16px 0;padding:12px 16px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;font-size:13px;line-height:1.6;color:#334155;">{facts_html}</div>'
-
-    return HTMLResponse(
-        f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Confirm {safe_action} - {safe_label} {safe_num}</title></head>
-<body style="margin:0;background:#f1f5f9;font-family:system-ui,-apple-system,'Segoe UI',sans-serif">
-  <div style="max-width:520px;margin:12vh auto;padding:28px 32px;background:#fff;border-radius:14px;box-shadow:0 1px 3px rgba(0,0,0,.08)">
-    <p style="margin:0 0 6px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:{action_color}">
-      Synergy CRM &bull; Approval Confirmation
-    </p>
-    <h1 style="margin:0 0 10px;font-size:19px;color:#0f172a">Confirm {safe_action}</h1>
-    <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#475569">
-      Please confirm that you want to <strong>{safe_action.lower()}</strong> {safe_label.lower()} <strong>{safe_num}</strong>.
-    </p>
-    {facts_html}
-    <form method="POST" action="/api/v1/approvals/decide-by-link?token={safe_token}" style="margin-top:20px;">
-      <input type="hidden" name="token" value="{safe_token}">
-      <button type="submit" style="background:{action_color};color:#ffffff;border:none;padding:11px 24px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.05)">
-        Confirm {safe_action}
-      </button>
-    </form>
-  </div>
-</body></html>""",
-        status_code=200,
-    )
-
-
-def _link_page(heading: str, detail: str, ok: bool) -> HTMLResponse:
-    """A plain page for a mail client to land on."""
-
-    colour = "#15803d" if ok else "#b91c1c"
-
-    return HTMLResponse(
-        f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{heading}</title></head>
-<body style="margin:0;background:#f1f5f9;font-family:system-ui,-apple-system,'Segoe UI',sans-serif">
-  <div style="max-width:520px;margin:12vh auto;padding:28px 32px;background:#fff;border-radius:14px;box-shadow:0 1px 3px rgba(0,0,0,.08)">
-    <p style="margin:0 0 6px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:{colour}">
-      Synergy CRM
-    </p>
-    <h1 style="margin:0 0 10px;font-size:19px;color:#0f172a">{heading}</h1>
-    <p style="margin:0;font-size:14px;line-height:1.6;color:#475569">{detail}</p>
-  </div>
-</body></html>""",
-        status_code=200,
+    raise HTTPException(
+        status_code=401,
+        detail="Please log in to the CRM to approve or reject.",
     )
 
 
