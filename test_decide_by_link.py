@@ -22,7 +22,7 @@ from types import SimpleNamespace
 from fastapi import FastAPI
 
 from app.database.dependencies import get_db
-from app.models.approval import ApprovalStatus, SalesApproval
+from app.models.approval import ApprovalDocument, ApprovalStatus, SalesApproval
 from app.models.user import User
 from app.routes.approval import router
 from app.services.approval_link_service import make_token
@@ -49,7 +49,7 @@ class AppClient:
             "query_string": query.encode(), "root_path": "", "headers": [(b"host", b"testserver")],
             "client": ("testclient", 50000), "server": ("testserver", 80),
         }
-        sent = {"status": None, "body": b""}
+        sent = {"status": None, "headers": {}, "body": b""}
 
         async def receive():
             return {"type": "http.request", "body": b"", "more_body": False}
@@ -57,11 +57,19 @@ class AppClient:
         async def send(message):
             if message["type"] == "http.response.start":
                 sent["status"] = message["status"]
+                sent["headers"] = {
+                    k.decode("latin1").lower(): v.decode("latin1")
+                    for k, v in message.get("headers", [])
+                }
             elif message["type"] == "http.response.body":
                 sent["body"] += message.get("body", b"")
 
         asyncio.run(self.app(scope, receive, send))
-        return SimpleNamespace(status_code=sent["status"], text=sent["body"].decode("utf-8", "replace"))
+        return SimpleNamespace(
+            status_code=sent["status"],
+            headers=sent["headers"],
+            text=sent["body"].decode("utf-8", "replace"),
+        )
 
     def get(self, url: str):
         return self._call("GET", url)
@@ -81,56 +89,35 @@ def run_checks() -> int:
     user_id = str(uuid4())
     token = make_token(101, user_id, 0, "approve")
 
-    # 1. Test GET with invalid token
+    # 1. Test GET with invalid token: redirects to /login
     res = client.get("/api/v1/approvals/decide-by-link?token=tampered")
-    assert res.status_code == 200, f"Expected 200, got {res.status_code}"
-    assert "no longer valid" in res.text, "Expected 'no longer valid' message"
-    print("  PASS  GET invalid token rejected safely")
+    assert res.status_code == 303, f"Expected 303, got {res.status_code}"
+    assert res.headers.get("location", "").endswith("/login"), f"Expected redirect to /login, got {res.headers.get('location')}"
+    print("  PASS  GET invalid token redirects to /login")
 
-    # 2. Test GET with valid token: renders confirmation page, does NOT decide
+    # 2. Test GET with valid token: redirects to the CRM document page
     mock_approval = MagicMock(spec=SalesApproval)
     mock_approval.id = 101
-    mock_approval.document_type = "SALES_ORDER"
-    mock_approval.document_number = "SO-001"
+    mock_approval.document_type = ApprovalDocument.SALES_ORDER
     mock_approval.document_id = 101
-    mock_approval.status = ApprovalStatus.PENDING
-    mock_approval.current_step = 0
-    mock_approval.steps = [{"role": "AVP"}]
-    mock_approval.requested_by_name = "Demo User"
-    mock_approval.document_value = 50000.0
-    mock_approval.discount_percent = 12.0
 
-    mock_user = MagicMock(spec=User)
-    mock_user.id = user_id
-    mock_user.is_active = True
-    mock_user.is_super_admin = False
+    def approval_query_filter(model):
+        m = MagicMock()
+        m.filter.return_value.first.return_value = mock_approval
+        return m
 
-    with patch(
-        "app.services.approval_service.ApprovalService.validate_link",
-        return_value=(mock_approval, mock_user),
-    ) as mock_val, patch(
-        "app.services.approval_service.ApprovalService.decide_by_link"
-    ) as mock_dec:
-        res = client.get(f"/api/v1/approvals/decide-by-link?token={token}")
-        assert res.status_code == 200
-        assert "Confirm Approve" in res.text
-        assert "SO-001" in res.text
-        assert '<form method="POST"' in res.text
-        mock_val.assert_called_once()
-        mock_dec.assert_not_called()
-        print("  PASS  GET renders confirmation page and does NOT decide")
+    mock_db.query.side_effect = approval_query_filter
 
-    # 3. Test POST with valid token: executes decision
-    mock_approval.steps[0]["role"] = "CEO"
-    with patch(
-        "app.services.approval_service.ApprovalService.decide_by_link",
-        return_value=mock_approval,
-    ) as mock_dec:
-        res = client.post(f"/api/v1/approvals/decide-by-link?token={token}")
-        assert res.status_code == 200
-        assert "has been approved" in res.text
-        mock_dec.assert_called_once()
-        print("  PASS  POST executes decision")
+    res = client.get(f"/api/v1/approvals/decide-by-link?token={token}")
+    assert res.status_code == 303, f"Expected 303, got {res.status_code}"
+    assert "/sales/orders/101" in res.headers.get("location", ""), f"Expected redirect to /sales/orders/101, got {res.headers.get('location')}"
+    print("  PASS  GET valid token redirects to CRM document page")
+
+    # 3. Test POST: unauthenticated link decisions are rejected with 401
+    res = client.post(f"/api/v1/approvals/decide-by-link?token={token}")
+    assert res.status_code == 401, f"Expected 401, got {res.status_code}"
+    assert "Please log in to the CRM" in res.text, f"Unexpected body: {res.text}"
+    print("  PASS  POST unauthenticated decision is rejected with 401")
 
     # 4. Test EmailService envelope deduplication
     with patch("smtplib.SMTP") as mock_smtp, patch(
@@ -215,8 +202,8 @@ def run_checks() -> int:
 
     to, cc = ApprovalService._chain_emails(appr_approved, mock_db, event="approved")
     assert to == ["requester@test.com"]
-    assert cc == ["avp@test.com"]
-    print("  PASS  Final approval routes To requester, CC to approvers who signed")
+    assert cc == []
+    print("  PASS  Final approval routes To requester only (no CC)")
 
     print("\nAll safety and deduplication checks passed successfully.")
     return 0

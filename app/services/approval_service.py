@@ -611,17 +611,10 @@ class ApprovalService:
         role - an Area Manager's discount is their AVP's to approve, not
         another region's.
 
-        Where nobody in that line holds it, it used to go to everyone
-        with the role. That is sideways, not upwards: with four AVPs, a
-        request that should have had one owner arrived in four queues,
-        and any of them could sign for a region that was not theirs.
-
-        Now it goes to the sole holder of the role where there is one -
-        the founder is a single office, so "which founder" is not a
-        question, and a super admin raising an order still needs their
-        signature rather than their own. Failing that it climbs the
-        raiser's own line, and only reaches the super admins when the
-        line runs out, so a gap in the chart still cannot freeze a deal.
+        Where nobody in that line holds it, look for holders of that role
+        in the organization (preferring the requester's company).
+        An approval step for an AVP or CEO is never handed to the Founder.
+        Failing that, it falls back to a super admin.
         """
 
         if approval.status != ApprovalStatus.PENDING or not approval.steps:
@@ -639,14 +632,10 @@ class ApprovalService:
         ]
 
         if in_line:
-            return in_line
+            return in_line[:1]
 
-        # Nobody in that line holds it. Before giving up on the role,
-        # see whether the business has exactly one person in it: the
-        # founder is a single office, and "which founder" is not a
-        # question. What must not happen is the old behaviour of handing
-        # it to every holder, which with four AVPs put one region's
-        # discount in four queues for any of them to sign.
+        # Nobody in that manager line holds it.
+        # Find active users with that role in the DB:
         holders = [
             user
             for user in db.query(User).filter(User.is_active.is_(True)).all()
@@ -654,31 +643,27 @@ class ApprovalService:
             and str(user.id) != str(approval.requested_by)
         ]
 
-        if len(holders) == 1:
-            return holders
-
-        # Several of them, or none. Escalate up the raiser's own line
-        # instead, to the most senior rather than the nearest, because
-        # the role that is missing sits above all of them - a gap in the
-        # chart should escalate, not quietly hand a founder's signature
-        # to a Zonal Head.
-        above = [
-            manager
-            for manager in managers
-            if manager.is_active and not manager.is_super_admin
-        ]
-
-        if above:
-            return above[-1:]
-
-        # No line to climb - a super admin raising an order has no
-        # manager anywhere. Then the holders of the role are the right
-        # audience after all: better several founders than the raiser
-        # signing their own order because nobody else was found.
         if holders:
-            return holders
+            # If the requester belongs to a company, prefer an approver in the same company
+            requester = (
+                db.query(User).filter(User.id == approval.requested_by).first()
+                if approval.requested_by
+                else None
+            )
+            if requester and hasattr(requester, "companies") and requester.companies:
+                req_comp_ids = {c.id for c in requester.companies}
+                same_company = [
+                    u for u in holders
+                    if any(c.id in req_comp_ids for c in (getattr(u, "companies", []) or []))
+                ]
+                if same_company:
+                    return same_company[:1]
 
-        return (
+            return holders[:1]
+
+        # If absolutely nobody in the entire company holds this role,
+        # escalate to super admin so the deal is not blocked forever:
+        super_admins = (
             db.query(User)
             .filter(
                 User.is_super_admin.is_(True),
@@ -687,6 +672,7 @@ class ApprovalService:
             )
             .all()
         )
+        return super_admins[:1]
 
     @staticmethod
     def can_decide(approval: SalesApproval, user: User, db: Session) -> bool:
@@ -702,6 +688,11 @@ class ApprovalService:
 
         if user.is_super_admin:
             return True
+
+        # The user MUST hold the role required by the current step
+        step_role = approval.steps[approval.current_step]["role"]
+        if step_role not in _role_names(user):
+            return False
 
         return any(
             str(approver.id) == str(user.id)
@@ -1091,13 +1082,14 @@ class ApprovalService:
         db: Session,
         event: str | None = None,
     ) -> tuple[list[str], list[str]]:
-        """Who to write to: the approver on point, then relevant parties.
+        """Who to write to: the single active approver, strictly without spam.
 
-        - While pending (event == "raised" or intermediate "approved"):
-          The actionable recipient (To) is the approver holding up the current step.
-          The requester is copied (CC) so they know their deal is progressing.
-        - When fully approved or rejected: The requester is the primary recipient
-          (To), and approvers who participated in the chain are copied (CC).
+        - While pending:
+          The ONLY recipient (To) is the approver holding up the current step.
+          No CCs are sent, so other managers (AVP, CEO, Founder) and
+          future approvers do not receive emails prematurely.
+        - When fully approved or rejected:
+          The requester is notified directly (To) with no CC.
         """
 
         requester = (
@@ -1109,47 +1101,22 @@ class ApprovalService:
         )
         requester_email = requester.email.strip() if (requester and requester.email) else None
 
-        # Fully approved or rejected: requester is in To
+        # Fully approved or rejected: requester is in To, no CC
         if approval.status in (ApprovalStatus.APPROVED, ApprovalStatus.REJECTED) or event == "rejected":
             to = [requester_email] if requester_email else []
-            cc: list[str] = []
-            for step in (approval.steps or []):
-                approver_id = step.get("approver_id")
-                if approver_id:
-                    u = db.query(User).filter(User.id == UUID(str(approver_id))).first()
-                    if u and u.email:
-                        cc.append(u.email.strip())
-
-            # Fallback if requester had no email
-            if not to and cc:
-                to, cc = cc[:1], cc[1:]
-
-            cc = [addr for addr in dict.fromkeys(cc) if addr not in to]
-            return list(dict.fromkeys(to)), cc
+            return list(dict.fromkeys(to)), []
 
         # Pending approval step:
-        # To: The approver on point for the active step
+        # To: ONLY the single active approver for this step
+        approvers = ApprovalService.approvers_for_step(approval, db)
         to = [
             approver.email.strip()
-            for approver in ApprovalService.approvers_for_step(approval, db)
+            for approver in approvers[:1]
             if approver.email
         ]
 
-        # The requester is NOT copied on the approver's action email because it carries
-        # the approver's one-click decision buttons and asks for approval.
-        cc: list[str] = []
-
-        # If it's an intermediate approved step, copy approvers who already signed
-        if event == "approved":
-            for step in (approval.steps or []):
-                approver_id = step.get("approver_id")
-                if approver_id:
-                    u = db.query(User).filter(User.id == UUID(str(approver_id))).first()
-                    if u and u.email:
-                        cc.append(u.email.strip())
-
-        cc = [addr for addr in dict.fromkeys(cc) if addr not in to]
-        return list(dict.fromkeys(to)), cc
+        # No CC on pending asks: we only write to the one person who needs to act.
+        return list(dict.fromkeys(to)), []
 
     @staticmethod
     def _announce(
@@ -1274,48 +1241,15 @@ class ApprovalService:
             )
             facts.append(("Approval chain", trail))
 
-            # One-click Approve and Reject, but only when the step is
-            # waiting on exactly one person. A token names who it was
-            # issued to, so a single mail addressed to several approvers
-            # has nobody to issue it to - and guessing would hand one
-            # person's authority to another. Those get the Open link,
-            # which is where they were going anyway.
+            # Unauthenticated one-click decision links are disabled:
+            # Users must log in to the CRM before making an approval decision.
             decisions = None
 
-            # "raised" is the first ask and the one that matters most -
-            # it is the mail the first approver actually acts on. It was
-            # spelled "requested" here, which is not an event this class
-            # ever emits, so the buttons only appeared from the second
-            # step onwards and the AVP never got them.
-            if event in ("raised", "approved") and approval.status == ApprovalStatus.PENDING:
-                on_point = ApprovalService.approvers_for_step(approval, db)
-
-                # And only to somebody who actually holds the role this
-                # step names. approvers_for_step falls back to every
-                # holder, then to the super admins, so a gap in the
-                # reporting lines cannot freeze a deal - but a fallback
-                # is the wrong thing to hand a one-click signature to.
-                # Those people open the CRM like anybody else.
-                step_role = approval.steps[approval.current_step]["role"]
-
-                if len(on_point) == 1 and step_role in _role_names(on_point[0]):
-                    from app.services.approval_link_service import make_token
-
-                    who = str(on_point[0].id)
-                    step = approval.current_step
-
-                    decisions = (
-                        app_url(
-                            "/api/v1/approvals/decide-by-link?token="
-                            + make_token(approval.id, who, step, "approve"),
-                            db,
-                        ),
-                        app_url(
-                            "/api/v1/approvals/decide-by-link?token="
-                            + make_token(approval.id, who, step, "reject"),
-                            db,
-                        ),
-                    )
+            action_label = (
+                f"Review & Approve {label} {reference}"
+                if approval.status == ApprovalStatus.PENDING
+                else f"Open {label.lower()} {reference}"
+            )
 
             letter = EmailLetter(
                 db,
@@ -1323,8 +1257,8 @@ class ApprovalService:
                 greeting=greeting,
                 paragraphs=paragraphs,
                 facts=facts,
-                decisions=decisions,
-                action=(f"Open {label.lower()} {reference}", app_url(link, db)) if link else None,
+                decisions=None,
+                action=(action_label, app_url(link, db)) if link else None,
                 note=note,
                 sign_off_name=signed_by,
             )

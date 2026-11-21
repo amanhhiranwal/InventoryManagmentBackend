@@ -44,15 +44,22 @@ ALIAS_MAP = {
 
     "lead.read": {"lead.read", "lead.view", "lead.create", "sales.menu"},
     "opportunity.read": {"opportunity.read", "opportunity.view", "sales.menu"},
+    "opportunity.write": {"opportunity.write", "opportunity.read", "opportunity.view", "sales.menu"},
     "order.read": {"order.read", "order.view", "sales.menu"},
+    "order.write": {"order.write", "order.read", "order.view", "sales.menu"},
     "quotation.read": {"quotation.read", "quotation.view", "sales.menu"},
+    "quotation.write": {"quotation.write", "quotation.read", "quotation.view", "sales.menu"},
     "inventory.read": {"inventory.read", "inventory.view", "lead.read", "lead.create", "sales.menu"},
     # The Add Product pickers' catalogue: whoever can put a product on an
     # opportunity, proposal or sales order, and whoever keeps inventory -
     # not every role that can only read leads.
     "product_picker.read": {
-        "opportunity.write", "quotation.write", "order.write",
-        "inventory.read", "inventory.view",
+        "product_picker.read",
+        "opportunity.write", "opportunity.read", "opportunity.view",
+        "quotation.write", "quotation.read", "quotation.view",
+        "order.write", "order.read", "order.view",
+        "sales.menu",
+        "inventory.read", "inventory.view", "inventory.create", "inventory.menu",
     },
     "unit.read": {"unit.read", "unit.view", "lead.read", "sales.menu", "inventory.read"},
     "customer.read": {"customer.read", "customer.view", "sales.menu"},

@@ -1055,7 +1055,7 @@ try:
     letter = {}
 
     def _capture(to, subject, text_body, html_body=None, cc=None, **kw):
-        letter.update({"to": to, "html": html_body or ""})
+        letter.update({"to": to, "cc": cc, "html": html_body or ""})
         return True
 
     _sent_for_real = _Mailer.send
@@ -1084,78 +1084,86 @@ try:
         )
         created_approvals.append(mail_approval.id)
 
-        # The links are built from the CRM Address in Masters, which on a
-        # real database points at the live site. A test must open its own
-        # server and nothing else, so each one is pulled back onto BASE.
-        links = [
-            BASE.rsplit("/api/v1", 1)[0] + "/api/v1" + found.split("/api/v1", 1)[1]
-            for found in re.findall(
-                r'href="([^"]*decide-by-link[^"]*)"', letter.get("html", "")
-            )
-        ]
-
         check(
-            "the first ask carries Approve and Reject",
-            len(links) == 2,
-            f"found {len(links)} in the letter to {letter.get('to')}",
-        )
-        check(
-            "and it went to the one person the step names",
+            "the ask went strictly to the one person the step names",
             letter.get("to") == [email_for("avp")],
             str(letter.get("to")),
         )
+        check(
+            "and nobody was CC'd on the ask",
+            letter.get("cc") in (None, []),
+            str(letter.get("cc")),
+        )
 
-        if len(links) == 2:
-            approve_link, reject_link = links
+        # The email action button directs the user to review the document in the CRM
+        order_url_part = f"/sales/orders/{mail_order['id']}"
+        check(
+            "the email links to the order in the CRM",
+            order_url_part in letter.get("html", ""),
+            f"order url {order_url_part} in email",
+        )
 
-            # Opening the link shows confirmation (does not decide yet, protecting against email bots)
-            preview = requests.get(approve_link, timeout=20)
-            check(
-                "opening the link shows confirmation page",
-                preview.status_code == 200
-                and "Confirm Approve" in preview.text,
-                f"{preview.status_code} {preview.text[:120]}",
-            )
+        # Direct unauthenticated decision links in email are disabled
+        unauth_links = re.findall(
+            r'href="([^"]*decide-by-link[^"]*)"', letter.get("html", "")
+        )
+        check(
+            "unauthenticated one-click decision links are absent",
+            len(unauth_links) == 0,
+            f"found unauthenticated links: {unauth_links}",
+        )
 
-            # Submitting the confirmation decides it
-            landed = requests.post(approve_link, timeout=20)
-            check(
-                "submitting confirmation decides it",
-                landed.status_code == 200
-                and "has been approved" in landed.text,
-                f"{landed.status_code} {landed.text[:120]}",
-            )
+        # 1. Unauthenticated attempt to POST to decide-by-link is rejected with 401
+        unauth_post = requests.post(f"{BASE}/approvals/decide-by-link", timeout=20)
+        check(
+            "unauthenticated decision attempt is refused with 401",
+            unauth_post.status_code == 401,
+            f"{unauth_post.status_code} {unauth_post.text[:120]}",
+        )
 
-            session.expire_all()
-            after = session.get(type(mail_approval), mail_approval.id)
-            check(
-                "the AVP's step is signed, and says where from",
-                after.steps[0]["decision"] == "APPROVED"
-                and "email" in (after.steps[0].get("remarks") or "").lower(),
-                str(after.steps[0]),
-            )
-            check(
-                "and it has moved on to the CEO",
-                after.current_step == 1,
-                f"current step {after.current_step}",
-            )
+        # 2. Higher manager (Founder) CANNOT decide earlier AVP step
+        founder_attempt = api(
+            "put",
+            f"/approvals/{mail_approval.id}/decide",
+            token["founder"],
+            json={"approve": True, "remarks": "Founder bypassing AVP"},
+        )
+        check(
+            "Founder cannot approve an AVP step",
+            founder_attempt.status_code in (403, 400),
+            f"founder attempt status {founder_attempt.status_code}: {founder_attempt.text[:120]}",
+        )
 
-            again = requests.post(approve_link, timeout=20)
-            check(
-                "the same link cannot be used twice",
-                "cannot be used" in again.text,
-                again.text[:120],
-            )
-            check(
-                "and neither can the Reject half of a spent mail",
-                "cannot be used" in requests.post(reject_link, timeout=20).text,
-            )
+        # 3. Logged-in AVP approves their step
+        avp_decision = api(
+            "put",
+            f"/approvals/{mail_approval.id}/decide",
+            token["avp"],
+            json={"approve": True, "remarks": "Approved by AVP"},
+        )
+        check(
+            "AVP successfully approves their step after logging in",
+            avp_decision.status_code == 200,
+            f"status {avp_decision.status_code}: {avp_decision.text[:120]}",
+        )
 
-            tampered = approve_link[:-2] + ("aa" if approve_link[-2:] != "aa" else "bb")
-            check(
-                "a token with the signature altered is refused",
-                "no longer valid" in requests.get(tampered, timeout=20).text,
-            )
+        session.expire_all()
+        after = session.get(type(mail_approval), mail_approval.id)
+        check(
+            "the AVP's step is signed",
+            after.steps[0]["decision"] == "APPROVED",
+            str(after.steps[0]),
+        )
+        check(
+            "and it has moved on to the CEO",
+            after.current_step == 1,
+            f"current step {after.current_step}",
+        )
+        check(
+            "next notification went strictly to the CEO",
+            letter.get("to") == [email_for("ceo")],
+            str(letter.get("to")),
+        )
 
         # Every link the CRM emails has to agree on where the CRM is. The
         # password reset used to be built from the environment instead,
