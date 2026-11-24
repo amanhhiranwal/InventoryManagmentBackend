@@ -125,6 +125,19 @@ class CompanyService:
                 detail="Company not found.",
             )
 
+        # A company that has held stock keeps its ledger; deleting it would
+        # leave stock history pointing at nothing.
+        from app.models.stock import StockDocument, StockLedger
+
+        if (
+            db.query(StockLedger.id).filter(StockLedger.company_id == company.id).first()
+            or db.query(StockDocument.id).filter(StockDocument.company_id == company.id).first()
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{company.company_name} has stock history, so it cannot be deleted.",
+            )
+
         CompanyRepository.delete(
             db,
             company,

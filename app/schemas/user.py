@@ -28,6 +28,9 @@ class CreateUserRequest(BaseModel):
 class UpdateUserRoleRequest(BaseModel):
     role_ids: list[str] = []
     company_ids: list[str] = []
+    #: Left out (None) to keep the person's warehouses as they are; grants
+    #: for companies taken off the profile are dropped either way.
+    warehouse_ids: list[str] | None = None
 
 
 class UpdateUserRequest(BaseModel):
@@ -47,6 +50,9 @@ class UpdateUserRequest(BaseModel):
     #: Each is only changed when the form sends it.
     designation: str | None = None
     also_reports_to_ids: list[str] | None = None
+    #: Left out (None) to keep the person's warehouses; grants for
+    #: companies taken off the profile are dropped either way.
+    warehouse_ids: list[str] | None = None
 
 
 class SetUserActiveRequest(BaseModel):

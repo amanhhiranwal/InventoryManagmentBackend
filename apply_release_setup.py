@@ -297,6 +297,34 @@ def product_categories(db) -> str:
     return f"{added} added" if added else "already there"
 
 
+def warehouses(db) -> str:
+    """Every location gets a type, and every warehouse its standard bins.
+
+    Locations saved before types existed have none; they were set up as
+    warehouses, so that is what they become. A super admin can switch any
+    of them to an office on the Locations screen.
+    """
+
+    from app.models.location import Location
+    from app.services.warehouse_service import WarehouseService
+
+    untyped = (
+        db.query(Location)
+        .filter(Location.location_type.is_(None))
+        .update({Location.location_type: "WAREHOUSE"}, synchronize_session=False)
+    )
+
+    bins = 0
+    for location in db.query(Location).all():
+        bins += WarehouseService.ensure_default_bins(db, location)
+
+    db.commit()
+
+    if not untyped and not bins:
+        return "nothing to do"
+    return f"{untyped} location(s) typed as warehouse, {bins} standard bin(s) created"
+
+
 STEPS = [
     ("Menus", menus),
     ("Requisitions", requisition_access),
@@ -307,6 +335,7 @@ STEPS = [
     ("Orphan approvals", orphan_approvals),
     ("Product categories", product_categories),
     ("Pending approvals", coordinator_pending_approvals),
+    ("Warehouses", warehouses),
 ]
 
 

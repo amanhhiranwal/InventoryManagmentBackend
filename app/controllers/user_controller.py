@@ -121,6 +121,9 @@ class UserController:
             # Head)" without loading the roles master first.
             "role_names": [r.role_name for r in user.roles],
             "company_ids": company_ids,
+            "warehouse_ids": (
+                [str(w.warehouse_id) for w in user.warehouse_grants]
+            ),
             "permissions": permissions,
             "is_super_admin": user.is_super_admin,
             "is_active": user.is_active,
@@ -177,8 +180,8 @@ class UserController:
         }
 
     @staticmethod
-    def update_role(user_id: str, role_ids: list[str], company_ids: list[str], db, current_user=None):
-        user = UserService.update_role(user_id, role_ids, company_ids, db, current_user)
+    def update_role(user_id: str, role_ids: list[str], company_ids: list[str], db, current_user=None, warehouse_ids=None):
+        user = UserService.update_role(user_id, role_ids, company_ids, db, current_user, warehouse_ids)
         return {
             "success": True,
             "message": "User roles and companies updated successfully.",

@@ -102,6 +102,15 @@ class User(BaseModel):
         backref="users",
     )
 
+    # Read-only here: grants are written by WarehouseService, which checks
+    # them against the person's companies. selectin keeps a user list to one
+    # extra query rather than one per person.
+    warehouse_grants = relationship(
+        "UserWarehouse",
+        viewonly=True,
+        lazy="selectin",
+    )
+
     # The manager this user reports to. Together with the role hierarchy it
     # decides whose records a user can see: see app/services/hierarchy_service.
     reports_to_id = mapped_column(

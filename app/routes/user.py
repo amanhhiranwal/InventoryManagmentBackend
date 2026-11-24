@@ -5,7 +5,11 @@ from sqlalchemy.orm import Session
 
 from app.controllers.user_controller import UserController
 from app.database.dependencies import get_db
-from app.middleware.permission_middleware import require_granted, require_permission, require_super_admin
+from app.middleware.permission_middleware import (
+    require_granted,
+    require_permission,
+    require_super_admin,
+)
 from app.schemas.user import (
     CreateUserRequest,
     SetUserActiveRequest,
@@ -109,7 +113,9 @@ def update_user_role(
     db: Session = Depends(get_db),
     current_user=Depends(require_permission("user.update")),
 ):
-    return UserController.update_role(user_id, request.role_ids, request.company_ids, db, current_user)
+    return UserController.update_role(
+        user_id, request.role_ids, request.company_ids, db, current_user, request.warehouse_ids
+    )
 
 
 @router.put("/{user_id}/status")

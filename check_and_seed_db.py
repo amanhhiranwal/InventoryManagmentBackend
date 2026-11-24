@@ -181,6 +181,14 @@ def sync_db_and_seed():
             if not p_obj:
                 db.add(Permission(permission_name=p_key, module="Procurement", description=description))
 
+        # Stock permissions, granted to no role, the same way.
+        from app.core.stock import PERMISSIONS as STOCK_PERMISSIONS
+
+        for p_key, description in STOCK_PERMISSIONS.items():
+            p_obj = db.query(Permission).filter(Permission.permission_name == p_key).first()
+            if not p_obj:
+                db.add(Permission(permission_name=p_key, module="Stock", description=description))
+
         # The roles the requisition approval matrix names above the
         # reporting manager and department head. Created empty; whoever is
         # given one decides that step.

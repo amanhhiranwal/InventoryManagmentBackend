@@ -8,26 +8,30 @@ from app.routes.company import router as company_router
 from app.routes.company_profile import router as company_profile_router
 from app.routes.customer import router as customer_router
 from app.routes.customer_type import router as customer_type_router
+from app.routes.dispatch import router as dispatch_router
 from app.routes.fulfilment import router as fulfilment_router
+from app.routes.grn import router as grn_router
 from app.routes.inventory import router as inventory_router
 from app.routes.lead import router as lead_router
 from app.routes.lead_source import router as lead_source_router
-from app.routes.warranty_term import router as warranty_term_router
 from app.routes.location import router as location_router
 from app.routes.menu import router as menu_router
+from app.routes.notification import router as notification_router
 from app.routes.opportunity import router as opportunity_router
 from app.routes.order import router as order_router
-from app.routes.notification import router as notification_router
+from app.routes.procurement import router as procurement_router
 from app.routes.product_type import router as product_type_router
 from app.routes.profile import router as profile_router
-from app.routes.procurement import router as procurement_router
 from app.routes.proforma_invoice import router as proforma_invoice_router
 from app.routes.quotation import router as quotation_router
 from app.routes.rbac import router as rbac_router
 from app.routes.role import router as role_router
 from app.routes.state import router as state_router
+from app.routes.stock import router as stock_router
+from app.routes.transfers import router as transfers_router
 from app.routes.unit import router as unit_router
 from app.routes.user import router as user_router
+from app.routes.warranty_term import router as warranty_term_router
 from app.routes.workflow import router as workflow_router
 
 api_router = APIRouter(
@@ -73,3 +77,7 @@ api_router.include_router(menu_router)
 api_router.include_router(lead_source_router)
 api_router.include_router(warranty_term_router)
 api_router.include_router(state_router)
+api_router.include_router(stock_router)
+api_router.include_router(grn_router)
+api_router.include_router(dispatch_router)
+api_router.include_router(transfers_router)

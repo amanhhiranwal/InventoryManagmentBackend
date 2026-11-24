@@ -84,6 +84,16 @@ class Location(Base):
         nullable=False,
     )
 
+    #: WAREHOUSE holds stock and has bins; OFFICE does not. Nullable in the
+    #: table because sync_schema adds new columns as NULL; release setup
+    #: fills existing rows, and app/core/warehouse.location_type reads a
+    #: missing value as a warehouse.
+    location_type = Column(
+        String(20),
+        default="WAREHOUSE",
+        nullable=True,
+    )
+
     is_active = Column(
         Boolean,
         default=True,

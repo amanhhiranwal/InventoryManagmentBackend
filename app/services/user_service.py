@@ -370,7 +370,14 @@ class UserService:
         return UserRepository.get_all(db, skip, limit, visible, search)
 
     @staticmethod
-    def update_role(user_id: str, role_ids: list[str], company_ids: list[str], db: Session, current_user: dict | None = None) -> User:
+    def update_role(
+        user_id: str,
+        role_ids: list[str],
+        company_ids: list[str],
+        db: Session,
+        current_user: dict | None = None,
+        warehouse_ids: list[str] | None = None,
+    ) -> User:
         validate_uuid(user_id, "user_id")
 
         user = UserRepository.get_by_id(db, UUID(user_id))
@@ -409,7 +416,22 @@ class UserService:
 
         user.roles = roles_list
         user.companies = companies_list
-        return UserRepository.update(db, user)
+
+        # Warehouses are checked against the companies just chosen and saved
+        # in the same commit; a company taken away takes its warehouses.
+        from app.services.warehouse_service import WarehouseService
+
+        WarehouseService.set_user_warehouses(
+            user,
+            warehouse_ids,
+            [str(c.id) for c in companies_list],
+            current_user or {},
+            db,
+        )
+
+        updated = UserRepository.update(db, user)
+        db.expire(updated, ["warehouse_grants"])
+        return updated
 
     @staticmethod
     def set_active(user_id: str, is_active: bool, db: Session, current_user=None):
@@ -578,7 +600,22 @@ class UserService:
 
         user.roles = roles_list
         user.companies = companies_list
-        return UserRepository.update(db, user)
+
+        # Warehouses are checked against the companies just chosen and saved
+        # in the same commit; a company taken away takes its warehouses.
+        from app.services.warehouse_service import WarehouseService
+
+        WarehouseService.set_user_warehouses(
+            user,
+            getattr(request, "warehouse_ids", None),
+            [str(c.id) for c in companies_list],
+            current_user or {},
+            db,
+        )
+
+        updated = UserRepository.update(db, user)
+        db.expire(updated, ["warehouse_grants"])
+        return updated
 
     @staticmethod
     def _department(department_id, db: Session) -> int | None:

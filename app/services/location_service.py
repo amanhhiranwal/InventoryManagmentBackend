@@ -91,12 +91,20 @@ class LocationService:
             country=request.country,
             postal_code=request.postal_code,
             is_default=request.is_default,
+            location_type=request.location_type,
         )
 
-        return LocationRepository.create(
-            db,
-            location,
-        )
+        # The warehouse and its standard bins are saved together, so a
+        # warehouse never exists without somewhere to receive goods into.
+        from app.services.warehouse_service import WarehouseService
+
+        db.add(location)
+        db.flush()
+        WarehouseService.ensure_default_bins(db, location)
+        db.commit()
+        db.refresh(location)
+
+        return location
 
     @staticmethod
     def get_all(db: Session, skip: int = 0, limit: int = 100):
@@ -194,12 +202,35 @@ class LocationService:
                     default_location,
                 )
 
+        # A warehouse that has held stock stays a warehouse: as an office its
+        # stock and reservations could no longer be reached.
+        if (
+            update_data.get("location_type") == "OFFICE"
+            and (location.location_type or "WAREHOUSE") != "OFFICE"
+        ):
+            from app.models.stock import StockDocument, StockLedger
+
+            if (
+                db.query(StockLedger.id).filter(StockLedger.warehouse_id == location.id).first()
+                or db.query(StockDocument.id).filter(StockDocument.warehouse_id == location.id).first()
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{location.location_name} has stock history, so it cannot be changed to an office.",
+                )
+
         for key, value in update_data.items():
             setattr(
                 location,
                 key,
                 value,
             )
+
+        # An office turned into a warehouse gets its standard bins in the
+        # same save.
+        from app.services.warehouse_service import WarehouseService
+
+        WarehouseService.ensure_default_bins(db, location)
 
         return LocationRepository.update(
             db,
@@ -218,6 +249,22 @@ class LocationService:
             raise HTTPException(
                 status_code=404,
                 detail="Location not found.",
+            )
+
+        # Stock history keeps pointing at its warehouse, so a warehouse that
+        # has ever held stock or a stock document stays.
+        from app.models.stock import StockDocument, StockLedger
+
+        if (
+            db.query(StockLedger.id).filter(StockLedger.warehouse_id == location.id).first()
+            or db.query(StockDocument.id).filter(StockDocument.warehouse_id == location.id).first()
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{location.location_name} has stock history, so it cannot be deleted: "
+                    "the stock ledger has to keep pointing at it."
+                ),
             )
 
         LocationRepository.delete(

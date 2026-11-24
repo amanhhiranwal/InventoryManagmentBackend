@@ -170,7 +170,17 @@ DEFAULT_MENUS_DATA = [
     "children": [
       {"title": "Inventory", "icon": "LuPackage", "path": "/inventory", "permission_key": "inventory.read", "order_index": 1},
       {"title": "Logistics", "icon": "LuTruck", "path": "/fulfilment/logistics", "permission_key": "logistics_desk.read", "order_index": 2},
-      {"title": "Stock Out", "icon": "LuPackageMinus", "path": "/inventory/stock-out", "permission_key": "stock_out.read", "order_index": 3},
+      # Goods received at a warehouse (GRN) and their quality check.
+      {"title": "Stock In", "icon": "LuPackagePlus", "path": "/inventory/stock-in", "permission_key": "grn.read", "order_index": 3},
+      {"title": "Stock Out", "icon": "LuPackageMinus", "path": "/inventory/stock-out", "permission_key": "stock_out.read", "order_index": 4},
+      # Stock held per warehouse, from the stock ledger, and opening stock.
+      {"title": "Warehouse", "icon": "LuWarehouse", "path": "/inventory/warehouse", "permission_key": "stock.read", "order_index": 5},
+      # Reserving stock for sales orders and sending it out: dispatch orders.
+      {"title": "Dispatch", "icon": "LuTruck", "path": "/inventory/dispatch", "permission_key": "dispatch.read", "order_index": 6},
+      # Moving stock between two warehouses of one company.
+      {"title": "Transfers", "icon": "LuArrowLeftRight", "path": "/inventory/transfers", "permission_key": "stock.read", "order_index": 7},
+      # Counting the shelf and posting the differences.
+      {"title": "Stock Count", "icon": "LuListChecks", "path": "/inventory/counts", "permission_key": "stock.read", "order_index": 8},
     ]
   },
   {

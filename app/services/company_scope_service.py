@@ -10,6 +10,10 @@ before companies were tracked have none, so nothing disappears, and a super
 admin can keep listing genuinely shared items that way.
 
 A super admin sees every company.
+
+Warehouses narrow it further: a person works only in the warehouses
+granted to them (``user_warehouses``), and only while that warehouse's
+company is on their profile.
 """
 
 from uuid import UUID
@@ -147,3 +151,70 @@ class CompanyScopeService:
 
         # Shared products (no company) stay visible alongside their own.
         return {"company_id": {"$in": [*allowed, None]}}
+
+    # ------------------------------------------------------------------
+    # Warehouses
+    # ------------------------------------------------------------------
+    @staticmethod
+    def visible_warehouse_ids(current_user: dict, db: Session) -> list[str] | None:
+        """Warehouses the caller may work in. ``None`` means every one.
+
+        A grant counts only while the warehouse's company is still on the
+        caller's profile, so taking a company away takes its warehouses
+        with it even before anybody tidies the grants up.
+        """
+
+        if current_user.get("is_super_admin"):
+            return None
+
+        from app.core.warehouse import OFFICE
+        from app.models.location import Location
+        from app.models.warehouse import UserWarehouse
+
+        user_id = current_user.get("user_id")
+        if not user_id:
+            return []
+
+        companies = CompanyScopeService.assigned_company_ids(user_id, db)
+        if not companies:
+            return []
+
+        rows = (
+            db.query(UserWarehouse.warehouse_id)
+            .join(Location, Location.id == UserWarehouse.warehouse_id)
+            .filter(
+                UserWarehouse.user_id == _as_uuid(user_id),
+                Location.company_id.in_([_as_uuid(c) for c in companies]),
+                (Location.location_type.is_(None)) | (Location.location_type != OFFICE),
+            )
+            .all()
+        )
+        return [str(r.warehouse_id) for r in rows]
+
+    @staticmethod
+    def assert_warehouse_allowed(current_user: dict, warehouse_id, db: Session):
+        """The warehouse, if the caller may work in it.
+
+        A warehouse the caller may not see is reported as not found, the
+        same as one that does not exist, so ids cannot be probed.
+        """
+
+        from app.core.warehouse import WAREHOUSE, location_type
+        from app.models.location import Location
+
+        try:
+            key = UUID(str(warehouse_id))
+        except (ValueError, AttributeError, TypeError):
+            raise HTTPException(status_code=404, detail="Warehouse not found.")
+
+        warehouse = db.query(Location).filter(Location.id == key).first()
+
+        if warehouse is None or location_type(warehouse) != WAREHOUSE:
+            raise HTTPException(status_code=404, detail="Warehouse not found.")
+
+        allowed = CompanyScopeService.visible_warehouse_ids(current_user, db)
+
+        if allowed is not None and str(warehouse.id) not in allowed:
+            raise HTTPException(status_code=404, detail="Warehouse not found.")
+
+        return warehouse

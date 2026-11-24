@@ -18,7 +18,6 @@ from datetime import date, datetime
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.timezone import iso, now_ist
 from app.core.fulfilment import (
     ACCOUNTS,
     BUSINESS_COORDINATOR,
@@ -30,10 +29,12 @@ from app.core.fulfilment import (
     desk_for,
     holds_desk,
 )
+from app.core.timezone import iso, now_ist
 from app.core.workflow_status import ProformaInvoiceStatus, SalesOrderStatus
 from app.models.proforma_invoice import ProformaInvoice
 from app.models.sales_order import SalesOrder
 from app.models.user import User
+
 logger = logging.getLogger(__name__)
 
 def _user(current_user: dict, db: Session) -> User | None:
@@ -413,6 +414,11 @@ class FulfilmentDeskService:
 
         lines: list[dict] = []
 
+        from app.services.stock.dispatch import ledger_live
+
+        if ledger_live(db):
+            return FulfilmentDeskService._ledger_stock(order, db)
+
         try:
             from app.services.inventory_service import InventoryService
 
@@ -488,6 +494,29 @@ class FulfilmentDeskService:
             })
 
         return lines
+
+    @staticmethod
+    def _ledger_stock(order: SalesOrder, db: Session) -> list[dict]:
+        """The same rows from the stock ledger: what is held for each line
+        (reserved, or already dispatched) plus what is still available in
+        the warehouse it ships from. Before a warehouse is chosen nothing is
+        known, which is shown as unknown rather than as zero."""
+
+        from app.services.stock.dispatch import _available, _reserved_open, ensure_lines
+
+        rows = []
+        for line in ensure_lines(order, db):
+            wanted = float(line.qty_ordered)
+            if not order.dispatch_warehouse_id:
+                rows.append({"product": line.product_name or line.sku, "sku": line.sku, "wanted": wanted,
+                             "available": None, "short": False, "known": False})
+                continue
+            held = float(_reserved_open(line.id, db) + line.qty_dispatched)
+            free = float(_available(order.selling_company_id, order.dispatch_warehouse_id, line.sku, db))
+            rows.append({"product": line.product_name or line.sku, "sku": line.sku, "wanted": wanted,
+                         "available": held + free, "short": held < wanted, "known": True})
+        db.commit()
+        return rows
 
     # ------------------------------------------------------------------
     # The numbers
@@ -1065,8 +1094,18 @@ class FulfilmentDeskService:
                 f"Balance {format_inr(order.outstanding_balance)}."
             )
 
+        from app.services.stock.dispatch import assert_dispatched, assert_stock_ready, ledger_live
+
+        live = ledger_live(db)
+
+        # With the stock ledger live, serials are picked on the dispatch
+        # order and stock leaves when it is committed; production confirm
+        # the goods are reserved instead of naming serials here.
         if approve and order.status == SalesOrderStatus.PROCUREMENT:
-            picks = FulfilmentDeskService.take_serials(order, serials)
+            if live:
+                assert_stock_ready(order, db)
+            else:
+                picks = FulfilmentDeskService.take_serials(order, serials)
 
         # Out for delivery: logistics name the vehicle and the driver
         # taking it, so the client and the desk know who is on the road.
@@ -1091,6 +1130,9 @@ class FulfilmentDeskService:
             order.delivery_vehicle_number = vehicle
             order.delivery_driver_name = driver
             notes.append(f"Vehicle {vehicle}, driver {driver}.")
+
+        if approve and order.status == SalesOrderStatus.READY and live:
+            assert_dispatched(order, db)
 
         if approve and order.status == SalesOrderStatus.READY:
             missing = [

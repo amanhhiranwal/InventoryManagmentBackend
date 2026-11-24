@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
@@ -59,6 +59,9 @@ class LocationBase(BaseModel):
 
     is_default: bool = False
 
+    #: WAREHOUSE holds stock and gets bins; OFFICE does not.
+    location_type: Literal["WAREHOUSE", "OFFICE"] = "WAREHOUSE"
+
 
 class LocationCreate(LocationBase):
     pass
@@ -86,6 +89,31 @@ class LocationUpdate(BaseModel):
 
     is_default: Optional[bool] = None
 
+    is_active: Optional[bool] = None
+
+    location_type: Optional[Literal["WAREHOUSE", "OFFICE"]] = None
+
+
+class BinCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    code: str = Field(..., min_length=1, max_length=40, pattern=r"^[A-Za-z0-9][A-Za-z0-9_\-/]*$")
+    name: str = Field(..., min_length=1, max_length=120)
+    bin_type: Literal["STORE", "QC", "REJECT"] = "STORE"
+    zone: Optional[str] = Field(default=None, max_length=60)
+    rack: Optional[str] = Field(default=None, max_length=60)
+    shelf: Optional[str] = Field(default=None, max_length=60)
+
+
+class BinUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    code: Optional[str] = Field(default=None, min_length=1, max_length=40, pattern=r"^[A-Za-z0-9][A-Za-z0-9_\-/]*$")
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    bin_type: Optional[Literal["STORE", "QC", "REJECT"]] = None
+    zone: Optional[str] = Field(default=None, max_length=60)
+    rack: Optional[str] = Field(default=None, max_length=60)
+    shelf: Optional[str] = Field(default=None, max_length=60)
     is_active: Optional[bool] = None
 
 

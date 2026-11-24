@@ -120,6 +120,11 @@ class SalesOrder(Base):
     delivery_vehicle_number = Column(String(30), nullable=True)
     delivery_driver_name = Column(String(120), nullable=True)
 
+    #: The company selling and the warehouse it ships from, for stock.
+    #: Chosen when stock is reserved; empty on orders from before.
+    selling_company_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    dispatch_warehouse_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+
     aging_0_30 = Column(Float, default=0.0, nullable=True)
     aging_31_60 = Column(Float, default=0.0, nullable=True)
     aging_61_90 = Column(Float, default=0.0, nullable=True)

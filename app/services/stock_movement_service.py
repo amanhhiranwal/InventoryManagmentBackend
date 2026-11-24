@@ -131,6 +131,16 @@ def apply_for_stage(order, previous: str, db, actor: str | None = None) -> list[
 
     status = str(getattr(order, "status", "") or "")
 
+    # Once the stock ledger is live, dispatch orders are the only stock-out
+    # and nothing comes back on cancel or hold; a cancelled order only gives
+    # back what was reserved for it.
+    from app.services.stock.dispatch import ledger_live, on_order_stage
+
+    if ledger_live(db):
+        on_order_stage(order, db)
+        db.commit()
+        return []
+
     try:
         if status in ISSUE_FALLBACK:
             # Already issued by serial when production marked it ready,
