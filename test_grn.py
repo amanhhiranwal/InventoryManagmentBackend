@@ -321,6 +321,14 @@ try:
     check("the summary shows rejected and blocked apart from available",
           data(api("get", "/stock/summary", keeper, params={"warehouse_id": wa["id"]}))["available"] == 9.0)
 
+    print("\nGRN PDF")
+    r = api("get", f"/grn/{first['id']}/pdf", keeper)
+    check("the GRN downloads as a PDF named by its number", r.status_code == 200 and r.content[:4] == b"%PDF"
+          and posted["grn_number"].replace("/", "-") in r.headers.get("content-disposition", ""),
+          f"{r.status_code} {r.headers.get('content-disposition')}")
+    check("another company's keeper cannot download it", api("get", f"/grn/{first['id']}/pdf", keeper_b).status_code == 404)
+    check("nor can someone without Stock In", api("get", f"/grn/{first['id']}/pdf", salesperson).status_code == 403)
+
     print("\nThe rest of the PO")
     r = grn(keeper, wa["id"], [{"po_item_id": item_cable, "sku": CABLE, "qty_received": 1}])
     check("the cables are complete; nothing more can be received for them", r.status_code == 400, r.text[:120])

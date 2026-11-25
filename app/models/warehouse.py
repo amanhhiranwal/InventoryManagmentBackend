@@ -87,3 +87,26 @@ class RoleWarehouse(BaseModel):
         nullable=False,
         index=True,
     )
+
+
+class RoleProductScope(BaseModel):
+    """Which products a role sees on the Inventory list (Roles & Access).
+
+    OWN_COMPANIES (also what a role with no row gets): products of the
+    companies on the person's profile, and shared ones.
+    ALL_COMPANIES: every company's products, to look at; changing one is
+    still limited to the person's own companies.
+    STORE_STOCK: only products in stock at the stores the person works in.
+    A person with several roles gets the widest of them.
+    """
+
+    __tablename__ = "role_product_scopes"
+
+    role_id: Mapped[UUID] = mapped_column(
+        ForeignKey("roles.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+
+    scope: Mapped[str] = mapped_column(String(20), nullable=False, default="OWN_COMPANIES")

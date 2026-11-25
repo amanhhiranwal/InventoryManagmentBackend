@@ -1131,6 +1131,21 @@ class FulfilmentDeskService:
             order.delivery_driver_name = driver
             notes.append(f"Vehicle {vehicle}, driver {driver}.")
 
+            # The goods leave the gate on a gate pass. One that cannot be
+            # made (no selling company on an old order) does not hold the
+            # delivery up; the reason goes on the order's activity, and
+            # logistics can make it later from the order.
+            from app.services.stock.gate_pass import for_out_for_delivery
+
+            savepoint = db.begin_nested()
+            try:
+                gate_pass = for_out_for_delivery(order, current_user, db)
+                savepoint.commit()
+                notes.append(f"Gate pass {gate_pass.gate_pass_no}.")
+            except HTTPException as refused:
+                savepoint.rollback()
+                notes.append(f"No gate pass yet: {refused.detail}")
+
         if approve and order.status == SalesOrderStatus.READY and live:
             assert_dispatched(order, db)
 

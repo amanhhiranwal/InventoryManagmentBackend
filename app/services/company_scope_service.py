@@ -155,6 +155,114 @@ class CompanyScopeService:
         return {"company_id": {"$in": [*allowed, None]}}
 
     # ------------------------------------------------------------------
+    # Products shown on the Inventory list (Roles & Access, per role)
+    # ------------------------------------------------------------------
+    OWN_COMPANIES = "OWN_COMPANIES"
+    ALL_COMPANIES = "ALL_COMPANIES"
+    STORE_STOCK = "STORE_STOCK"
+    PRODUCT_SCOPES = (OWN_COMPANIES, ALL_COMPANIES, STORE_STOCK)
+
+    @staticmethod
+    def product_scope(current_user: dict, db: Session) -> str:
+        """The widest "Products shown" among the caller's roles.
+
+        A role with no setting counts as OWN_COMPANIES, so STORE_STOCK
+        applies only when every role of the person is set to it.
+        """
+
+        if current_user.get("is_super_admin"):
+            return CompanyScopeService.ALL_COMPANIES
+
+        from app.models.user_role import UserRole
+        from app.models.warehouse import RoleProductScope
+
+        user_id = current_user.get("user_id")
+        if not user_id:
+            return CompanyScopeService.OWN_COMPANIES
+
+        roles = [r for (r,) in db.query(UserRole.role_id).filter(UserRole.user_id == _as_uuid(user_id))]
+        if not roles:
+            return CompanyScopeService.OWN_COMPANIES
+
+        set_to = {
+            str(role): scope
+            for role, scope in db.query(RoleProductScope.role_id, RoleProductScope.scope).filter(
+                RoleProductScope.role_id.in_(roles)
+            )
+        }
+        scopes = {set_to.get(str(role), CompanyScopeService.OWN_COMPANIES) for role in roles}
+
+        if CompanyScopeService.ALL_COMPANIES in scopes:
+            return CompanyScopeService.ALL_COMPANIES
+        if CompanyScopeService.OWN_COMPANIES in scopes:
+            return CompanyScopeService.OWN_COMPANIES
+        return CompanyScopeService.STORE_STOCK
+
+    @staticmethod
+    def product_list_filter(current_user: dict, db: Session, company_id: str | None = None) -> dict:
+        """The Mongo filter for the Inventory list, by the caller's "Products shown".
+
+        Only for reading the list: anything that changes a product still
+        goes through mongo_filter / assert_company_allowed.
+        """
+
+        scope = CompanyScopeService.product_scope(current_user, db)
+
+        if scope == CompanyScopeService.ALL_COMPANIES:
+            if company_id:
+                _as_uuid(company_id)
+                return {"company_id": str(company_id)}
+            return {}
+
+        base = CompanyScopeService.mongo_filter(current_user, db, company_id)
+
+        if scope == CompanyScopeService.OWN_COMPANIES:
+            return base
+
+        # STORE_STOCK: the products with stock in the stores the person
+        # works in - a serialised unit by its serial, the rest by model.
+        import re
+
+        from app.core.stock import SERIAL_IN_STOCK
+        from app.models.stock import StockBalance, StockSerial
+
+        stores = CompanyScopeService.visible_warehouse_ids(current_user, db) or []
+        store_ids = [_as_uuid(s) for s in stores]
+
+        serials: list[str] = []
+        skus: list[str] = []
+        tracked: list[str] = []
+
+        if store_ids:
+            serials = [
+                s for (s,) in db.query(StockSerial.serial_no)
+                .filter(StockSerial.warehouse_id.in_(store_ids), StockSerial.status == SERIAL_IN_STOCK)
+            ]
+            skus = [
+                s for (s,) in db.query(StockBalance.sku).filter(
+                    StockBalance.warehouse_id.in_(store_ids), StockBalance.qty_on_hand > 0
+                ).distinct()
+            ]
+            # Serials the ledger tracks for those models, wherever they are:
+            # a record carrying one of them is shown only by its own serial.
+            if skus:
+                tracked = [s for (s,) in db.query(StockSerial.serial_no).filter(StockSerial.sku.in_(skus))]
+
+        held = {
+            "$or": [
+                {"serial_number": {"$in": serials}},
+                {
+                    "serial_number": {"$nin": tracked},
+                    "attributes.model_number": {
+                        "$in": [re.compile(f"^{re.escape(s)}$", re.IGNORECASE) for s in skus]
+                    },
+                },
+            ]
+        }
+
+        return {"$and": [base, held]} if base else held
+
+    # ------------------------------------------------------------------
     # Warehouses
     # ------------------------------------------------------------------
     @staticmethod

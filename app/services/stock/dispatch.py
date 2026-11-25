@@ -596,7 +596,8 @@ class DispatchService:
         if do.status != DO_PACKED:
             raise HTTPException(status_code=409, detail="Pick and pack it before dispatching.")
 
-        missing = [label for label, value in (("delivery challan number", do.challan_no), ("gate pass number", do.gate_pass_no),
+        # The gate pass number is generated at commit when none was typed.
+        missing = [label for label, value in (("delivery challan number", do.challan_no),
                                               ("vehicle number or docket", do.vehicle_number or do.docket_no)) if not value]
         if do.consignment_value is None:
             missing.append("consignment value")
@@ -682,6 +683,15 @@ class DispatchService:
         do.committed_by = user_id
         do.committed_by_name = name
         do.committed_at = datetime.utcnow()
+
+        # The goods leave on a gate pass, committed with the stock-out.
+        from app.services.stock.gate_pass import for_dispatch
+
+        try:
+            for_dispatch(do, order, current_user, db)
+        except Exception:
+            db.rollback()
+            raise
         db.commit()
         db.refresh(do)
         return dispatch_dict(do, db)

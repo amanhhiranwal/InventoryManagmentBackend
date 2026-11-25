@@ -425,3 +425,29 @@ class RoleStoreService:
             db.add(RoleWarehouse(role_id=role.id, warehouse_id=key))
         db.commit()
         return RoleStoreService.list_for_role(role_id, db)
+
+    # ------------------------------------------------------------------
+    # Products shown on the Inventory list
+    # ------------------------------------------------------------------
+    @staticmethod
+    def product_scope_for_role(role_id, db: Session) -> dict:
+        from app.models.warehouse import RoleProductScope
+
+        role = RoleStoreService._role(role_id, db)
+        row = db.query(RoleProductScope).filter(RoleProductScope.role_id == role.id).first()
+        return {"role_id": str(role.id), "scope": row.scope if row else CompanyScopeService.OWN_COMPANIES}
+
+    @staticmethod
+    def set_product_scope(role_id, scope: str, db: Session) -> dict:
+        from app.models.warehouse import RoleProductScope
+
+        if scope not in CompanyScopeService.PRODUCT_SCOPES:
+            raise HTTPException(status_code=400, detail="Unknown setting for products shown.")
+        role = RoleStoreService._role(role_id, db)
+        row = db.query(RoleProductScope).filter(RoleProductScope.role_id == role.id).first()
+        if row is None:
+            db.add(RoleProductScope(role_id=role.id, scope=scope))
+        else:
+            row.scope = scope
+        db.commit()
+        return RoleStoreService.product_scope_for_role(role_id, db)

@@ -101,6 +101,17 @@ COLUMNS: list[dict] = [
         "help": "Which company stocks it. Left blank, it is shared with all of them.",
     },
     {
+        "key": "warehouse",
+        "header": "Warehouse",
+        "required": False,
+        "aliases": ["warehouse", "warehouse name", "store", "store name"],
+        "help": (
+            "Which of the company's stores the In-Stock Qty is in, by name or "
+            "code (e.g. Bangalore Store). Left blank, it goes into the "
+            "company's main store. Needs Company filled in."
+        ),
+    },
+    {
         "key": "rate",
         "header": "ECP Rate",
         "required": True,
@@ -196,6 +207,10 @@ class Draft:
     company_id: str | None
     company_name: str | None
     attributes: dict = field(default_factory=dict)
+    #: The store its stock goes into; None with a company means the
+    #: company's main store, which is set up on commit if it has none yet.
+    warehouse_id: str | None = None
+    warehouse_name: str | None = None
 
     def as_preview(self) -> dict:
         return {
@@ -205,6 +220,7 @@ class Draft:
             "product_type_code": self.product_type_code,
             "category": self.category,
             "company_name": self.company_name,
+            "warehouse_name": self.warehouse_name,
             "model_number": self.attributes.get("model_number", ""),
             "unit": self.attributes.get("unit", ""),
             "rate": self.attributes.get("rate", 0),
@@ -498,6 +514,103 @@ def _number(raw: str, label: str, row: int, minimum: float) -> tuple[float | Non
     return value, None
 
 
+def _stores_by_company(current_user: dict, db: Session) -> dict[str, list[dict]]:
+    """Each company's active stores, main store first, and which the caller may use.
+
+    Main store first in the same order WarehouseService.ensure_company_store
+    picks it, so a row with no Warehouse lands where the Inventory form's
+    stock would.
+    """
+
+    from app.core.warehouse import WAREHOUSE, location_type
+    from app.models.location import Location
+
+    allowed = CompanyScopeService.visible_company_ids(current_user, db)
+    visible = CompanyScopeService.visible_warehouse_ids(current_user, db)
+
+    query = db.query(Location).order_by(
+        Location.is_default.desc(), Location.location_name.asc()
+    )
+
+    found: dict[str, list[dict]] = {}
+
+    for place in query.all():
+        if location_type(place) != WAREHOUSE or place.is_active is False:
+            continue
+
+        company_id = str(place.company_id)
+
+        if allowed is not None and company_id not in allowed:
+            continue
+
+        found.setdefault(company_id, []).append({
+            "id": str(place.id),
+            "name": place.location_name,
+            "code": place.location_code,
+            "usable": visible is None or str(place.id) in visible,
+        })
+
+    return found
+
+
+def _store_for_row(
+    raw: str,
+    company_id: str | None,
+    company_name: str | None,
+    stores: dict[str, list[dict]],
+    row: int,
+    has_stock: bool,
+) -> tuple[dict | None, str | None]:
+    """The store a row's stock goes into, or what is wrong with the Warehouse cell."""
+
+    if not company_id:
+        if raw:
+            return None, (
+                f"Row {row}: Warehouse '{raw}' needs a Company - a store "
+                "belongs to one company. Fill in Company, or leave Warehouse blank."
+            )
+
+        return None, None
+
+    held = stores.get(str(company_id), [])
+    usable = [s for s in held if s["usable"]]
+
+    if raw:
+        wanted = raw.strip().lower()
+        match = next(
+            (
+                s for s in usable
+                if s["name"].strip().lower() == wanted
+                or str(s["code"] or "").strip().lower() == wanted
+            ),
+            None,
+        )
+
+        if match is None:
+            known = ", ".join(s["name"] for s in usable) or "none you work in"
+            return None, (
+                f"Row {row}: '{raw}' is not one of {company_name}'s stores you "
+                f"work in. Yours are: {known}."
+            )
+
+        return match, None
+
+    if not held:
+        # The company has no store yet; its main store is set up on commit.
+        return None, None
+
+    main = held[0]
+
+    if has_stock and not main["usable"]:
+        known = ", ".join(s["name"] for s in usable) or "none"
+        return None, (
+            f"Row {row}: {company_name}'s main store {main['name']} is kept for "
+            f"other roles. Put one of your stores under Warehouse: {known}."
+        )
+
+    return main, None
+
+
 def plan(
     content: bytes,
     filename: str,
@@ -538,6 +651,8 @@ def plan(
         for company_id, name in names.items()
         if allowed is None or company_id in allowed
     }
+
+    stores = _stores_by_company(current_user, db)
 
     # What cover costs is a commercial figure that happens to live on the
     # product record, so only a super admin may set it - the same rule the
@@ -672,6 +787,18 @@ def plan(
 
         errors.extend(cover_problems)
 
+        store, problem = _store_for_row(
+            str(values.get("warehouse", "")).strip(),
+            company_id,
+            names.get(str(company_id)) if company_id else None,
+            stores,
+            row,
+            has_stock=instock > 0,
+        )
+
+        if problem:
+            errors.append(problem)
+
         if len(errors) > before:
             # Something above is wrong with this row. Carry on reading the
             # rest of the sheet - the point is to report all of it at once -
@@ -696,6 +823,8 @@ def plan(
                     category=types[code].category,
                     company_id=company_id,
                     company_name=names.get(str(company_id)) if company_id else None,
+                    warehouse_id=store["id"] if store else None,
+                    warehouse_name=store["name"] if store else None,
                     attributes={
                         "model_number": str(values.get("model_number", "")).strip(),
                         "specification": str(values.get("specification", "")).strip(),
@@ -760,6 +889,8 @@ def plan(
                     category=types[code].category,
                     company_id=company_id,
                     company_name=names.get(str(company_id)) if company_id else None,
+                    warehouse_id=store["id"] if store else None,
+                    warehouse_name=store["name"] if store else None,
                     attributes={
                         "model_number": str(values.get("model_number", "")).strip(),
                         "specification": str(values.get("specification", "")).strip(),
@@ -777,6 +908,113 @@ def plan(
             )
 
     return {"rows": len(rows), "drafts": drafts, "errors": errors}
+
+
+def _post_stock(drafts: list[Draft], filename: str, current_user: dict, db: Session) -> float:
+    """Put each row's In-Stock Qty into its company's store. Does not commit.
+
+    Posted as the Inventory form posts it (OPENING_BALANCE from
+    PRODUCT_FORM), so migrate_stock_to_ledger does not bring it across a
+    second time. A row with no company is shared stock with no store, and
+    is left as it always was.
+    """
+
+    import uuid
+    from datetime import date
+    from decimal import Decimal
+
+    from app.core.stock import OPENING_BALANCE, UNRESTRICTED
+    from app.models.company import Company
+    from app.models.warehouse import WarehouseBin
+    from app.services.procurement.common import actor
+    from app.services.stock import posting
+    from app.services.stock.product_stock import SOURCE
+    from app.services.warehouse_service import WarehouseService
+
+    rows: dict[int, list[Draft]] = {}
+
+    for draft in drafts:
+        if draft.company_id and float(draft.attributes.get("instock") or 0) > 0:
+            rows.setdefault(draft.row, []).append(draft)
+
+    if not rows:
+        return 0.0
+
+    movements: list[posting.Movement] = []
+    main_store: dict[str, str] = {}
+
+    for row, group in sorted(rows.items()):
+        first = group[0]
+        store_id = first.warehouse_id
+
+        if store_id is None:
+            # The company has no store yet: set up its main one, as the
+            # Inventory form would.
+            if first.company_id not in main_store:
+                company = db.query(Company).filter(Company.id == first.company_id).first()
+                if company is None:
+                    raise HTTPException(status_code=404, detail=f"Row {row}: the company was not found.")
+                main_store[first.company_id] = str(WarehouseService.ensure_company_store(db, company).id)
+                db.flush()
+            store_id = main_store[first.company_id]
+
+        # Checked again here, not only in plan(): the store may have been
+        # kept for other roles since the preview.
+        store = CompanyScopeService.assert_warehouse_allowed(current_user, store_id, db)
+        bin_row = (
+            db.query(WarehouseBin)
+            .filter(WarehouseBin.warehouse_id == store.id, WarehouseBin.code == "STORE")
+            .first()
+        )
+        if bin_row is None:
+            WarehouseService.ensure_default_bins(db, store)
+            db.flush()
+            bin_row = (
+                db.query(WarehouseBin)
+                .filter(WarehouseBin.warehouse_id == store.id, WarehouseBin.code == "STORE")
+                .one()
+            )
+
+        serials = [d.serial_number for d in group if d.serial_number]
+        held = Decimal(str(first.attributes.get("instock") or 0))
+
+        if len(serials) == 1 and held != 1:
+            # One code with a quantity (the template's "24 on the shelf"
+            # row) is bulk stock under a lot code, not one serialised unit.
+            serials = []
+
+        quantity = Decimal(len(serials)) if serials else held
+
+        movements.append(posting.Movement(
+            company_id=store.company_id,
+            warehouse_id=store.id,
+            bin_id=bin_row.id,
+            sku=str(first.attributes.get("model_number") or "").strip().upper(),
+            product_name=first.name,
+            stock_status=UNRESTRICTED,
+            quantity=quantity,
+            movement_type=OPENING_BALANCE,
+            source_line_id=str(row),
+            uom=first.attributes.get("unit") or None,
+            serials=serials,
+        ))
+
+    user_id, name = actor(current_user, db)
+
+    posting.post(db, posting.Posting(
+        source_doc_type=SOURCE,
+        source_doc_id=f"UPLOAD-{uuid.uuid4()}",
+        source_doc_number=(filename or "Product upload")[:60],
+        movement_date=date.today(),
+        created_by=str(user_id) if user_id else None,
+        created_by_name=name,
+        approved_by=str(user_id) if user_id else None,
+        approved_by_name=name,
+        remarks="Added with the products on the Inventory upload",
+        movements=movements,
+    ))
+
+    return float(sum(m.quantity for m in movements))
 
 
 def load(
@@ -797,22 +1035,44 @@ def load(
     errors: list[str] = planned["errors"]
 
     created = 0
+    stocked = 0
 
     if commit and not errors and drafts:
-        InventoryService.items_col.insert_many(
-            [
-                {
-                    "name": draft.name,
-                    "serial_number": draft.serial_number,
-                    "product_type_code": draft.product_type_code,
-                    "category": draft.category,
-                    "attributes": draft.attributes,
-                    "image_base64": None,
-                    "company_id": draft.company_id,
-                }
-                for draft in drafts
-            ]
-        )
+        # The stock first, in the open transaction: if it is refused nothing
+        # has been written anywhere. Then the products; and if the stock
+        # cannot be committed after them, they are taken out again, so the
+        # sheet stays all or nothing across both databases.
+        try:
+            stocked = _post_stock(drafts, filename, current_user, db)
+        except Exception:
+            db.rollback()
+            raise
+
+        try:
+            inserted = InventoryService.items_col.insert_many(
+                [
+                    {
+                        "name": draft.name,
+                        "serial_number": draft.serial_number,
+                        "product_type_code": draft.product_type_code,
+                        "category": draft.category,
+                        "attributes": draft.attributes,
+                        "image_base64": None,
+                        "company_id": draft.company_id,
+                    }
+                    for draft in drafts
+                ]
+            )
+        except Exception:
+            db.rollback()
+            raise
+
+        try:
+            db.commit()
+        except Exception:
+            InventoryService.items_col.delete_many({"_id": {"$in": inserted.inserted_ids}})
+            db.rollback()
+            raise
 
         created = len(drafts)
 
@@ -821,6 +1081,7 @@ def load(
         "products": len(drafts),
         "created": created,
         "committed": bool(created),
+        "stocked": stocked,
         "errors": errors,
         "items": [draft.as_preview() for draft in drafts],
     }
@@ -901,6 +1162,7 @@ def template_workbook(db: Session, current_user: dict) -> bytes:
         "SG-IFP-75-A1/SG-IFP-75-A2/SG-IFP-75-A3",
         next(iter(sorted(t.code for t in db.query(ProductType).all())), "IFP"),
         "",
+        "",
         71000,
         58000,
         3,
@@ -915,6 +1177,7 @@ def template_workbook(db: Session, current_user: dict) -> bytes:
         "Tilting, VESA 800x400, up to 90kg",
         "SG-WM-86-0007",
         next(iter(sorted(t.code for t in db.query(ProductType).all())), "IFP"),
+        "",
         "",
         4500,
         "",
@@ -990,9 +1253,11 @@ def template_workbook(db: Session, current_user: dict) -> bytes:
     # What the CRM will accept today, so a sheet is not filled in with
     # product types and units that do not exist.
     reference = book.create_sheet("Reference")
-    reference.append(["Product Type Code", "Product Type", "", "Unit", "", "Company"])
+    reference.append(
+        ["Product Type Code", "Product Type", "", "Unit", "", "Company", "", "Warehouse", "Of Company"]
+    )
 
-    for index in (1, 2, 4, 6):
+    for index in (1, 2, 4, 6, 8, 9):
         cell = reference.cell(row=1, column=index)
         cell.font = white_bold
         cell.fill = heading_fill
@@ -1012,7 +1277,15 @@ def template_workbook(db: Session, current_user: dict) -> bytes:
         if allowed is None or company_id in allowed
     )
 
-    for offset in range(max(len(product_types), len(units), len(companies))):
+    # The stores the person may load stock into, with whose they are.
+    warehouses = sorted(
+        (store["name"], names.get(company_id, ""))
+        for company_id, held in _stores_by_company(current_user, db).items()
+        for store in held
+        if store["usable"]
+    )
+
+    for offset in range(max(len(product_types), len(units), len(companies), len(warehouses))):
         row = offset + 2
 
         if offset < len(product_types):
@@ -1025,7 +1298,11 @@ def template_workbook(db: Session, current_user: dict) -> bytes:
         if offset < len(companies):
             reference.cell(row=row, column=6, value=companies[offset])
 
-    for letter, width in (("A", 22), ("B", 28), ("D", 16), ("F", 34)):
+        if offset < len(warehouses):
+            reference.cell(row=row, column=8, value=warehouses[offset][0])
+            reference.cell(row=row, column=9, value=warehouses[offset][1])
+
+    for letter, width in (("A", 22), ("B", 28), ("D", 16), ("F", 34), ("H", 28), ("I", 34)):
         reference.column_dimensions[letter].width = width
 
     buffer = io.BytesIO()

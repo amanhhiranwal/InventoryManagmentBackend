@@ -73,6 +73,27 @@ def get_grn(
     }
 
 
+@router.get("/{grn_id}/pdf")
+def download_grn_pdf(
+    grn_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_permission(VIEW_GRN)),
+):
+    """The GRN sheet as a PDF, for anyone who can open the GRN."""
+
+    from fastapi.responses import Response
+
+    from app.services.stock import grn_pdf
+
+    grn = GoodsReceiptService.get(grn_id, current_user, db)
+    letterhead = GoodsReceiptService.letterhead(grn_id, current_user, db)
+    return Response(
+        content=grn_pdf.render(grn, letterhead),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{grn_pdf.filename(grn)}"'},
+    )
+
+
 @router.post("/")
 def create_grn(
     request: GrnSave,

@@ -374,6 +374,7 @@ finally:
         for table in ("goods_receipt",):
             session.execute(text(f"delete from {table} where company_id = :c"), {"c": cid_})
     for oid in order_ids:
+        session.execute(text("delete from gate_pass where sales_order_id=:o"), {"o": oid})
         session.execute(text("delete from dispatch_order where sales_order_id=:o"), {"o": oid})
         session.execute(text("delete from sales_order_line where sales_order_id=:o"), {"o": oid})
         session.execute(text("delete from sales_order where id=:o"), {"o": oid})

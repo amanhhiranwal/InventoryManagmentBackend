@@ -233,7 +233,8 @@ try:
     r = api("post", f"/dispatch/{first['id']}/commit", clerk)
     check("the clerk alone cannot commit", r.status_code == 403, str(r.status_code))
     r = api("post", f"/dispatch/{first['id']}/commit", manager)
-    check("commit needs the documents", r.status_code == 400 and "challan" in r.text and "gate pass" in r.text, r.text[:160])
+    # The gate pass number is no longer asked for: it is generated at commit.
+    check("commit needs the documents", r.status_code == 400 and "challan" in r.text and "gate pass" not in r.text, r.text[:160])
     api("put", f"/dispatch/{first['id']}/documents", clerk, json={"challan_no": "DC-1", "gate_pass_no": "GP-1", "vehicle_number": "UP16AB1234",
                                                                   "consignment_value": 400000})
     r = api("post", f"/dispatch/{first['id']}/commit", manager)
@@ -261,6 +262,17 @@ try:
     check("the order shows 4 panels dispatched, 2 to go", avail[PANEL]["qty_dispatched"] == 4 and avail[PANEL]["qty_remaining"] == 2)
     r = api("post", f"/dispatch/{first['id']}/cancel", clerk, json={"reason": "Changed mind"})
     check("a dispatched order cannot be cancelled", r.status_code == 409 and "customer return" in r.text, r.text[:140])
+
+    print("\nGate pass")
+    passes = data(api("get", "/gate-passes/", manager, params={"dispatch_order_id": first["id"]}))
+    check("committing made one gate pass, keeping the number typed on the dispatch",
+          len(passes) == 1 and passes[0]["gate_pass_no"] == "GP-1", str(passes)[:200])
+    check("it lists the four panels by serial and the cables", passes and passes[0]["total_qty"] == 7
+          and sorted(x["serial"] for x in passes[0]["lines"] if x["serial"]) == sorted(SERIALS[:4]), str(passes)[:300])
+    r = api("get", f"/gate-passes/{passes[0]['id']}/pdf", manager) if passes else None
+    check("it downloads as a PDF", r is not None and r.status_code == 200 and r.content[:4] == b"%PDF", str(r and r.status_code))
+    check("someone without dispatch access cannot open it",
+          api("get", f"/gate-passes/{passes[0]['id']}", salesperson).status_code in (403, 404) if passes else False)
 
     print("\nProof of delivery")
     before = scalar("select count(*) from inventory_ledger where company_id=:c", c=a)
@@ -299,6 +311,7 @@ try:
 finally:
     session = SessionLocal()
     for oid in order_ids:
+        session.execute(text("delete from gate_pass where sales_order_id=:o"), {"o": oid})
         session.execute(text("delete from dispatch_order where sales_order_id=:o"), {"o": oid})
         session.execute(text("delete from stock_reservation where so_line_id in (select id from sales_order_line where sales_order_id=:o)"), {"o": oid})
         session.execute(text("delete from sales_order_line where sales_order_id=:o"), {"o": oid})

@@ -150,6 +150,7 @@ finally:
     session = SessionLocal()
     if order_id:
         session.execute(text("delete from sales_order_activity where sales_order_id = :o"), {"o": order_id})
+        session.execute(text("delete from gate_pass where sales_order_id=:o"), {"o": order_id})
         session.execute(text("delete from dispatch_order where sales_order_id = :o"), {"o": order_id})
         session.execute(text("delete from stock_reservation where so_line_id in (select id from sales_order_line where sales_order_id = :o)"), {"o": order_id})
         session.execute(text("delete from sales_order_line where sales_order_id = :o"), {"o": order_id})

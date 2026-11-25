@@ -183,3 +183,37 @@ def set_role_warehouses(role_id: str, request: RoleStoresRequest, db: Session = 
     from app.services.warehouse_service import RoleStoreService
 
     return {"success": True, "message": "Store access saved.", "data": RoleStoreService.set_for_role(role_id, request.warehouse_ids, db)}
+
+
+# ----------------------------------------------------------------------
+# Products shown: which products a role sees on the Inventory list
+# ----------------------------------------------------------------------
+class RoleProductScopeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scope: str = Field(pattern="^(OWN_COMPANIES|ALL_COMPANIES|STORE_STOCK)$")
+
+
+@router.get("/roles/{role_id}/product-scope")
+def get_role_product_scope(
+    role_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_granted("role.read")),
+):
+    """Own companies (the default), all companies, or what is in stock at the role's stores."""
+
+    from app.services.warehouse_service import RoleStoreService
+
+    HierarchyService.assert_role_below(current_user, role_id, db)
+    return {"success": True, "data": RoleStoreService.product_scope_for_role(role_id, db)}
+
+
+@router.put(
+    "/roles/{role_id}/product-scope",
+    dependencies=[Depends(require_super_admin)],
+)
+def set_role_product_scope(role_id: str, request: RoleProductScopeRequest, db: Session = Depends(get_db)):
+    from app.services.warehouse_service import RoleStoreService
+
+    return {"success": True, "message": "Products shown saved.",
+            "data": RoleStoreService.set_product_scope(role_id, request.scope, db)}

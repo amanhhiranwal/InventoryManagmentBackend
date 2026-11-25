@@ -10,6 +10,7 @@ from app.routes.customer import router as customer_router
 from app.routes.customer_type import router as customer_type_router
 from app.routes.dispatch import router as dispatch_router
 from app.routes.fulfilment import router as fulfilment_router
+from app.routes.gate_pass import router as gate_pass_router
 from app.routes.grn import router as grn_router
 from app.routes.inventory import router as inventory_router
 from app.routes.lead import router as lead_router
@@ -79,5 +80,6 @@ api_router.include_router(warranty_term_router)
 api_router.include_router(state_router)
 api_router.include_router(stock_router)
 api_router.include_router(grn_router)
+api_router.include_router(gate_pass_router)
 api_router.include_router(dispatch_router)
 api_router.include_router(transfers_router)

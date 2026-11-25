@@ -79,8 +79,12 @@ class InventoryService:
         return cls.items_col.find_one(query) is not None
 
     @classmethod
-    def _get_in_scope(cls, item_id: str, current_user: dict, db: Session):
-        """An item by id, refused when it belongs to another company."""
+    def _get_in_scope(cls, item_id: str, current_user: dict, db: Session, reading: bool = False):
+        """An item by id, refused when it belongs to another company.
+
+        ``reading``: only looking at it (its picture), which a role shown
+        every company's products may do for any company.
+        """
 
         try:
             obj_id = ObjectId(item_id)
@@ -90,6 +94,9 @@ class InventoryService:
         item = cls.items_col.find_one({"_id": obj_id})
         if item is None:
             raise HTTPException(status_code=404, detail="Inventory item not found.")
+
+        if reading and CompanyScopeService.product_scope(current_user, db) == CompanyScopeService.ALL_COMPANIES:
+            return obj_id, item
 
         allowed = CompanyScopeService.visible_company_ids(current_user, db)
         company_id = item.get("company_id")
@@ -374,8 +381,10 @@ class InventoryService:
     def _scope(cls, search, company_id, current_user, db) -> dict:
         """The catalogue this caller is looking at, before any category."""
 
+        # By the role's "Products shown" (Roles & Access): own companies,
+        # all companies, or only what is in stock at the person's stores.
         query = dict(
-            CompanyScopeService.mongo_filter(current_user or {}, db, company_id)
+            CompanyScopeService.product_list_filter(current_user or {}, db, company_id)
         )
 
         # A unit issued to an order has left the shelf. Its record stays,
@@ -670,7 +679,7 @@ class InventoryService:
     def image_for(cls, item_id: str, current_user: dict = None, db: Session = None):
         """One product's picture, fetched only when something shows it."""
 
-        _, item = cls._get_in_scope(item_id, current_user or {}, db)
+        _, item = cls._get_in_scope(item_id, current_user or {}, db, reading=True)
 
         return item.get("image_base64")
 
