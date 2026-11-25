@@ -738,7 +738,20 @@ class GoodsReceiptService:
         grn.inspected_by = user_id
         grn.inspected_by_name = name
         grn.posted_at = datetime.utcnow()
-        db.commit()
+
+        # Until the ledger is live the desks sell from the Inventory list:
+        # accepted goods go onto it too, and come off again if this fails.
+        from app.services.stock.catalogue_sync import add_accepted_to_catalogue, ledger_off, undo_catalogue
+
+        undo: list = []
+        try:
+            if ledger_off(db):
+                add_accepted_to_catalogue(grn, db, undo)
+            db.commit()
+        except Exception:
+            undo_catalogue(undo)
+            db.rollback()
+            raise
         db.refresh(grn)
         return grn_dict(grn, db)
 

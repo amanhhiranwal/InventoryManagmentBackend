@@ -196,7 +196,7 @@ def check_serial(
         items = SalesOrderService.get_by_id(order_id, db).items or []
         order_line = items[line] if 0 <= line < len(items) else None
 
-    return {"success": True, "data": check(serial, order_line)}
+    return {"success": True, "data": check(serial, order_line, db)}
 
 
 @router.put("/orders/{order_id}/documents")

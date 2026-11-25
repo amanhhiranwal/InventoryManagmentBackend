@@ -456,6 +456,7 @@ class DispatchService:
 
     @staticmethod
     def create(payload, current_user: dict, db: Session) -> dict:
+        _assert_ledger_live(db)
         order = _order(payload.sales_order_id, db, lock=True)
         if not order.dispatch_warehouse_id:
             raise HTTPException(status_code=400, detail="Reserve stock for this order first; that fixes the warehouse it ships from.")
@@ -590,6 +591,7 @@ class DispatchService:
     def commit(do_id: int, current_user: dict, db: Session) -> dict:
         """The goods have left: stock out, once, consuming the reservation."""
 
+        _assert_ledger_live(db)
         do = DispatchService._get(do_id, current_user, db, lock=True)
         if do.status in (DO_DISPATCHED, DO_DELIVERED):
             raise HTTPException(status_code=409, detail=f"{do.do_number} has already been dispatched.")
@@ -766,6 +768,19 @@ def ledger_live(db: Session) -> bool:
 
     row = db.query(AppSetting).filter(AppSetting.key == LEDGER_LIVE_SETTING).first()
     return bool(row and str(row.value).strip().lower() in ("1", "true", "yes", "on"))
+
+
+def _assert_ledger_live(db: Session) -> None:
+    """Dispatch orders take stock out only once the ledger is live. Before
+    that the Logistics desk sends orders out, and a committed dispatch would
+    take the same goods out a second time."""
+
+    if not ledger_live(db):
+        raise HTTPException(
+            status_code=409,
+            detail="Dispatch orders are used once the stock ledger is switched on. "
+                   "Until then, orders go out from the Logistics desk.",
+        )
 
 
 def _goods_lines(order: SalesOrder, db: Session) -> list[SalesOrderLine]:

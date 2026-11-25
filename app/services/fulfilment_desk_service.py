@@ -864,7 +864,7 @@ class FulfilmentDeskService:
         )
 
     @staticmethod
-    def take_serials(order: SalesOrder, serials: list | None) -> list[dict]:
+    def take_serials(order: SalesOrder, serials: list | None, db: Session | None = None) -> list[dict]:
         """Check every serial production named, line by line.
 
         One serial per unit, none twice, every one on the shelf. All the
@@ -911,7 +911,7 @@ class FulfilmentDeskService:
                 )
 
         for pick in picks:
-            result = check_serial(pick["serial"], lines[pick["line"]])
+            result = check_serial(pick["serial"], lines[pick["line"]], db)
 
             if not result["found"] or not result["in_stock"] or not result["matches_line"]:
                 problems.append(result["message"])
@@ -1105,7 +1105,7 @@ class FulfilmentDeskService:
             if live:
                 assert_stock_ready(order, db)
             else:
-                picks = FulfilmentDeskService.take_serials(order, serials)
+                picks = FulfilmentDeskService.take_serials(order, serials, db)
 
         # Out for delivery: logistics name the vehicle and the driver
         # taking it, so the client and the desk know who is on the road.
@@ -1170,6 +1170,7 @@ class FulfilmentDeskService:
                     order,
                     picks,
                     current_user.get("name") or current_user.get("email"),
+                    db,
                 )
             except ValueError as error:
                 raise HTTPException(status_code=409, detail=str(error))

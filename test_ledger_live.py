@@ -78,6 +78,9 @@ def status():
 
 try:
     sql("insert into app_setting (key, value) values (:k, 'true') on conflict (key) do update set value = 'true'", k=LEDGER_LIVE_SETTING)
+    r = api("get", "/stock/ledger-status", admin)
+    check("the screens are told the ledger is live (Stock Out then shows dispatch orders)",
+          r.status_code == 200 and data(r)["live"] is True, r.text[:120])
 
     r = api("post", "/companies/", admin, json={
         "company_name": f"Live Test {TAG}", "company_code": f"LV{TAG}", "email": f"live.{TAG.lower()}@mailinator.com",

@@ -29,6 +29,16 @@ from app.services.stock.documents import StockDocumentService, company_catalogue
 router = APIRouter(prefix="/stock", tags=["Stock"])
 
 
+@router.get("/ledger-status")
+def ledger_status(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Whether the stock ledger is live: dispatch orders, not the order
+    desks, take stock out. The screens show dispatch orders only then."""
+
+    from app.services.stock.dispatch import ledger_live
+
+    return {"success": True, "data": {"live": ledger_live(db)}}
+
+
 @router.get("/summary")
 def stock_summary(
     company_id: Optional[str] = None,

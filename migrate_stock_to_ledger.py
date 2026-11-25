@@ -139,8 +139,11 @@ def main(apply: bool) -> int:
         counted = {
             sku_: Decimal(total or 0)
             for sku_, total in db.query(StockLedger.sku, func.sum(StockLedger.quantity))
-            .filter(StockLedger.company_id == company.id, StockLedger.source_doc_type == "PRODUCT_FORM",
-                    StockLedger.serial_no.is_(None))
+            .filter(StockLedger.company_id == company.id, StockLedger.serial_no.is_(None),
+                    # Accepted on a GRN, which also adds them to the Inventory list.
+                    (StockLedger.source_doc_type == "PRODUCT_FORM")
+                    | ((StockLedger.source_doc_type == "GRN_QC") & (StockLedger.stock_status == UNRESTRICTED)
+                       & (StockLedger.quantity > 0)))
             .group_by(StockLedger.sku)
         }
 

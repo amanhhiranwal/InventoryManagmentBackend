@@ -31,7 +31,7 @@ from decimal import Decimal
 
 from sqlalchemy import text
 
-from app.core.stock import OPENING_BALANCE, UNRESTRICTED
+from app.core.stock import LEDGER_LIVE_SETTING, OPENING_BALANCE, UNRESTRICTED
 from app.database.postgres import SessionLocal
 from app.services.stock import posting
 from seed_sales_team import ADMIN_EMAIL, ADMIN_PASSWORD, TEAM_PASSWORD, api, email_for, login
@@ -144,7 +144,10 @@ def dispatch_rows(do_id):
     return scalar("select count(*) from inventory_ledger where source_doc_type='DISPATCH' and source_doc_id=:d", d=str(do_id))
 
 
+# Dispatch orders run with the ledger live; whatever it was is put back.
+ledger_before = None
 try:
+    ledger_before = scalar("select value from app_setting where key = :k", k=LEDGER_LIVE_SETTING)
     a, b = company("A"), company("B")
     a1, b1 = warehouse(a, "DA"), warehouse(b, "DB")
     store_a = next(x for x in data(api("get", f"/locations/{a1['id']}/bins", admin)) if x["code"] == "STORE")
@@ -207,6 +210,11 @@ try:
     check("the order now ships from A1", scalar("select dispatch_warehouse_id::text from sales_order where id=:o", o=order_id) == a1["id"])
 
     print("\nDispatch order")
+    sql("delete from app_setting where key = :k", k=LEDGER_LIVE_SETTING)
+    r = api("post", "/dispatch/", clerk, json={"sales_order_id": order_id, "lines": [{"so_line_id": panel_line, "qty": 3}]})
+    check("while the ledger is off, a dispatch order is refused (Logistics sends orders out)",
+          r.status_code == 409 and "Logistics" in r.text, r.text[:140])
+    sql("insert into app_setting (key, value) values (:k, 'true') on conflict (key) do update set value = 'true'", k=LEDGER_LIVE_SETTING)
     r = api("post", "/dispatch/", clerk, json={"sales_order_id": order_id, "lines": [{"so_line_id": panel_line, "qty": 7}]})
     check("more than is reserved cannot go on a dispatch", r.status_code == 422 or (r.status_code == 400 and "reserved" in r.text), r.text[:140])
     r = api("post", "/dispatch/", clerk, json={"sales_order_id": order_id,
@@ -309,6 +317,10 @@ try:
     check("balances agree with the ledger", mismatches == [], str(mismatches))
     check("company B's panels were never touched", balance(b, b1["id"], PANEL) == (2.0, 0.0))
 finally:
+    if ledger_before is None:
+        sql("delete from app_setting where key = :k", k=LEDGER_LIVE_SETTING)
+    else:
+        sql("update app_setting set value = :v where key = :k", v=ledger_before, k=LEDGER_LIVE_SETTING)
     session = SessionLocal()
     for oid in order_ids:
         session.execute(text("delete from gate_pass where sales_order_id=:o"), {"o": oid})

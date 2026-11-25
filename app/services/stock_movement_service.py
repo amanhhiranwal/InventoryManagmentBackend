@@ -145,16 +145,16 @@ def apply_for_stage(order, previous: str, db, actor: str | None = None) -> list[
         if status in ISSUE_FALLBACK:
             # Already issued by serial when production marked it ready,
             # in which case this finds it logged and does nothing.
-            return _move(order, OUT, actor)
+            return _move(order, OUT, actor, db)
 
         if status in RETURN_AT and _logged(order.id, OUT) and not _logged(order.id, IN):
             if movements_col.count_documents(
                 {"order_id": int(order.id), "direction": OUT, "by_serial": True},
                 limit=1,
             ):
-                return _return_serials(order, actor)
+                return _return_serials(order, actor, db)
 
-            return _move(order, IN, actor)
+            return _move(order, IN, actor, db)
     except Exception:  # noqa: BLE001 - never block the order's own move
         logger.exception(
             "Could not move stock for order %s reaching %s",
@@ -165,7 +165,7 @@ def apply_for_stage(order, previous: str, db, actor: str | None = None) -> list[
     return []
 
 
-def _move(order, direction: str, actor: str | None) -> list[dict]:
+def _move(order, direction: str, actor: str | None, db=None) -> list[dict]:
     if _logged(order.id, direction):
         return []
 
@@ -175,8 +175,9 @@ def _move(order, direction: str, actor: str | None) -> list[dict]:
     by_name = {str(i.get("name") or "").strip().lower(): i for i in items}
 
     moved: list[dict] = []
+    touched: list[tuple[dict, float, int]] = []
 
-    for line in order.items or []:
+    for index, line in enumerate(order.items or []):
         item = _match(line, by_serial, by_name)
         quantity = _wanted(line)
 
@@ -205,6 +206,7 @@ def _move(order, direction: str, actor: str | None) -> list[dict]:
 
         _set_stock(item, after)
         _write(order, item, quantity, direction, before, after, actor)
+        touched.append((item, quantity, index))
 
         moved.append({
             "product": item.get("name"),
@@ -215,7 +217,45 @@ def _move(order, direction: str, actor: str | None) -> list[dict]:
             "direction": direction,
         })
 
+    if db is not None and touched:
+        _store_side(order, direction, touched, db)
+
     return moved
+
+
+def _store_side(order, direction: str, touched: list[tuple[dict, float, int]], db) -> None:
+    """Until the ledger is live, the same goods leave (or go back to) their
+    store in the ledger. Never blocks the order's own move: a failure is
+    rolled back and logged, and the Inventory list keeps what it did."""
+
+    from app.services.stock.catalogue_sync import (
+        ledger_off,
+        put_back_in_store,
+        put_counted_back,
+        serial_place,
+        take_counted_out,
+        take_out_of_store,
+    )
+
+    try:
+        if not ledger_off(db):
+            return
+        if direction == OUT:
+            for item, quantity, index in touched:
+                serial = str(item.get("serial_number") or "").strip().upper()
+                if serial and serial_place(db, serial, item.get("company_id")) is not None:
+                    take_out_of_store(order, [serial], {serial: item.get("company_id")}, db)
+                else:
+                    take_counted_out(order, item, quantity, index, db)
+        else:
+            serials = [str(i.get("serial_number") or "").strip().upper() for i, _, _ in touched if i.get("serial_number")]
+            if serials:
+                put_back_in_store(order, serials, db)
+            put_counted_back(order, db)
+        db.commit()
+    except Exception:  # noqa: BLE001 - never block the order's own move
+        db.rollback()
+        logger.exception("Order %s: the store ledger could not follow the %s move", order.order_number, direction)
 
 
 def for_order(order_id: int) -> list[dict]:
@@ -318,7 +358,7 @@ def belongs_to_line(unit: dict, line: dict | None) -> bool:
     return bool(names & {_key(unit.get("name")), _key(attributes.get("model_number"))})
 
 
-def check_serial(serial: str, line: dict | None = None) -> dict:
+def check_serial(serial: str, line: dict | None = None, db=None) -> dict:
     """Whether a serial can be issued against this line, as production types it.
 
     It has to be a unit on the shelf, in stock, and the product the line
@@ -358,7 +398,29 @@ def check_serial(serial: str, line: dict | None = None) -> dict:
     model = attributes.get("model_number")
     what = f"{unit.get('name')}" + (f" ({model})" if model else "")
 
+    # Until the ledger is live, the store ledger says which store holds the
+    # unit, and refuses one that is not on the shelf there.
+    place = None
+    if db is not None:
+        from app.services.stock.catalogue_sync import ledger_off, serial_place
+
+        if ledger_off(db):
+            place = serial_place(db, unit.get("serial_number") or text, unit.get("company_id"))
+
+    if place is not None and place["status"] != "IN_STOCK" and held > 0:
+        return {
+            "serial": unit.get("serial_number") or text,
+            "found": True,
+            "in_stock": False,
+            "product": unit.get("name"),
+            "model_number": model,
+            "matches_line": matches,
+            "store": place["store"],
+            "message": f"{unit.get('serial_number') or text} is {place['status_label']} at {place['store']}, not on the shelf.",
+        }
+
     return {
+        "store": place["store"] if place else None,
         "serial": unit.get("serial_number") or text,
         "found": True,
         "in_stock": held > 0,
@@ -388,7 +450,7 @@ def place_of(order) -> str:
     return ", ".join(parts) or (order.state or "")
 
 
-def issue_serials(order, picks: list[dict], actor: str | None) -> list[dict]:
+def issue_serials(order, picks: list[dict], actor: str | None, db=None) -> list[dict]:
     """Take each named unit off the shelf for this order.
 
     ``picks`` is ``[{"line": index, "serial": "..."}]``, already validated
@@ -401,6 +463,26 @@ def issue_serials(order, picks: list[dict], actor: str | None) -> list[dict]:
     place = place_of(order)
     lines = order.items or []
     moved: list[dict] = []
+
+    # Until the ledger is live, each serial also leaves the store the ledger
+    # holds it in - first, so a refusal leaves the catalogue untouched.
+    # Does not commit: the desk's decision commits it with the order.
+    if db is not None:
+        from app.services.stock.catalogue_sync import ledger_off, take_counted_out, take_out_of_store
+
+        if ledger_off(db):
+            owners = {}
+            for pick in picks:
+                unit = _unit(pick["serial"])
+                owners[str(pick["serial"]).strip().upper()] = unit.get("company_id") if unit else None
+            tracked = set(take_out_of_store(order, list(owners), owners, db))
+            # A code the ledger does not hold as a serial (a lot code on
+            # counted goods) is one unit of that product, by quantity.
+            for pick in picks:
+                code = str(pick["serial"]).strip().upper()
+                unit = _unit(pick["serial"])
+                if code not in tracked and unit is not None and unit.get("company_id"):
+                    take_counted_out(order, unit, 1, int(pick.get("line") or 0), db)
 
     for pick in picks:
         index = int(pick.get("line") or 0)
@@ -453,10 +535,11 @@ def issue_serials(order, picks: list[dict], actor: str | None) -> list[dict]:
     return moved
 
 
-def _return_serials(order, actor: str | None) -> list[dict]:
+def _return_serials(order, actor: str | None, db=None) -> list[dict]:
     """Put back every unit this order issued by serial."""
 
     moved: list[dict] = []
+    returned: list[str] = []
 
     for row in list(movements_col.find({"order_id": int(order.id), "direction": OUT, "by_serial": True})):
         from bson import ObjectId
@@ -484,6 +567,7 @@ def _return_serials(order, actor: str | None) -> list[dict]:
             order, unit, 1, IN, before, after, actor,
             by_serial=True, line=row.get("line"), place=row.get("place"),
         )
+        returned.append(str(unit.get("serial_number") or ""))
 
         moved.append({
             "product": unit.get("name"),
@@ -493,6 +577,21 @@ def _return_serials(order, actor: str | None) -> list[dict]:
             "stock_after": after,
             "direction": IN,
         })
+
+    # Until the ledger is live, they go back into the store they left.
+    if db is not None and returned:
+        from app.services.stock.catalogue_sync import ledger_off, put_back_in_store
+
+        if ledger_off(db):
+            from app.services.stock.catalogue_sync import put_counted_back
+
+            try:
+                put_back_in_store(order, returned, db)
+                put_counted_back(order, db)
+                db.commit()
+            except Exception:  # noqa: BLE001 - never block the order's own move
+                db.rollback()
+                logger.exception("Order %s: the store ledger could not take its units back", order.order_number)
 
     return moved
 
