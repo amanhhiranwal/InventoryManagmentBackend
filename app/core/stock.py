@@ -223,3 +223,15 @@ PERMISSIONS.update({
     CREATE_COUNT: "Start a stock count for a warehouse and enter the counted quantities",
     APPROVE_COUNT: "Approve a stock count, which posts the differences as adjustments",
 })
+
+# ----------------------------------------------------------------------
+# Reports
+# ----------------------------------------------------------------------
+#: Seeing stock reports needs stock.read; downloading them and seeing what
+#: stock is worth are separate ticks.
+REPORT_EXPORT = "stock.report.export"
+VALUATION_VIEW = "stock.valuation.view"
+PERMISSIONS.update({
+    REPORT_EXPORT: "Download stock reports as CSV",
+    VALUATION_VIEW: "See stock value: costs, valuation and the value columns of reports",
+})

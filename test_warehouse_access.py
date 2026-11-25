@@ -25,6 +25,14 @@ TAG = uuid.uuid4().hex[:6].upper()
 passed, failed = [], []
 
 
+def session_scalar(statement, **params):
+    session = SessionLocal()
+    try:
+        return session.execute(text(statement), params).scalar()
+    finally:
+        session.close()
+
+
 def check(name, condition, detail=""):
     (passed if condition else failed).append(name)
     print(("  PASS  " if condition else "  FAIL  ") + name + (f"   [{detail}]" if detail and not condition else ""))
@@ -149,7 +157,12 @@ try:
     session.close()
     person = login(email, TEAM_PASSWORD)
 
-    check("with no grant they see no warehouses", data(mine(person)) == [], str(data(mine(person))))
+    # Each company is one place: with no particular grant, a person works in
+    # their own company's stores - and never another company's.
+    seen = data(mine(person))
+    check("with no grant they see their own company's stores", seen and all(w["company_id"] == a for w in seen), str(seen))
+    check("and none of another company's", not any(w["company_id"] == b for w in seen), str(seen))
+    check("and never an office", office_a["id"] not in {w["id"] for w in seen}, str(seen))
     r = set_access([a], [noida_b["id"]])
     check("a warehouse of a company not on the profile is refused", r.status_code == 400 and "not on this person's profile" in r.text,
           f"{r.status_code} {r.text[:140]}")
@@ -164,7 +177,22 @@ try:
     check("saving the same grant again keeps one grant", r.status_code == 200 and data(r).get("warehouse_ids") == [noida_a["id"]])
 
     seen = data(mine(person))
-    check("they see exactly that warehouse", [w["id"] for w in seen] == [noida_a["id"]], str(seen))
+    # A store given to particular people or roles is kept for them; one
+    # given to nobody stays open to its company.
+    store_a = session_scalar("select id::text from locations where company_id = :c and location_code like '%-STORE'", c=a)
+    check("they see that warehouse and their company's open store", {w["id"] for w in seen} == {noida_a["id"], store_a}, str(seen))
+
+    other_role = next(r for name, r in roles.items() if name != "Inventory")
+    r = api("put", f"/rbac/roles/{other_role['id']}/warehouses", admin, json={"warehouse_ids": [store_a]})
+    check("Roles & Access gives the store to another role", r.status_code == 200 and any(x["id"] == store_a and x["given"] for x in data(r)), r.text[:160])
+    check("so it is kept for that role: this person no longer sees it", store_a not in {w["id"] for w in data(mine(person))})
+    r = api("put", f"/rbac/roles/{roles['Inventory']['id']}/warehouses", person, json={"warehouse_ids": [store_a]})
+    check("only a super admin gives stores to roles", r.status_code == 403, str(r.status_code))
+    r = api("put", f"/rbac/roles/{roles['Inventory']['id']}/warehouses", admin, json={"warehouse_ids": [store_a]})
+    check("given to their own role too, they see it again", r.status_code == 200 and store_a in {w["id"] for w in data(mine(person))})
+    for role in (other_role, roles["Inventory"]):
+        api("put", f"/rbac/roles/{role['id']}/warehouses", admin, json={"warehouse_ids": []})
+    check("taken off both roles, it is open to the company again", store_a in {w["id"] for w in data(mine(person))})
     r = mine(person, company_id=b)
     check("asking for another company's warehouses is refused", r.status_code == 403, str(r.status_code))
     everyone = {w["id"] for w in data(mine(admin))}

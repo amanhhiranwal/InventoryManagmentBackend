@@ -270,8 +270,17 @@ try:
     check("B asking for A's warehouse is not found", r.status_code == 404, str(r.status_code))
     r = api("get", f"/stock/opening/{doc['id']}", viewer_b)
     check("B cannot open A's document by id", r.status_code == 404, str(r.status_code))
-    check("A2 (same company, no access granted) is not visible to the maker",
+    # A store kept for another role (Roles & Access) is not the maker's,
+    # even within their own company.
+    kept_for = str(uuid.uuid4())
+    sql("insert into roles (id, role_name, description, created_at, updated_at) values (:i, :n, 'stock test', now(), now())",
+        i=kept_for, n=f"Stock Test keeper {TAG}")
+    sql("insert into role_warehouses (id, role_id, warehouse_id, created_at, updated_at) values (:i, :r, :w, now(), now())",
+        i=str(uuid.uuid4()), r=kept_for, w=a2["id"])
+    check("A2 (same company, kept for another role) is not visible to the maker",
           api("get", "/stock/balances", maker, params={"warehouse_id": a2["id"]}).status_code == 404)
+    sql("delete from role_warehouses where role_id = :r", r=kept_for)
+    sql("delete from roles where id = :r", r=kept_for)
     posting_error = None
     session = SessionLocal()
     try:

@@ -1,8 +1,12 @@
+import logging
+
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.company import Company
 from app.repositories.company_repository import CompanyRepository
+
+logger = logging.getLogger(__name__)
 
 
 class CompanyService:
@@ -52,6 +56,23 @@ class CompanyService:
             db,
             company,
         )
+
+        # Each company is one place: its store is set up with it, so stock
+        # can be received and sent from day one without choosing a warehouse.
+        from app.services.warehouse_service import WarehouseService
+
+        # The company is already saved; a store that cannot be set up is
+        # reported, not allowed to fail the company it belongs to.
+        try:
+            WarehouseService.ensure_company_store(db, company)
+            db.commit()
+        except Exception:  # noqa: BLE001 - logged below, and the store can be added under Locations
+            db.rollback()
+            logger.exception(
+                "Company %s was created but its store could not be set up; add one under Masters > Locations.",
+                company.company_code,
+            )
+        db.refresh(company)
 
         if getattr(request, "user_id", None):
             from uuid import UUID

@@ -202,7 +202,8 @@ class StockCountService:
                 product = catalogue_product(sku, str(c.company_id)) if sku else None
                 if product is None:
                     raise HTTPException(status_code=400, detail=f"{sku or 'A found product'} is not in this company's product catalogue.")
-                bin_row = bins.get(str(entry.bin_id)) if entry.bin_id else (bins.get(str(c.bin_id)) if c.bin_id else None)
+                main = next((x for x in bins.values() if x.code == "STORE"), None)
+                bin_row = bins.get(str(entry.bin_id)) if entry.bin_id else (bins.get(str(c.bin_id)) if c.bin_id else main)
                 if bin_row is None or bin_row.bin_type != "STORE" or (c.bin_id and bin_row.id != c.bin_id):
                     raise HTTPException(status_code=400, detail=f"{sku}: choose the store bin it was found in.")
                 if (str(bin_row.id), sku) in have:

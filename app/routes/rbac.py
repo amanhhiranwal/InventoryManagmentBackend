@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.controllers.rbac_controller import RBACController
@@ -146,3 +147,39 @@ def remove_permission(
         permission_id,
         db,
     )
+
+
+# ----------------------------------------------------------------------
+# Store access: which stores a role works in
+# ----------------------------------------------------------------------
+class RoleStoresRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    warehouse_ids: list[str] = Field(default_factory=list, max_length=500)
+
+
+@router.get("/roles/{role_id}/warehouses")
+def get_role_warehouses(
+    role_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_granted("role.read")),
+):
+    """Every store, and whether this role is given it."""
+
+    from app.services.warehouse_service import RoleStoreService
+
+    HierarchyService.assert_role_below(current_user, role_id, db)
+    return {"success": True, "data": RoleStoreService.list_for_role(role_id, db)}
+
+
+@router.put(
+    "/roles/{role_id}/warehouses",
+    dependencies=[Depends(require_super_admin)],
+)
+def set_role_warehouses(role_id: str, request: RoleStoresRequest, db: Session = Depends(get_db)):
+    """Give the role exactly these stores. A store given to any role or person
+    is then kept for them alone."""
+
+    from app.services.warehouse_service import RoleStoreService
+
+    return {"success": True, "message": "Store access saved.", "data": RoleStoreService.set_for_role(role_id, request.warehouse_ids, db)}

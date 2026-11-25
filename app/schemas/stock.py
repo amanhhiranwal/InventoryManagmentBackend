@@ -274,3 +274,18 @@ class CountRecord(BaseModel):
 
     lines: list[CountEntry] = Field(default_factory=list, max_length=2000)
     found: list[CountFound] = Field(default_factory=list, max_length=300)
+
+
+class ProductStockIn(BaseModel):
+    """Stock added with a product on the Inventory page."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    company_id: UUID
+    #: Which of the company's stores; left out, its default store.
+    warehouse_id: UUID | None = None
+    sku: str = Field(..., min_length=1, max_length=100)
+    quantity: Decimal = Field(..., gt=0, max_digits=14, decimal_places=3)
+    serials: list[str] = Field(default_factory=list, max_length=5000)
+    #: One per save, so a retried request posts once.
+    request_id: UUID

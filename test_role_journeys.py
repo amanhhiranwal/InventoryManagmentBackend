@@ -92,7 +92,7 @@ SIDEBARS = {
         ("Users", []),
         ("Technology", ["Production"]),
         # Stock Out is the super admin's until Roles & Access hands it out.
-        ("SCM", ["Inventory", "Logistics", "Stock Out"]),
+        ("SCM", ["Inventory", "Stock", "Stock In", "Stock Out", "Logistics"]),
         ("Customers", []),
         # Accounts approve and pay PO instalments from the Payment Calendar.
         ("Accounts", ["Accounts Desk", "Payment Calendar"]),

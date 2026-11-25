@@ -318,11 +318,19 @@ def warehouses(db) -> str:
     for location in db.query(Location).all():
         bins += WarehouseService.ensure_default_bins(db, location)
 
+    # Every company has its store: the one place its stock is kept.
+    from app.models.company import Company
+
+    before = db.query(Location.id).count()
+    for company in db.query(Company).all():
+        WarehouseService.ensure_company_store(db, company)
+    stores = db.query(Location.id).count() - before
+
     db.commit()
 
-    if not untyped and not bins:
+    if not untyped and not bins and not stores:
         return "nothing to do"
-    return f"{untyped} location(s) typed as warehouse, {bins} standard bin(s) created"
+    return f"{untyped} location(s) typed as warehouse, {stores} company store(s) and {bins} standard bin(s) created"
 
 
 STEPS = [

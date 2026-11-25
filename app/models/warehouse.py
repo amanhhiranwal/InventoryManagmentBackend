@@ -61,3 +61,29 @@ class UserWarehouse(BaseModel):
         nullable=False,
         index=True,
     )
+
+
+class RoleWarehouse(BaseModel):
+    """A store given to a role in Roles & Access.
+
+    A store given to any role is kept for those roles: only people of those
+    roles, or given it themselves under Users, work in it. A store given to
+    no role is open to everyone of its company.
+    """
+
+    __tablename__ = "role_warehouses"
+    __table_args__ = (
+        UniqueConstraint("role_id", "warehouse_id", name="uq_role_warehouse"),
+    )
+
+    role_id: Mapped[UUID] = mapped_column(
+        ForeignKey("roles.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    warehouse_id: Mapped[UUID] = mapped_column(
+        ForeignKey("locations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )

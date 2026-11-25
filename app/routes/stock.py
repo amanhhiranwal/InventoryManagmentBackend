@@ -20,7 +20,7 @@ from app.core.stock import (
 from app.database.dependencies import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.middleware.permission_middleware import require_permission, require_super_admin
-from app.schemas.stock import DocumentCreate, DocumentUpdate, RejectRequest
+from app.schemas.stock import DocumentCreate, DocumentUpdate, ProductStockIn, RejectRequest
 from app.services.company_scope_service import CompanyScopeService
 from app.services.procurement.common import has_permission
 from app.services.stock import queries
@@ -168,3 +168,64 @@ def _document_routes(path: str, doc_type: str, noun: str) -> None:
 _document_routes("opening", OPENING, "Opening stock")
 _document_routes("adjustments", ADJUSTMENT_IN, "Adjustment")
 _document_routes("vendor-returns", VENDOR_RETURN_DOC, "Vendor return")
+
+
+# ----------------------------------------------------------------------
+# Reports and the inventory overview
+# ----------------------------------------------------------------------
+@router.get("/overview")
+def stock_overview(
+    company_id: Optional[str] = None,
+    warehouse_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_permission(VIEW_STOCK)),
+):
+    from app.services.stock.reports import StockReportService
+
+    return {"success": True, "data": StockReportService.overview(current_user, db, company_id=company_id, warehouse_id=warehouse_id)}
+
+
+@router.get("/reports/{kind}")
+def stock_report(
+    kind: str,
+    company_id: Optional[str] = None,
+    warehouse_id: Optional[str] = None,
+    group_by: str = "product",
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    days: Optional[int] = Query(None, ge=1, le=3650),
+    format: str = Query("json", pattern="^(json|csv)$"),
+    db: Session = Depends(get_db),
+    current_user=Depends(require_permission(VIEW_STOCK)),
+):
+    """One report as rows, or as a CSV download (needs stock.report.export)."""
+
+    from fastapi.responses import Response
+
+    from app.core.stock import REPORT_EXPORT
+    from app.services.stock.reports import StockReportService
+
+    if format == "csv" and not has_permission(current_user, REPORT_EXPORT, db):
+        raise HTTPException(status_code=403, detail="Downloading reports needs its own permission.")
+    result = StockReportService.run(kind, current_user, db, company_id=company_id, warehouse_id=warehouse_id,
+                                    group_by=group_by, date_from=date_from, date_to=date_to, days=days)
+    if format == "csv":
+        return Response(
+            content=StockReportService.to_csv(result),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="stock_{kind}_{date.today().isoformat()}.csv"'},
+        )
+    return {"success": True, "data": result}
+
+
+@router.post("/product-stock")
+def product_stock(
+    request: ProductStockIn,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_permission("inventory.create")),
+):
+    """A product's In-Stock, saved on the Inventory page, into its company's store."""
+
+    from app.services.stock.product_stock import put_product_in_stock
+
+    return {"success": True, "data": put_product_in_stock(request, current_user, db)}

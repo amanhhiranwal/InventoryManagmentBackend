@@ -62,6 +62,51 @@ def warehouse_dict(row: Location, company_names: dict[str, str]) -> dict:
 class WarehouseService:
 
     # ------------------------------------------------------------------
+    @staticmethod
+    def ensure_company_store(db: Session, company) -> Location:
+        """The company's store: its one warehouse, created if it has none.
+
+        Each company is one place (Synergy Global - Noida, ...), so stock
+        needs no choosing of warehouses: it is the company's store. A
+        company that already has a warehouse keeps it; the default one, or
+        the first, is its store. Does not commit.
+        """
+
+        held = (
+            db.query(Location)
+            .filter(Location.company_id == company.id)
+            .order_by(Location.is_default.desc(), Location.location_name.asc())
+            .all()
+        )
+        store = next((w for w in held if location_type(w) == WAREHOUSE and w.is_active is not False), None)
+        if store is not None:
+            WarehouseService.ensure_default_bins(db, store)
+            return store
+
+        base = f"{(company.company_code or 'CO').upper()}-STORE"
+        code, n = base, 1
+        while db.query(Location.id).filter(Location.location_code == code).first():
+            n += 1
+            code = f"{base}-{n}"
+        store = Location(
+            company_id=company.id,
+            location_name=f"{company.city or company.company_name} Store",
+            location_code=code,
+            address_line_1=getattr(company, "address_line_1", None),
+            city=company.city,
+            state=getattr(company, "state", None),
+            country=getattr(company, "country", None),
+            postal_code=getattr(company, "postal_code", None),
+            is_default=not any(w.is_default for w in held),
+            location_type=WAREHOUSE,
+            is_active=True,
+        )
+        db.add(store)
+        db.flush()
+        WarehouseService.ensure_default_bins(db, store)
+        return store
+
+    # ------------------------------------------------------------------
     # Bins
     # ------------------------------------------------------------------
     @staticmethod
@@ -318,3 +363,65 @@ class WarehouseService:
 
         for warehouse_id in wanted - set(existing):
             db.add(UserWarehouse(user_id=user.id, warehouse_id=UUID(warehouse_id)))
+
+
+class RoleStoreService:
+    """Which stores a role is given, from Roles & Access."""
+
+    @staticmethod
+    def _role(role_id, db: Session):
+        from app.models.role import Role
+
+        role = db.query(Role).filter(Role.id == _uuid(role_id, "role")).first()
+        if role is None:
+            raise HTTPException(status_code=404, detail="Role not found.")
+        return role
+
+    @staticmethod
+    def list_for_role(role_id, db: Session) -> list[dict]:
+        """Every store, saying whether this role is given it and whether it
+        is kept for particular roles at all."""
+
+        from app.models.warehouse import RoleWarehouse
+
+        role = RoleStoreService._role(role_id, db)
+        given = {str(w) for (w,) in db.query(RoleWarehouse.warehouse_id).filter(RoleWarehouse.role_id == role.id)}
+        kept = {str(w) for (w,) in db.query(RoleWarehouse.warehouse_id)}
+        names = CompanyScopeService.company_names(db)
+        stores = [w for w in db.query(Location).all() if location_type(w) == WAREHOUSE]
+        stores.sort(key=lambda w: (names.get(str(w.company_id), ""), w.location_name or ""))
+        return [
+            {
+                "id": str(w.id),
+                "location_name": w.location_name,
+                "location_code": w.location_code,
+                "company_id": str(w.company_id),
+                "company_name": names.get(str(w.company_id)),
+                "is_active": w.is_active,
+                "given": str(w.id) in given,
+                "kept": str(w.id) in kept,
+            }
+            for w in stores
+        ]
+
+    @staticmethod
+    def set_for_role(role_id, warehouse_ids: list[str], db: Session) -> list[dict]:
+        from app.models.warehouse import RoleWarehouse
+
+        role = RoleStoreService._role(role_id, db)
+        wanted = set()
+        for raw in warehouse_ids:
+            key = _uuid(raw, "store")
+            store = db.query(Location).filter(Location.id == key).first()
+            if store is None or location_type(store) != WAREHOUSE:
+                raise HTTPException(status_code=404, detail="Store not found.")
+            wanted.add(key)
+        dropped = db.query(RoleWarehouse).filter(RoleWarehouse.role_id == role.id)
+        if wanted:
+            dropped = dropped.filter(RoleWarehouse.warehouse_id.notin_(wanted))
+        dropped.delete(synchronize_session=False)
+        have = {w for (w,) in db.query(RoleWarehouse.warehouse_id).filter(RoleWarehouse.role_id == role.id)}
+        for key in wanted - have:
+            db.add(RoleWarehouse(role_id=role.id, warehouse_id=key))
+        db.commit()
+        return RoleStoreService.list_for_role(role_id, db)

@@ -28,6 +28,8 @@ RENAMED_DEFAULT_TITLES = {
 #: "Users" and the name is freed up for the desk.
 RENAMED_BY_PATH = {
   ("Accounts", "/users"): "Users",
+  # Briefly called Products; the catalogue is Inventory again.
+  ("Products", "/inventory"): "Inventory",
 }
 
 #: Default headings renamed with what is under them, matched on the old
@@ -49,6 +51,8 @@ RENAMED_DEFAULT_GROUPS = {
 #: or already moved is left where it is.
 MOVED_UNDER_HEADING = {
     ("Inventory", "/inventory"): "SCM",
+    # The same page after its rename to Products, which runs first.
+    ("Products", "/inventory"): "SCM",
 }
 
 #: Default icons changed after they shipped: (title, old icon) -> new icon.
@@ -87,6 +91,35 @@ RETIRED_DEFAULT_CHILDREN = {
     ("Approved Orders", "/fulfilment/coordination"),
     # A requisition's cost centre is now the company it is for.
     ("Cost Centers", "/cost-centers"),
+    # SCM regrouped into Products, Stock, Stock In, Stock Out, Logistics:
+    # these are tabs of the Stock and Stock Out pages now.
+    ("Warehouse", "/inventory/warehouse"),
+    ("Transfers", "/inventory/transfers"),
+    ("Stock Count", "/inventory/counts"),
+    ("Dispatch", "/inventory/dispatch"),
+}
+
+#: Default pages whose view permission changed: (title, path) -> (old, new).
+#: A row still on the old key moves; one somebody changed is left alone.
+#: Stock Out now opens on dispatch orders; its earlier issued-units record
+#: keeps stock_out.read as a tick inside the page.
+REKEYED_DEFAULT_CHILDREN = {
+    ("Stock Out", "/inventory/stock-out"): ("stock_out.read", "dispatch.read"),
+}
+
+#: Pages shown in the sidebar for more than their own permission: path ->
+#: other permissions that also open it. Stock Out holds both dispatch
+#: orders (dispatch.read) and the earlier issued-units record
+#: (stock_out.read); either is a reason to see it.
+SIDEBAR_ALSO_FOR = {
+    "/inventory/stock-out": ("stock_out.read",),
+}
+
+#: Default pages under a heading that moved: (title, path) -> (olds, new).
+MOVED_CHILD_ORDER = {
+    ("Logistics", "/fulfilment/logistics"): ((2,), 5),
+    # Some databases have it at 3, level with Stock In.
+    ("Stock Out", "/inventory/stock-out"): ((3,), 4),
 }
 
 #: Top-level menus the design moved: title -> (old defaults, new default).
@@ -168,19 +201,16 @@ DEFAULT_MENUS_DATA = [
     "permission_key": "inventory.read",
     "order_index": 7,
     "children": [
+      # The catalogue: what is sold, with a product's stock per warehouse.
       {"title": "Inventory", "icon": "LuPackage", "path": "/inventory", "permission_key": "inventory.read", "order_index": 1},
-      {"title": "Logistics", "icon": "LuTruck", "path": "/fulfilment/logistics", "permission_key": "logistics_desk.read", "order_index": 2},
-      # Goods received at a warehouse (GRN) and their quality check.
+      # Stock on the shelf and everything that moves it there: ledger,
+      # transfers, counts, adjustments, opening stock, vendor returns.
+      {"title": "Stock", "icon": "LuWarehouse", "path": "/inventory/stock", "permission_key": "stock.read", "order_index": 2},
+      # Goods arriving: GRN, quality check, customer returns.
       {"title": "Stock In", "icon": "LuPackagePlus", "path": "/inventory/stock-in", "permission_key": "grn.read", "order_index": 3},
-      {"title": "Stock Out", "icon": "LuPackageMinus", "path": "/inventory/stock-out", "permission_key": "stock_out.read", "order_index": 4},
-      # Stock held per warehouse, from the stock ledger, and opening stock.
-      {"title": "Warehouse", "icon": "LuWarehouse", "path": "/inventory/warehouse", "permission_key": "stock.read", "order_index": 5},
-      # Reserving stock for sales orders and sending it out: dispatch orders.
-      {"title": "Dispatch", "icon": "LuTruck", "path": "/inventory/dispatch", "permission_key": "dispatch.read", "order_index": 6},
-      # Moving stock between two warehouses of one company.
-      {"title": "Transfers", "icon": "LuArrowLeftRight", "path": "/inventory/transfers", "permission_key": "stock.read", "order_index": 7},
-      # Counting the shelf and posting the differences.
-      {"title": "Stock Count", "icon": "LuListChecks", "path": "/inventory/counts", "permission_key": "stock.read", "order_index": 8},
+      # Goods leaving: dispatch orders, and the earlier issued-units record.
+      {"title": "Stock Out", "icon": "LuPackageMinus", "path": "/inventory/stock-out", "permission_key": "dispatch.read", "order_index": 4},
+      {"title": "Logistics", "icon": "LuTruck", "path": "/fulfilment/logistics", "permission_key": "logistics_desk.read", "order_index": 5},
     ]
   },
   {
@@ -444,12 +474,13 @@ class MenuService:
                     db.flush()
                     rows.append(parent)
 
+                # By path: the default may have been renamed since it moved.
                 spec = next(
                     c
                     for g in DEFAULT_MENUS_DATA
                     if g["title"] == heading
                     for c in g["children"]
-                    if c["title"] == title
+                    if (c.get("path") or "") == path
                 )
 
                 row.parent_id = parent.id
@@ -484,6 +515,18 @@ class MenuService:
             rows = [
                 r for r in rows if r.id not in gone and r.parent_id not in gone
             ]
+
+        for row in rows:
+            if row.parent_id is None:
+                continue
+            rekey = REKEYED_DEFAULT_CHILDREN.get((row.title, row.path or ""))
+            if rekey and row.permission_key == rekey[0]:
+                row.permission_key = rekey[1]
+                changed = True
+            move = MOVED_CHILD_ORDER.get((row.title, row.path or ""))
+            if move and row.order_index in move[0]:
+                row.order_index = move[1]
+                changed = True
 
         # Default positions the design changed (Customers now sits after
         # Inventory). Checked against the old defaults first, so moving one
@@ -620,7 +663,11 @@ class MenuService:
             if item["children"]:
                 allowed_children = [
                     ch for ch in item["children"]
-                    if ch["is_active"] and (not ch["permission_key"] or ch["permission_key"] in user_permissions)
+                    if ch["is_active"] and (
+                        not ch["permission_key"]
+                        or ch["permission_key"] in user_permissions
+                        or any(p in user_permissions for p in SIDEBAR_ALSO_FOR.get(ch.get("path") or "", ()))
+                    )
                 ]
                 if allowed_children:
                     item_copy = dict(item)

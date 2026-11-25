@@ -11,9 +11,11 @@ admin can keep listing genuinely shared items that way.
 
 A super admin sees every company.
 
-Warehouses narrow it further: a person works only in the warehouses
-granted to them (``user_warehouses``), and only while that warehouse's
-company is on their profile.
+Stores (warehouses) follow companies: a person works in the stores of the
+companies on their profile. A store given to particular roles (Roles &
+Access) is kept for those roles; a store given to no role is open to
+everyone of its company. Users > Warehouse Access gives a person a kept
+store as well, and takes nothing from anyone else.
 """
 
 from uuid import UUID
@@ -179,17 +181,30 @@ class CompanyScopeService:
         if not companies:
             return []
 
-        rows = (
-            db.query(UserWarehouse.warehouse_id)
-            .join(Location, Location.id == UserWarehouse.warehouse_id)
-            .filter(
-                UserWarehouse.user_id == _as_uuid(user_id),
-                Location.company_id.in_([_as_uuid(c) for c in companies]),
-                (Location.location_type.is_(None)) | (Location.location_type != OFFICE),
-            )
-            .all()
-        )
-        return [str(r.warehouse_id) for r in rows]
+        company_ids = [_as_uuid(c) for c in companies]
+        is_warehouse = (Location.location_type.is_(None)) | (Location.location_type != OFFICE)
+        stores = [str(r.id) for r in db.query(Location.id).filter(Location.company_id.in_(company_ids), is_warehouse).all()]
+        if not stores:
+            return []
+
+        # A store given to some roles (Roles & Access) is kept for them; a
+        # store given to no role is open to its company. A store given to a
+        # person (Users > Warehouse Access) adds it for them and takes
+        # nothing from anyone else.
+        from app.models.user_role import UserRole
+        from app.models.warehouse import RoleWarehouse
+
+        store_ids = [_as_uuid(s) for s in stores]
+        kept = {
+            str(w) for (w,) in db.query(RoleWarehouse.warehouse_id).filter(RoleWarehouse.warehouse_id.in_(store_ids))
+        }
+        roles = [r for (r,) in db.query(UserRole.role_id).filter(UserRole.user_id == _as_uuid(user_id))]
+        given = {
+            str(w) for (w,) in db.query(UserWarehouse.warehouse_id).filter(UserWarehouse.user_id == _as_uuid(user_id))
+        } | ({
+            str(w) for (w,) in db.query(RoleWarehouse.warehouse_id).filter(RoleWarehouse.role_id.in_(roles))
+        } if roles else set())
+        return [s for s in stores if s not in kept or s in given]
 
     @staticmethod
     def assert_warehouse_allowed(current_user: dict, warehouse_id, db: Session):

@@ -22,7 +22,8 @@ Dry run by default: it prints what it would post and changes nothing.
     docker exec -w /app backend_app python migrate_stock_to_ledger.py --apply
 
 Running it again after --apply does nothing for a warehouse that already
-has a migrated document.
+has a migrated document. Stock the Inventory form has already put into the
+ledger (serials, and quantities posted as PRODUCT_FORM) is not added again.
 """
 
 import sys
@@ -30,13 +31,15 @@ from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
 
+from sqlalchemy import func
+
 from app.core.stock import OPENING, OPENING_BALANCE, POSTED, UNRESTRICTED
 from app.core.timezone import now_ist
 from app.core.warehouse import WAREHOUSE
 from app.database.postgres import SessionLocal
 from app.models.company import Company
 from app.models.location import Location
-from app.models.stock import StockDocument, StockDocumentLine
+from app.models.stock import StockDocument, StockDocumentLine, StockLedger, StockSerial
 from app.models.warehouse import WarehouseBin
 from app.services.inventory_service import InventoryService
 from app.services.procurement.common import next_reference
@@ -127,15 +130,38 @@ def main(apply: bool) -> int:
             .one()
         )
 
+        # Stock the Inventory form already put into the ledger (PRODUCT_FORM)
+        # is in MongoDB too; it is not brought across a second time.
+        in_ledger = {
+            serial
+            for (serial,) in db.query(StockSerial.serial_no).filter(StockSerial.company_id == company.id)
+        }
+        counted = {
+            sku_: Decimal(total or 0)
+            for sku_, total in db.query(StockLedger.sku, func.sum(StockLedger.quantity))
+            .filter(StockLedger.company_id == company.id, StockLedger.source_doc_type == "PRODUCT_FORM",
+                    StockLedger.serial_no.is_(None))
+            .group_by(StockLedger.sku)
+        }
+
         lines = []
         for sku in sorted(set(plan["serials"]) | set(plan["counts"])):
             if plan["serials"].get(sku):
                 serials = sorted(set(plan["serials"][sku]))
                 if len(serials) != len(plan["serials"][sku]):
                     skipped["duplicate serial in MongoDB (kept once)"].append(sku)
-                lines.append((sku, Decimal(len(serials)), serials))
+                fresh = [s for s in serials if s not in in_ledger]
+                if len(fresh) != len(serials):
+                    skipped["serials already in the ledger (left as they are)"].append(f"{sku}: {len(serials) - len(fresh)}")
+                if fresh:
+                    lines.append((sku, Decimal(len(fresh)), fresh))
             if plan["counts"].get(sku):
-                lines.append((sku, plan["counts"][sku], []))
+                rest = plan["counts"][sku] - counted.get(sku, Decimal(0))
+                if rest != plan["counts"][sku]:
+                    skipped["quantity already in the ledger from the Inventory form (not added again)"].append(
+                        f"{sku}: {(plan['counts'][sku] - max(rest, Decimal(0))).normalize()}")
+                if rest > 0:
+                    lines.append((sku, rest, []))
 
         units = sum(q for _, q, _ in lines)
         print(f"\n{company.company_name} -> {warehouse.location_name} ({warehouse.location_code}), bin STORE")

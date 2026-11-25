@@ -50,6 +50,6 @@ from app.models.user_co_manager import UserCoManager
 from app.models.user_company import UserCompany
 from app.models.user_role import UserRole
 from app.models.stock import StockBalance, StockDocument, StockDocumentLine, StockLedger, StockSerial
-from app.models.warehouse import UserWarehouse, WarehouseBin
+from app.models.warehouse import RoleWarehouse, UserWarehouse, WarehouseBin
 from app.models.warranty_term import WarrantyTerm
 from app.models.workflow import Workflow
