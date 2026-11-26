@@ -1,36 +1,39 @@
-"""Bordered sheet PDFs for warehouse documents (GRN, gate pass).
+"""Warehouse documents (GRN, gate pass) drawn as the Excel sheets they replace.
 
-The warehouse keeps these as one bordered grid: the company letterhead,
-the document's heading, label/value rows, an item table and sign-off rows.
-Sheet builds that grid with reportlab so each document only says what goes
-in which row; the PDF is the same sheet the screen shows.
+The warehouse's GRN SHEET and Gate Pass workbooks are the format: the same
+columns at the same relative widths, the same merged cells, fonts, fills,
+row heights and borders, and the Synergy logo in the letterhead. ExcelGrid
+takes that layout as Excel describes it - column widths in Excel character
+units, row heights in points, colours as hex - and scales it to an A4 page
+the way Excel's fit-to-page printing does, type included.
+
+Excel's Calibri and Arial print as Helvetica (the PDF engine carries no
+Calibri); Times New Roman prints as Times.
 """
 
 from io import BytesIO
+from pathlib import Path
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Table, TableStyle
+from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Table, TableStyle
 
-PAGE_WIDTH = A4[0] - 24 * mm
+LOGO = Path(__file__).resolve().parents[2] / "assets" / "sheet-logo.png"
+#: The logo's own proportions (611 x 218 in the workbooks).
+LOGO_RATIO = 611 / 218
 
-_BASE = ParagraphStyle("sheet", fontName="Helvetica", fontSize=8.5, leading=11)
-_BOLD = ParagraphStyle("sheet-bold", parent=_BASE, fontName="Helvetica-Bold")
-_CENTER = ParagraphStyle("sheet-center", parent=_BASE, alignment=1)
-_CENTER_BOLD = ParagraphStyle("sheet-center-bold", parent=_BOLD, alignment=1)
-_RIGHT = ParagraphStyle("sheet-right", parent=_BASE, alignment=2)
-_RIGHT_BOLD = ParagraphStyle("sheet-right-bold", parent=_BOLD, alignment=2)
+MARGIN = 10 * mm
+PAGE_WIDTH = A4[0] - 2 * MARGIN
 
-
-def _style(bold: bool, align: str) -> ParagraphStyle:
-    if align == "center":
-        return _CENTER_BOLD if bold else _CENTER
-    if align == "right":
-        return _RIGHT_BOLD if bold else _RIGHT
-    return _BOLD if bold else _BASE
+FONTS = {
+    ("sans", False): "Helvetica",
+    ("sans", True): "Helvetica-Bold",
+    ("serif", False): "Times-Roman",
+    ("serif", True): "Times-Bold",
+}
 
 
 def text(value) -> str:
@@ -39,85 +42,112 @@ def text(value) -> str:
     return escape("" if value is None else str(value)).replace("\n", "<br/>")
 
 
-class Sheet:
-    """A grid of ``len(fractions)`` columns, filled a row at a time."""
+def excel_px(width: float) -> float:
+    """An Excel column width (characters) in screen pixels, as Excel sizes it."""
 
-    def __init__(self, fractions: list[float]):
-        total = sum(fractions)
-        self.widths = [PAGE_WIDTH * f / total for f in fractions]
-        self.columns = len(fractions)
+    return width * 7 + 5
+
+
+class ExcelGrid:
+    """A sheet built row by row, scaled to fit the page width."""
+
+    def __init__(self, widths: list[float]):
+        pixels = [excel_px(w) for w in widths]
+        points = sum(pixels) * 0.75
+        self.scale = min(1.0, PAGE_WIDTH / points)
+        self.widths = [p * 0.75 * self.scale for p in pixels]
+        self.columns = len(widths)
         self.rows: list[list] = []
+        self.heights: list[float | None] = []
         self.commands: list[tuple] = []
 
-    def row(self, cells: list, *, spans: list[tuple[int, int]] = (), bold: bool | set[int] = False, shade: bool = False,
-            align: list[str] | None = None, height: float | None = None, markup: bool = False) -> None:
-        """One row. ``cells`` has one entry per column ("" under a span);
-        ``spans`` are (first, last) column pairs merged into one cell;
-        ``bold`` is the whole row, or the set of columns in bold."""
+    def para(self, value, *, size=11, bold=False, family="sans", align="left", color="#000000", markup=False):
+        style = ParagraphStyle(
+            "cell",
+            fontName=FONTS[(family, bold)],
+            fontSize=size * self.scale,
+            leading=size * self.scale * 1.18,
+            alignment={"left": 0, "center": 1, "right": 2}[align],
+            textColor=colors.HexColor(color),
+        )
+        return Paragraph(value if markup else text(value), style)
+
+    def row(self, cells: list, *, height: float | None = None, spans=(), fills=None, valign="middle"):
+        """``cells`` is one entry per column: a dict of para() arguments
+        ({"value": ..., "size": ..., ...}), a flowable, or None for empty;
+        ``spans`` are (first, last) columns merged; ``fills`` maps a
+        column (or a (first, last) range) to a hex colour."""
 
         index = len(self.rows)
-        aligns = align or ["left"] * self.columns
-        heavy = (lambda i: bold) if isinstance(bold, bool) else (lambda i: i in bold)
-        self.rows.append([
-            Paragraph(cell if markup else text(cell), _style(heavy(i), aligns[i])) for i, cell in enumerate(cells)
-        ])
+        built = []
+        for cell in cells:
+            if cell is None:
+                built.append("")
+            elif isinstance(cell, dict):
+                options = dict(cell)
+                built.append(self.para(options.pop("value"), **options))
+            else:
+                built.append(cell)
+        self.rows.append(built)
+        self.heights.append(height * self.scale if height else None)
         for first, last in spans:
             self.commands.append(("SPAN", (first, index), (last, index)))
-        if shade:
-            self.commands.append(("BACKGROUND", (0, index), (-1, index), colors.HexColor("#F1F5F9")))
-        if height:
-            self.commands.append(("ROWHEIGHT_HINT", index, height))
+        for key, colour in (fills or {}).items():
+            first, last = key if isinstance(key, tuple) else (key, key)
+            self.commands.append(("BACKGROUND", (first, index), (last, index), colors.HexColor(colour)))
+        self.commands.append(("VALIGN", (0, index), (-1, index), {"middle": "MIDDLE", "top": "TOP"}[valign]))
+        return index
 
-    def full(self, value, *, bold: bool = False, align: str = "left", markup: bool = False, height: float | None = None) -> None:
-        """A row that is one cell across the sheet."""
+    def span_rows(self, first_col: int, first_row: int, last_col: int, last_row: int):
+        self.commands.append(("SPAN", (first_col, first_row), (last_col, last_row)))
 
-        self.row([value] + [""] * (self.columns - 1), spans=[(0, self.columns - 1)], bold=bold,
-                 align=[align] * self.columns, markup=markup, height=height)
+    def letterhead(self, markup: str, *, size: float, family: str, color: str, height: float, logo_width_cols: int = 2):
+        """The company block with the logo at its right, as one cell."""
+
+        logo_height = height * self.scale - 6
+        logo = Image(str(LOGO), width=logo_height * LOGO_RATIO, height=logo_height) if LOGO.exists() else ""
+        logo_width = logo_height * LOGO_RATIO + 6 if logo else 0
+        inner = Table(
+            [[self.para(markup, size=size, family=family, color=color, markup=True), logo]],
+            colWidths=[sum(self.widths) - logo_width - 8, logo_width],
+            style=[("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                   ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0),
+                   ("BOTTOMPADDING", (0, 0), (-1, -1), 0), ("ALIGN", (1, 0), (1, 0), "RIGHT")],
+        )
+        return inner
 
     def render(self, title: str) -> bytes:
-        heights = [None] * len(self.rows)
-        commands = []
-        for command in self.commands:
-            if command[0] == "ROWHEIGHT_HINT":
-                heights[command[1]] = command[2]
-            else:
-                commands.append(command)
-
-        table = Table(self.rows, colWidths=self.widths, rowHeights=heights, repeatRows=0)
+        table = Table(self.rows, colWidths=self.widths, rowHeights=self.heights)
         table.setStyle(TableStyle([
-            ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("TOPPADDING", (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-            ("LEFTPADDING", (0, 0), (-1, -1), 4),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-            *commands,
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+            ("BOX", (0, 0), (-1, -1), 1.2, colors.black),
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+            *self.commands,
         ]))
-
         buffer = BytesIO()
         SimpleDocTemplate(
-            buffer, pagesize=A4, leftMargin=12 * mm, rightMargin=12 * mm, topMargin=12 * mm, bottomMargin=12 * mm,
+            buffer, pagesize=A4, leftMargin=MARGIN, rightMargin=MARGIN, topMargin=MARGIN, bottomMargin=MARGIN,
             title=title,
         ).build([table])
         return buffer.getvalue()
 
 
-def letterhead_markup(letterhead: dict) -> str:
-    """The company block: name, address, then GST / phone / email."""
+def letterhead_lines(letterhead: dict) -> list[str]:
+    """Name, address, CIN, GST and phone | email - the workbooks' letterhead."""
 
-    contact = " | ".join(
-        p for p in (
+    contact = " | ".join(p for p in (letterhead.get("phone_number"), letterhead.get("email")) if p)
+    return [
+        line for line in (
+            str(letterhead.get("company_name") or "").upper(),
+            letterhead.get("address") or "",
+            f"CIN : {letterhead['cin_number']}" if letterhead.get("cin_number") else "",
             f"GST No : {letterhead['gst_number']}" if letterhead.get("gst_number") else "",
-            letterhead.get("phone_number") or "",
-            letterhead.get("email") or "",
-        ) if p
-    )
-    lines = [f"<font size=12><b>{text(str(letterhead.get('company_name') or '').upper())}</b></font>"]
-    if letterhead.get("address"):
-        lines.append(text(letterhead["address"]))
-    if contact:
-        lines.append(text(contact))
-    return "<br/>".join(lines)
+            contact,
+        ) if line
+    ]
 
 
 def sheet_date(value) -> str:

@@ -768,6 +768,7 @@ class GoodsReceiptService:
             "company_name": company.company_name,
             "address": address,
             "gst_number": company.gst_number,
+            "cin_number": company.cin_number,
             "phone_number": company.phone_number,
             "email": company.email,
         }

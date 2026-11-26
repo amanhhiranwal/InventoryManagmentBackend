@@ -181,6 +181,27 @@ try:
     check("a unit issued twice (held and re-issued) is listed once",
           [x["serial"] for p in passes(admin, again) for x in p["lines"]] == [f"GPS{TAG}-7"])
 
+    print("\nGenerated at Dispatched, before it goes out")
+    early = order("7", b, [f"GPS{TAG}-8"])
+    r = api("post", f"/gate-passes/orders/{early}", admin, json={})
+    check("without the vehicle and driver it is refused", r.status_code == 400 and "vehicle number" in r.text, r.text[:160])
+    r = api("post", f"/gate-passes/orders/{early}", admin, json={"vehicle_number": "ka 01 ab 1", "driver_name": "First Driver"})
+    early_pass = data(r) if r.status_code == 200 else {}
+    check("with them, Generate Gate Pass makes the next number of the company",
+          r.status_code == 200 and early_pass.get("gate_pass_no") == f"{YEAR}/002" and early_pass.get("vehicle_number") == "KA 01 AB 1",
+          r.text[:200])
+    check("the order is still Dispatched", scalar("select status from sales_order where id=:o", o=early) == "DISPATCHED")
+    r = api("put", f"/fulfilment/orders/{early}/decide", admin,
+            json={"approve": True, "vehicle_number": "ka 02 cd 2", "driver_name": "Second Driver"})
+    same = passes(admin, early)
+    check("marking it out for delivery uses the same pass, not a second number",
+          r.status_code == 200 and len(same) == 1 and same[0]["id"] == early_pass.get("id"), str(same)[:200])
+    check("with the vehicle and driver it actually left with",
+          same and same[0]["vehicle_number"] == "KA 02 CD 2" and same[0]["driver_name"] == "Second Driver", str(same)[:200])
+    ready = scalar("update sales_order set status='READY' where id=:o returning id", o=order("8", b, []))
+    r = api("post", f"/gate-passes/orders/{ready}", admin, json={"vehicle_number": "X1", "driver_name": "Y"})
+    check("an order not yet dispatched is refused", r.status_code == 409 and "not dispatched" in r.text, r.text[:160])
+
     print("\nWho may make and read it")
     r = api("post", f"/gate-passes/orders/{first}", salesperson)
     check("someone not in logistics cannot make one", r.status_code == 403, str(r.status_code))

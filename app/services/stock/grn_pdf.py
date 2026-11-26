@@ -1,49 +1,73 @@
-"""The GRN as a PDF: the same sheet the Stock In page shows and prints.
+"""The GRN as a PDF, laid out as the warehouse's GRN SHEET workbook.
 
-Company letterhead, GOODS RECEIVED NOTE (GRN), number, receipt date, PO
-(or the dispatch a return came back on), supplier, delivery note; the
-store row; one row per product with ordered, received, accepted and
-rejected; then received by, inspected by and the date it was posted.
+Same 8 columns at the workbook's widths; the letterhead (light blue, logo
+at its right); GOODS RECEIVED NOTE (GRN) on its grey bar; the five
+label/value rows; the item table (header shaded, 8 rows at least); and the
+received / inspected sign-off rows. The store the goods came into follows
+the receipt date, as the workbook has no row of its own for it.
 """
 
-from app.services.stock.sheet_pdf import Sheet, letterhead_markup, safe_filename, sheet_date, sheet_qty
+from app.services.stock.sheet_pdf import ExcelGrid, safe_filename, sheet_date, sheet_qty, text
 
-NUMBERS = ["left", "left", "left", "right", "right", "right", "right", "left"]
+#: Column widths in Excel units, from GRN SHEET (A..H).
+WIDTHS = [5.43, 31.57, 8.43, 8.71, 8.71, 8.71, 8.71, 18.43]
+LETTERHEAD_FILL = "#D9E1F2"
+TITLE_FILL = "#D0CFCF"
+HEADER_FILL = "#DEEBF7"
+ITEM_ROWS = 8
+
+
+def _letterhead_markup(head: dict) -> str:
+    """Three lines, as the workbook has them: the name; the address with the
+    CIN after it; the GST number with phone | email after it."""
+
+    contact = " | ".join(p for p in (head.get("phone_number"), head.get("email")) if p)
+    lines = (
+        str(head.get("company_name") or "").upper(),
+        " ".join(p for p in (head.get("address"), f"CIN : {head['cin_number']}" if head.get("cin_number") else "") if p),
+        " ".join(p for p in (f"GST No : {head['gst_number']}" if head.get("gst_number") else "", contact) if p),
+    )
+    return "<br/>".join(text(x) for x in lines if x)
 
 
 def render(grn: dict, letterhead: dict) -> bytes:
-    # S.No | Item Code | Description | Ordered | Received | Accepted | Rejected | Remarks
-    sheet = Sheet([6, 14, 24, 9.5, 9.5, 9.5, 9.5, 18])
+    g = ExcelGrid(WIDTHS)
 
-    sheet.full(letterhead_markup(letterhead), align="center", markup=True)
-    sheet.full("GOODS RECEIVED NOTE (GRN)", bold=True, align="center")
+    g.row([g.letterhead(_letterhead_markup(letterhead), size=9, family="sans", color="#000000", height=40.9)]
+          + [None] * 7, height=40.9, spans=[(0, 7)], fills={(0, 7): LETTERHEAD_FILL}, valign="top")
+    g.row([{"value": "GOODS RECEIVED NOTE (GRN)", "size": 10, "bold": True, "align": "center"}] + [None] * 7,
+          spans=[(0, 7)], fills={(0, 7): TITLE_FILL})
 
-    if grn.get("do_number"):
-        against = ("Returned Against Dispatch:", grn["do_number"])
-    else:
-        against = ("Purchase Order (PO) Number:", grn.get("po_number") or "N/A")
-
+    received = sheet_date(grn.get("receipt_date"))
+    if grn.get("warehouse_name"):
+        received += f" at {grn['warehouse_name']}"
+    against = (("Returned Against Dispatch:", grn["do_number"]) if grn.get("do_number")
+               else ("Purchase Order (PO) Number:", grn.get("po_number") or "N/A"))
     note = "N/A"
     if grn.get("delivery_note_no"):
-        note = grn["delivery_note_no"]
-        if grn.get("delivery_note_date"):
-            note += f"  /  {sheet_date(grn['delivery_note_date'])}"
+        note = grn["delivery_note_no"] + (f"  /  {sheet_date(grn['delivery_note_date'])}" if grn.get("delivery_note_date") else "")
+    supplier = "\n".join(p for p in (grn.get("supplier_name"), grn.get("supplier_address")) if p) or "N/A"
 
-    for caption, content in (
-        ("GRN Number:", grn.get("grn_number")),
-        ("Date of Receipt:", sheet_date(grn.get("receipt_date"))),
-        against,
-        ("Supplier Name & Address:", "\n".join(p for p in (grn.get("supplier_name"), grn.get("supplier_address")) if p)),
-        ("Delivery Note / Invoice Number & Date:", note),
+    for caption, value, height, valign in (
+        ("GRN Number:", grn.get("grn_number"), None, "middle"),
+        ("Date of Receipt:", received, None, "middle"),
+        (*against, None, "middle"),
+        ("Supplier Name & Address:", supplier, 37.5, "top"),
+        ("Delivery Note / Invoice Number & Date:", note, None, "middle"),
     ):
-        sheet.row([caption, "", "", content or "", "", "", "", ""], spans=[(0, 2), (3, 7)], bold={0})
+        g.row([{"value": caption, "size": 9, "bold": True, "align": "right"}, None, None,
+               {"value": value or "", "size": 11}, None, None, None, None],
+              height=height, spans=[(0, 2), (3, 7)], valign=valign)
 
-    sheet.row(["S.No.", "Location / Item Code", "Description of Goods", "Qty Ordered", "Qty Received",
-               "Qty Accepted", "Qty Rejected", "Remarks / Reason for Rejection"], bold=True, shade=True, align=NUMBERS)
-    store = (grn.get("warehouse_name") or "") + (f" ({grn['warehouse_code']})" if grn.get("warehouse_code") else "")
-    sheet.row(["", store, "", "", "", "", "", grn.get("transport_remarks") or ""], spans=[(1, 2), (3, 6)], bold={1})
+    head = {"size": 7, "bold": True, "align": "center"}
+    g.row([{"value": "S.No.", "size": 10}]
+          + [{"value": v, **head} for v in ("Item Code / SKU", "Description of Goods", "Qty Ordered", "Qty Received",
+                                            "Qty Accepted", "Qty Rejected", "Remarks / Reason for Rejection")],
+          height=27, fills={0: LETTERHEAD_FILL, (1, 7): HEADER_FILL})
 
-    for line in grn.get("lines") or []:
+    body = {"size": 7, "bold": True, "align": "center"}
+    lines = grn.get("lines") or []
+    for line in lines:
         description = line.get("description") or ""
         if line.get("serials"):
             description += "\nS/N: " + ", ".join(line["serials"])
@@ -53,20 +77,26 @@ def render(grn: dict, letterhead: dict) -> bytes:
         remarks = line.get("remarks") or ""
         if line.get("qty_damaged"):
             remarks += ("\n" if remarks else "") + f"({sheet_qty(line['qty_damaged'])} damaged)"
-        sheet.row([line.get("line_no"), line.get("sku"), description, sheet_qty(line.get("qty_ordered")),
-                   sheet_qty(line.get("qty_received")), sheet_qty(line.get("qty_accepted")), sheet_qty(rejected), remarks],
-                  align=NUMBERS)
+        g.row([{"value": line.get("line_no"), "size": 11, "align": "center"},
+               {"value": line.get("sku") or "N/A", **body}, {"value": description, **body},
+               {"value": sheet_qty(line.get("qty_ordered")), **body}, {"value": sheet_qty(line.get("qty_received")), **body},
+               {"value": sheet_qty(line.get("qty_accepted")), **body}, {"value": sheet_qty(rejected), **body},
+               {"value": remarks, **body}], height=None if len(description) > 40 else 27)
+    for _ in range(max(0, ITEM_ROWS - len(lines))):
+        g.row([None] * 8, height=15)
 
-    for caption, content, tall in (
-        ("Received By:", grn.get("received_by_name") or "", False),
-        ("Signature:", "", True),
-        ("Inspected & Approved By:", grn.get("inspected_by_name") or "", False),
-        ("Signature:", "", True),
-        ("Date:", sheet_date(grn.get("posted_at")), False),
+    for caption, value, height in (
+        ("Received By:", grn.get("received_by_name") or "", 15),
+        ("Signature:", "", 36),
+        ("Inspected & Approved By:", grn.get("inspected_by_name") or "", 15),
+        ("Signature:", "", 29.1),
+        ("Date:", sheet_date(grn.get("posted_at")), 15.75),
     ):
-        sheet.row(["", caption, content, "", "", "", "", ""], spans=[(2, 7)], bold={1}, height=24 if tall else None)
+        g.row([None, {"value": caption, "size": 9, "bold": True, "align": "right"},
+               {"value": value, "size": 8, "bold": True, "align": "center"}, None, None, None, None, None],
+              height=height, spans=[(2, 7)])
 
-    return sheet.render(f"GRN {grn.get('grn_number')}")
+    return g.render(f"GRN {grn.get('grn_number')}")
 
 
 def filename(grn: dict) -> str:

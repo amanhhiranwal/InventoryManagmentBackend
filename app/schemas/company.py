@@ -1,7 +1,7 @@
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class CreateCompanyRequest(BaseModel):
@@ -11,6 +11,7 @@ class CreateCompanyRequest(BaseModel):
     phone_number: str
     website: Optional[str] = None
     gst_number: Optional[str] = None
+    cin_number: Optional[str] = Field(default=None, max_length=30)
     address_line_1: str
     address_line_2: Optional[str] = None
     city: str
@@ -29,6 +30,7 @@ class UpdateCompanyRequest(BaseModel):
     phone_number: Optional[str] = None
     website: Optional[str] = None
     gst_number: Optional[str] = None
+    cin_number: Optional[str] = Field(default=None, max_length=30)
     address_line_1: Optional[str] = None
     address_line_2: Optional[str] = None
     city: Optional[str] = None
@@ -49,6 +51,7 @@ class CompanyResponse(BaseModel):
     phone_number: str
     website: Optional[str]
     gst_number: Optional[str]
+    cin_number: Optional[str] = None
     address_line_1: str
     address_line_2: Optional[str]
     city: str

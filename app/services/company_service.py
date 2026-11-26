@@ -43,6 +43,7 @@ class CompanyService:
             phone_number=request.phone_number,
             website=request.website,
             gst_number=request.gst_number,
+            cin_number=request.cin_number,
             address_line_1=request.address_line_1,
             address_line_2=request.address_line_2,
             city=request.city,

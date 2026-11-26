@@ -9,6 +9,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import Response
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.database.dependencies import get_db
@@ -45,6 +46,23 @@ def download_gate_pass(gate_pass_id: int, db: Session = Depends(get_db), current
     )
 
 
+class GatePassGenerate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    vehicle_number: Optional[str] = Field(default=None, max_length=30)
+    driver_name: Optional[str] = Field(default=None, max_length=120)
+
+
 @router.post("/orders/{order_id}")
-def generate_for_order(order_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    return {"success": True, "message": "Gate pass made.", "data": service.generate_for_order(order_id, current_user, db)}
+def generate_for_order(
+    order_id: int,
+    request: Optional[GatePassGenerate] = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Generate the order's gate pass (Logistics). At Dispatched it needs
+    the vehicle number and driver name; generating again returns the same pass."""
+
+    body = request or GatePassGenerate()
+    data = service.generate_for_order(order_id, current_user, db, body.vehicle_number, body.driver_name)
+    return {"success": True, "message": f"Gate pass {data['gate_pass_no']} generated.", "data": data}

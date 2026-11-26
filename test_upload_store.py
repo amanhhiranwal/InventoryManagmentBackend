@@ -176,6 +176,23 @@ try:
     r = upload(loader, sheet([f"UPS-K-{TAG}", "K", "k", "", "IFP", name_a, f"Bangalore {TAG}", 1, 2, 1, "Pcs"]), True)
     check("the loader cannot load stock into it", r.status_code == 200 and not data(r).get("committed"), r.text[:200])
 
+    print("\nMany serials, another company")
+    import time
+
+    BULK = f"UPS-BULK-{TAG}"
+    many = [f"UPM{TAG}-{n:04d}" for n in range(1, 301)]
+    started = time.monotonic()
+    r = upload(admin, sheet([BULK, "UPS Bulk", "b", "/".join(many), "IFP", name_b, "", 10, 300, 1, "Pcs"]), True)
+    took = time.monotonic() - started
+    store_b = scalar("select id::text from locations where company_id=:c", c=b)
+    check("one row with 300 serials loads 300 products for the other company", r.status_code == 200
+          and data(r).get("created") == 300 and InventoryService.items_col.count_documents({"attributes.model_number": BULK}) == 300,
+          r.text[:200])
+    check("all 300 are in that company's store, by serial", held(store_b, BULK) == 300 and scalar(
+        "select count(*) from stock_serial where sku=:s and warehouse_id=:w and status='IN_STOCK'", s=BULK, w=store_b) == 300,
+          str(held(store_b, BULK)))
+    check(f"in reasonable time ({took:.1f}s)", took < 60, f"{took:.1f}s")
+
     print("\nTemplate")
     r = api("get", "/inventory/items/bulk/template", loader)
     book = load_workbook(io.BytesIO(r.content))

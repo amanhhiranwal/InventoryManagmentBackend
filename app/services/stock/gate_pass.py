@@ -176,6 +176,11 @@ def for_out_for_delivery(order: SalesOrder, current_user: dict, db: Session) -> 
         .first()
     )
     if existing is not None:
+        # Made at Dispatched and now going out: the vehicle and driver are
+        # the ones on the order now, if they were changed in between.
+        if existing.source == SOURCE_OUT_FOR_DELIVERY and existing.dispatch_order_id is None:
+            existing.vehicle_number = order.delivery_vehicle_number or existing.vehicle_number
+            existing.driver_name = order.delivery_driver_name or existing.driver_name
         return existing
 
     dispatches = (
@@ -260,6 +265,7 @@ def letterhead(company_id, db: Session) -> dict:
         p for p in (company.address_line_1, company.address_line_2, company.city, company.state, company.postal_code) if p
     )
     return {"company_name": company.company_name, "address": address, "gst_number": company.gst_number,
+            "cin_number": company.cin_number,
             "phone_number": company.phone_number, "email": company.email}
 
 
@@ -319,9 +325,15 @@ def list_for(current_user: dict, db: Session, *, sales_order_id: int | None = No
     return found
 
 
-def generate_for_order(order_id: int, current_user: dict, db: Session) -> dict:
-    """Logistics making the pass for an order already out for delivery
-    (sent out before passes were made, or when it could not be made then)."""
+def generate_for_order(order_id: int, current_user: dict, db: Session, vehicle_number: str | None = None,
+                       driver_name: str | None = None) -> dict:
+    """Logistics generating the gate pass from the order.
+
+    At Dispatched - before it goes out - with the vehicle and driver taking
+    it, which are kept on the order as marking it out for delivery keeps
+    them; marking it out then uses this same pass. Or for an order already
+    out (sent before passes were made, or when one could not be made then).
+    """
 
     from app.core.fulfilment import LOGISTICS, holds_desk
     from app.core.workflow_status import SalesOrderStatus
@@ -332,8 +344,19 @@ def generate_for_order(order_id: int, current_user: dict, db: Session) -> dict:
         raise HTTPException(status_code=404, detail="Order not found.")
     if not holds_desk(_user(current_user, db), LOGISTICS, is_super_admin=bool(current_user.get("is_super_admin"))):
         raise HTTPException(status_code=403, detail="Gate passes are made by logistics.")
-    if order.status not in (SalesOrderStatus.OUT_FOR_DELIVERY, SalesOrderStatus.DELIVERED, SalesOrderStatus.INSTALLED):
-        raise HTTPException(status_code=409, detail=f"Order {order.order_number} has not gone out for delivery yet.")
+    if order.status == SalesOrderStatus.DISPATCHED:
+        vehicle = " ".join((vehicle_number or "").split()).upper()
+        driver = " ".join((driver_name or "").split())
+        missing = [label for label, value in (("vehicle number", vehicle), ("driver name", driver)) if not value]
+        if missing:
+            raise HTTPException(status_code=400, detail=f"Enter the {' and '.join(missing)} for the gate pass.")
+        order.delivery_vehicle_number = vehicle
+        order.delivery_driver_name = driver
+    elif order.status not in (SalesOrderStatus.OUT_FOR_DELIVERY, SalesOrderStatus.DELIVERED, SalesOrderStatus.INSTALLED):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Order {order.order_number} is not dispatched yet; the gate pass is made when it leaves.",
+        )
     gp = for_out_for_delivery(order, current_user, db)
     db.commit()
     db.refresh(gp)
@@ -343,45 +366,78 @@ def generate_for_order(order_id: int, current_user: dict, db: Session) -> dict:
 # ----------------------------------------------------------------------
 # PDF, in the gate pass sheet layout
 # ----------------------------------------------------------------------
-def render(data: dict, head: dict) -> bytes:
-    # S.No | Description | Serial | Qty | Purpose | Returnable
-    sheet = sheet_pdf.Sheet([7, 36, 25, 8, 11, 17])
-    sheet.full(sheet_pdf.letterhead_markup(head), align="center", markup=True)
-    sheet.full("Gate Pass", bold=True, align="center")
+#: Column widths in Excel units, from the Gate Pass workbook (A..G).
+GP_WIDTHS = [6.7, 36.6, 33.4, 6.7, 13.3, 22.3, 20.0]
+GP_TITLE_FILL = "#DEEAF6"
+GP_TOTAL_FILL = "#BCD6ED"
+#: Item rows on the sheet (rows 12..34), filled out with empty rows.
+GP_ITEM_ROWS = 23
 
-    for (left_label, left_value), right in (
-        (("Gate Pass No. :-", f"G.P. No- {data['gate_pass_no']}"), f"Transport Mode: {data.get('transporter') or ''}"),
-        (("Gate Pass Date :-", sheet_pdf.sheet_date(data.get("gate_pass_date"))),
-         f"Transport ID / Docket- {data.get('docket_no') or ''}"),
-        (("DC  /  Invoice No :-", data.get("dc_invoice_no") or ""), f"E-way bill No- {data.get('eway_bill_no') or ''}"),
-        (("DC  /  Invoice Date:", sheet_pdf.sheet_date(data.get("dc_invoice_date"))),
-         f"Vehicle No : {data.get('vehicle_number') or ''}"
-         + (f"  |  Driver: {data['driver_name']}" if data.get("driver_name") else "")),
-    ):
-        sheet.row([left_label, left_value, "", "", right, ""], spans=[(1, 3), (4, 5)], bold={0})
+
+def render(data: dict, head: dict) -> bytes:
+    """The gate pass as the warehouse's Gate Pass workbook lays it out."""
+
+    g = sheet_pdf.ExcelGrid(GP_WIDTHS)
+    letter = "<br/>".join(sheet_pdf.text(x) for x in sheet_pdf.letterhead_lines(head))
+    g.row([g.letterhead(letter, size=11, family="serif", color="#1F3864", height=110.25)] + [None] * 6,
+          height=110.25, spans=[(0, 6)])
+    g.row([{"value": "Gate Pass", "size": 18, "bold": True, "align": "center"}] + [None] * 6,
+          height=23.25, spans=[(0, 6)], fills={(0, 6): GP_TITLE_FILL}, valign="top")
+
+    small = {"size": 9, "bold": True}
+    vehicle = f"Vehicle No : {data.get('vehicle_number') or ''}"
+    if data.get("driver_name"):
+        vehicle += f"  |  Driver : {data['driver_name']}"
+    for (label, value, right), height in zip((
+        ("Gate Pass No. :-", f"G.P. No- {data['gate_pass_no']}", f"Transport Mode: {data.get('transporter') or ''}"),
+        ("Gate Pass Date :-", sheet_pdf.sheet_date(data.get("gate_pass_date")), f"Transport ID- {data.get('docket_no') or ''}"),
+        ("DC  /  Invoice No :-", data.get("dc_invoice_no") or "", f"E-way bill No- {data.get('eway_bill_no') or ''}"),
+        ("DC  /  Invoice Date:", sheet_pdf.sheet_date(data.get("dc_invoice_date")), vehicle),
+    ), (24.75, 21.75, 21.75, 21.75)):
+        g.row([{"value": label, **small}, None, {"value": value, **small}, None, None, {"value": right, **small}, None],
+              height=height, spans=[(0, 1), (2, 4), (5, 6)], valign="top")
 
     bill, ship = data.get("bill_to") or {}, data.get("ship_to") or {}
-    sheet.row(["Bill To", "", "", "Ship To", "", ""], spans=[(0, 2), (3, 5)], bold=True, shade=True)
-    for label, key in (("Name", "name"), ("Address", "address"), ("GSTIN/UIN", "gstin")):
-        sheet.row([f"{label} : {bill.get(key) or ''}", "", "", f"{label} : {ship.get(key) or ''}", "", ""],
-                  spans=[(0, 2), (3, 5)])
+    g.row([{"value": "Bill To", **small}, None, None, {"value": "Ship To", **small}, None, None, None],
+          height=25.5, spans=[(0, 2), (3, 6)], fills={(0, 6): GP_TITLE_FILL}, valign="top")
+    for label, key, size, height in (("Name : ", "name", 10, 21), ("Address : ", "address", 10, 36.75),
+                                     ("GSTIN/UIN: ", "gstin", 9, 27)):
+        g.row([{"value": label + (bill.get(key) or ""), "size": size, "bold": True}, None, None,
+               {"value": label + (ship.get(key) or ""), "size": size, "bold": True}, None, None, None],
+              height=height, spans=[(0, 2), (3, 6)], valign="top")
 
-    sheet.row(["S. No.", "Description of Materials", "Serial No.", "QTY", "Purpose", "Returnable / Non Returnable"],
-              bold=True, shade=True, align=["left", "left", "left", "right", "left", "left"])
+    header = {"size": 12, "bold": True}
+    g.row([{"value": "S. No.", **header, "align": "center"}, {"value": "Description of Materials", **header},
+           {"value": "Serial No.", **header}, {"value": "QTY", **header}, {"value": "Purpose", **header},
+           {"value": "Returnable / Non Returnable", **header, "align": "center"}, None],
+          height=28.5, spans=[(5, 6)])
+
+    used = 0
     for number, line in enumerate(data.get("lines") or [], start=1):
-        description = line.get("description") or ""
-        if line.get("detail") and line.get("detail") != description:
-            description += f"\n{line['detail']}"
-        sheet.row([number, description, line.get("serial") or "", sheet_pdf.sheet_qty(line.get("qty")),
-                   line.get("purpose") or "", line.get("returnable") or ""],
-                  align=["left", "left", "left", "right", "left", "left"])
-    sheet.row(["Total", "", "", sheet_pdf.sheet_qty(data.get("total_qty")), "", ""], spans=[(0, 2)], bold=True,
-              align=["left", "left", "left", "right", "left", "left"])
+        g.row([{"value": number, "size": 12, "align": "center"}, {"value": line.get("description") or "", "size": 11},
+               {"value": line.get("serial") or "", "size": 11}, {"value": sheet_pdf.sheet_qty(line.get("qty")), "size": 11,
+                                                                 "align": "center"},
+               {"value": line.get("purpose") or "", "size": 12, "align": "center"},
+               {"value": line.get("returnable") or "", "size": 12, "align": "center"}, None],
+              height=15.75, spans=[(5, 6)])
+        used += 1
+        # The model on its own row under the product, as the sheet writes it.
+        if line.get("detail") and line.get("detail") != line.get("description"):
+            g.row([None, {"value": line["detail"], "size": 11}, None, None, None, None, None], height=15.75, spans=[(5, 6)])
+            used += 1
+    for _ in range(max(0, GP_ITEM_ROWS - used)):
+        g.row([None] * 7, height=15.75, spans=[(5, 6)])
+
+    g.row([{"value": "Total", "size": 12, "bold": True, "align": "center"}, None, None,
+           {"value": sheet_pdf.sheet_qty(data.get("total_qty")), "size": 12, "bold": True, "align": "center"}, None, None, None],
+          height=15.75, spans=[(0, 2), (5, 6)], fills={(0, 2): GP_TOTAL_FILL})
 
     for department in ("Warehouse Department", "Operation Department", "Accounts Department"):
-        sheet.full(department, bold=True, height=34)
+        top = g.row([{"value": department, "size": 12, "bold": True}] + [None] * 6, height=30, valign="top")
+        g.row([None] * 7, height=30)
+        g.span_rows(0, top, 6, top + 1)
 
-    return sheet.render(f"Gate Pass {data['gate_pass_no']}")
+    return g.render(f"Gate Pass {data['gate_pass_no']}")
 
 
 def filename(data: dict) -> str:

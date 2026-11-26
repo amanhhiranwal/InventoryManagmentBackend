@@ -48,6 +48,13 @@ class Company(Base):
         nullable=True,
     )
 
+    #: Corporate Identification Number, printed on the GRN and gate pass
+    #: letterhead under the address.
+    cin_number = Column(
+        String(30),
+        nullable=True,
+    )
+
     address_line_1 = Column(
         String(255),
         nullable=False,
