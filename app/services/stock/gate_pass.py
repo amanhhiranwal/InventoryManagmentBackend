@@ -76,6 +76,26 @@ def _party(order: SalesOrder | None, address: dict | None) -> dict:
     return {"name": name or "", "address": ", ".join(parts), "gstin": info.get("gst") or ""}
 
 
+def _parties(order: SalesOrder, db: Session) -> tuple[dict, dict]:
+    """Bill To and Ship To: the order's addresses, or else the ones on its
+    latest proforma invoice (an order made before addresses were kept on
+    it has them only there). Empty when neither has one."""
+
+    bill, ship = order.billing_address, order.shipping_address
+    if not bill and not ship:
+        from app.services.fulfilment_desk_service import _latest_invoice
+
+        invoice = _latest_invoice(order, db)
+        if invoice is not None:
+            bill, ship = invoice.billing_address, invoice.shipping_address
+    return _party(order, bill), _party(order, ship or bill)
+
+
+def _clean(value: str | None, upper: bool = False) -> str | None:
+    text = " ".join((value or "").split())
+    return (text.upper() if upper else text) or None
+
+
 def _rows_from_dispatches(dispatches: list[DispatchOrder]) -> list[dict]:
     rows = []
     for do in dispatches:
@@ -162,8 +182,13 @@ def for_dispatch(do: DispatchOrder, order: SalesOrder, current_user: dict, db: S
     return gp
 
 
-def for_out_for_delivery(order: SalesOrder, current_user: dict, db: Session) -> GatePass:
+def for_out_for_delivery(order: SalesOrder, current_user: dict, db: Session, eway_bill_no: str | None = None,
+                         transporter_id: str | None = None) -> GatePass:
     """The pass for an order Logistics sends out. Does not commit.
+
+    The e-way bill number and transporter ID are optional; typed by
+    Logistics when generating the pass. Transporter ID prints on the
+    sheet's "Transport ID" line (docket_no).
 
     Refused (400) when the order's company cannot be told - nothing to
     number the pass under.
@@ -176,11 +201,19 @@ def for_out_for_delivery(order: SalesOrder, current_user: dict, db: Session) -> 
         .first()
     )
     if existing is not None:
-        # Made at Dispatched and now going out: the vehicle and driver are
-        # the ones on the order now, if they were changed in between.
+        # Made at Dispatched and now going out: the vehicle, driver and
+        # addresses are the ones on the order now, if changed in between.
         if existing.source == SOURCE_OUT_FOR_DELIVERY and existing.dispatch_order_id is None:
             existing.vehicle_number = order.delivery_vehicle_number or existing.vehicle_number
             existing.driver_name = order.delivery_driver_name or existing.driver_name
+            bill_to, ship_to = _parties(order, db)
+            if bill_to.get("address") or ship_to.get("address"):
+                existing.bill_to, existing.ship_to = bill_to, ship_to
+            # Typed again on Logistics: None leaves it, "" clears it.
+            if eway_bill_no is not None:
+                existing.eway_bill_no = _clean(eway_bill_no, upper=True)
+            if transporter_id is not None:
+                existing.docket_no = _clean(transporter_id, upper=True)
         return existing
 
     dispatches = (
@@ -212,18 +245,19 @@ def for_out_for_delivery(order: SalesOrder, current_user: dict, db: Session) -> 
     year, seq, number = _next_number(company_id, today, db)
     user_id, name = actor(current_user, db)
     first = dispatches[0] if dispatches else None
+    bill_to, ship_to = _parties(order, db)
     gp = GatePass(
         company_id=company_id, warehouse_id=(first.warehouse_id if first else order.dispatch_warehouse_id),
         financial_year=year, seq=seq, gate_pass_no=number, gate_pass_date=today, source=SOURCE_OUT_FOR_DELIVERY,
         sales_order_id=order.id, order_number=order.order_number,
         dc_invoice_no=(first.invoice_no or first.challan_no) if first else (invoice.pi_number if invoice else None),
         dc_invoice_date=(first.challan_date if first else None),
-        transporter=first.transporter if first else None, docket_no=first.docket_no if first else None,
-        eway_bill_no=first.eway_bill_no if first else None,
+        transporter=first.transporter if first else None,
+        docket_no=_clean(transporter_id, upper=True) or (first.docket_no if first else None),
+        eway_bill_no=_clean(eway_bill_no, upper=True) or (first.eway_bill_no if first else None),
         vehicle_number=order.delivery_vehicle_number or (first.vehicle_number if first else None),
         driver_name=order.delivery_driver_name or (first.driver_name if first else None),
-        bill_to=_party(order, order.billing_address),
-        ship_to=_party(order, order.shipping_address or order.billing_address),
+        bill_to=bill_to, ship_to=ship_to,
         lines=rows, created_by=user_id, created_by_name=name,
     )
     db.add(gp)
@@ -326,13 +360,18 @@ def list_for(current_user: dict, db: Session, *, sales_order_id: int | None = No
 
 
 def generate_for_order(order_id: int, current_user: dict, db: Session, vehicle_number: str | None = None,
-                       driver_name: str | None = None) -> dict:
+                       driver_name: str | None = None, eway_bill_no: str | None = None,
+                       transporter_id: str | None = None) -> dict:
     """Logistics generating the gate pass from the order.
 
     At Dispatched - before it goes out - with the vehicle and driver taking
     it, which are kept on the order as marking it out for delivery keeps
     them; marking it out then uses this same pass. Or for an order already
     out (sent before passes were made, or when one could not be made then).
+    The e-way bill number and transporter ID are optional and go on the
+    pass only. Asked again with the pass already made, it updates that
+    pass with what was typed (vehicle, driver, e-way bill, transporter ID)
+    and keeps its number.
     """
 
     from app.core.fulfilment import LOGISTICS, holds_desk
@@ -357,7 +396,7 @@ def generate_for_order(order_id: int, current_user: dict, db: Session, vehicle_n
             status_code=409,
             detail=f"Order {order.order_number} is not dispatched yet; the gate pass is made when it leaves.",
         )
-    gp = for_out_for_delivery(order, current_user, db)
+    gp = for_out_for_delivery(order, current_user, db, eway_bill_no=eway_bill_no, transporter_id=transporter_id)
     db.commit()
     db.refresh(gp)
     return gate_pass_dict(gp)

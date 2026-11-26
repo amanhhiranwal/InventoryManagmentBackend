@@ -185,11 +185,27 @@ try:
     early = order("7", b, [f"GPS{TAG}-8"])
     r = api("post", f"/gate-passes/orders/{early}", admin, json={})
     check("without the vehicle and driver it is refused", r.status_code == 400 and "vehicle number" in r.text, r.text[:160])
-    r = api("post", f"/gate-passes/orders/{early}", admin, json={"vehicle_number": "ka 01 ab 1", "driver_name": "First Driver"})
+    r = api("post", f"/gate-passes/orders/{early}", admin,
+            json={"vehicle_number": "X", "driver_name": "Y", "eway_bill_no": "1" * 41})
+    check("an e-way bill number longer than 40 is refused", r.status_code == 422, str(r.status_code))
+    r = api("post", f"/gate-passes/orders/{early}", admin,
+            json={"vehicle_number": "ka 01 ab 1", "driver_name": "First Driver",
+                  "eway_bill_no": " 3310 1234 5678 ", "transporter_id": "09aaacb1234c1z5"})
     early_pass = data(r) if r.status_code == 200 else {}
     check("with them, Generate Gate Pass makes the next number of the company",
           r.status_code == 200 and early_pass.get("gate_pass_no") == f"{YEAR}/002" and early_pass.get("vehicle_number") == "KA 01 AB 1",
           r.text[:200])
+    check("with the e-way bill number and transporter ID typed",
+          early_pass.get("eway_bill_no") == "3310 1234 5678" and early_pass.get("docket_no") == "09AAACB1234C1Z5", str(early_pass)[:300])
+    r = api("post", f"/gate-passes/orders/{early}", admin,
+            json={"vehicle_number": "ka 01 ab 1", "driver_name": "First Driver", "eway_bill_no": "999988887777",
+                  "transporter_id": ""})
+    updated = data(r) if r.status_code == 200 else {}
+    check("typing them again updates the same pass: e-way bill changed, transporter ID cleared, number kept",
+          updated.get("id") == early_pass.get("id") and updated.get("gate_pass_no") == early_pass.get("gate_pass_no")
+          and updated.get("eway_bill_no") == "999988887777" and updated.get("docket_no") is None, str(updated)[:300])
+    r = api("post", f"/gate-passes/orders/{early}", admin, json={"vehicle_number": "ka 01 ab 1", "driver_name": "First Driver"})
+    check("leaving them out keeps what the pass has", data(r).get("eway_bill_no") == "999988887777", r.text[:200])
     check("the order is still Dispatched", scalar("select status from sales_order where id=:o", o=early) == "DISPATCHED")
     r = api("put", f"/fulfilment/orders/{early}/decide", admin,
             json={"approve": True, "vehicle_number": "ka 02 cd 2", "driver_name": "Second Driver"})
@@ -198,6 +214,19 @@ try:
           r.status_code == 200 and len(same) == 1 and same[0]["id"] == early_pass.get("id"), str(same)[:200])
     check("with the vehicle and driver it actually left with",
           same and same[0]["vehicle_number"] == "KA 02 CD 2" and same[0]["driver_name"] == "Second Driver", str(same)[:200])
+    print("\nAn order with no addresses of its own")
+    bare = order("9", b, [f"GPS{TAG}-10"])
+    scalar("update sales_order set billing_address=null, shipping_address=null where id=:o returning id", o=bare)
+    scalar("insert into sales_proforma_invoice (sales_order_id, status, customer_name, billing_address, shipping_address, "
+           "created_at, updated_at) values (:o, 'GENERATED', 'x', cast(:bill as json), cast(:ship as json), now(), now()) returning id",
+           o=bare, bill=json.dumps({"street": "PI Bill Road", "city": "Ludhiana", "state": "Punjab", "pin": "141001"}),
+           ship=json.dumps({"street": "PI Site", "city": "Jalandhar", "state": "Punjab", "pin": "144001"}))
+    r = api("post", f"/gate-passes/orders/{bare}", admin, json={"vehicle_number": "PB 01 A 1", "driver_name": "Driver"})
+    bare_pass = data(r) if r.status_code == 200 else {}
+    check("takes Bill To and Ship To from its proforma invoice",
+          "Ludhiana" in bare_pass.get("bill_to", {}).get("address", "")
+          and "Jalandhar" in bare_pass.get("ship_to", {}).get("address", ""), str(bare_pass)[:300])
+
     ready = scalar("update sales_order set status='READY' where id=:o returning id", o=order("8", b, []))
     r = api("post", f"/gate-passes/orders/{ready}", admin, json={"vehicle_number": "X1", "driver_name": "Y"})
     check("an order not yet dispatched is refused", r.status_code == 409 and "not dispatched" in r.text, r.text[:160])
@@ -218,6 +247,7 @@ finally:
         session.execute(text("delete from dispatch_order where sales_order_id=:o"), {"o": oid})
         session.execute(text("delete from sales_order_line where sales_order_id=:o"), {"o": oid})
         session.execute(text("delete from sales_order_activity where sales_order_id=:o"), {"o": oid})
+        session.execute(text("delete from sales_proforma_invoice where sales_order_id=:o"), {"o": oid})
         session.execute(text("delete from sales_order where id=:o"), {"o": oid})
     for cid in company_ids:
         session.execute(text("delete from warehouse_bins where warehouse_id in (select id from locations where company_id = :c)"), {"c": cid})

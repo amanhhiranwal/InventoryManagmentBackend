@@ -51,6 +51,8 @@ class GatePassGenerate(BaseModel):
 
     vehicle_number: Optional[str] = Field(default=None, max_length=30)
     driver_name: Optional[str] = Field(default=None, max_length=120)
+    eway_bill_no: Optional[str] = Field(default=None, max_length=40)
+    transporter_id: Optional[str] = Field(default=None, max_length=80)
 
 
 @router.post("/orders/{order_id}")
@@ -64,5 +66,8 @@ def generate_for_order(
     the vehicle number and driver name; generating again returns the same pass."""
 
     body = request or GatePassGenerate()
-    data = service.generate_for_order(order_id, current_user, db, body.vehicle_number, body.driver_name)
+    data = service.generate_for_order(
+        order_id, current_user, db, body.vehicle_number, body.driver_name,
+        eway_bill_no=body.eway_bill_no, transporter_id=body.transporter_id,
+    )
     return {"success": True, "message": f"Gate pass {data['gate_pass_no']} generated.", "data": data}
