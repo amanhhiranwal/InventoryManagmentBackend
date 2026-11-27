@@ -1034,7 +1034,9 @@ class FulfilmentDeskService:
             # The same figure the desk shows as "Advance received".
             invoice = _latest_invoice(order, db)
             paid = float(invoice.amount_paid if invoice else (order.advance_received or 0))
-            no_advance = not balance and paid <= 0
+            # Paise only (₹0.1 to ₹0.9, rounding) count as nothing received;
+            # ₹1 or more needs the date.
+            no_advance = not balance and paid < 1
 
             if received_date is None and not no_advance:
                 raise HTTPException(
