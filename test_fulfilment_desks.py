@@ -427,6 +427,44 @@ try:
         api("get", f"/orders/{free['id']}", admin).json()["data"].get("advance_received_date") is None,
     )
 
+    # Paise left over from rounding (₹0.1 to ₹0.9) count as nothing
+    # received, so no date is needed.
+    paise = raise_order("Paise Advance", invoiced=False)
+    paise_invoice = invoice_order(paise, paid=False)
+    with Db() as db:
+        db.execute(sql_text("update sales_order set advance_percent = 0 where id = :o"), {"o": paise["id"]})
+        db.execute(sql_text("update sales_proforma_invoice set amount_paid = 0.9 where id = :i"), {"i": paise_invoice["id"]})
+        db.commit()
+    for stage in ("ADVANCE_ACCEPTED", "ORDER_PROCESSED"):
+        api("put", f"/orders/{paise['id']}/status", admin, json={"status": stage})
+
+    verified = api("put", f"/fulfilment/orders/{paise['id']}/decide", token["accounts"], json={
+        "approve": True, "remarks": "Rounding only.",
+    })
+    check(
+        "₹0.9 received counts as ₹0: verified without a received date",
+        verified.status_code == 200 and status_of(paise["id"]) == "PAYMENT_VERIFIED",
+        f"{verified.status_code} {verified.text[:160]}",
+    )
+
+    rupee = raise_order("Rupee Advance", invoiced=False)
+    rupee_invoice = invoice_order(rupee, paid=False)
+    with Db() as db:
+        db.execute(sql_text("update sales_order set advance_percent = 0 where id = :o"), {"o": rupee["id"]})
+        db.execute(sql_text("update sales_proforma_invoice set amount_paid = 1 where id = :i"), {"i": rupee_invoice["id"]})
+        db.commit()
+    for stage in ("ADVANCE_ACCEPTED", "ORDER_PROCESSED"):
+        api("put", f"/orders/{rupee['id']}/status", admin, json={"status": stage})
+
+    undated = api("put", f"/fulfilment/orders/{rupee['id']}/decide", token["accounts"], json={
+        "approve": True, "remarks": "No date.",
+    })
+    check(
+        "₹1 received is money received: it needs the date",
+        undated.status_code == 400 and "date the payment was received" in undated.text,
+        f"{undated.status_code} {undated.text[:160]}",
+    )
+
     # ============================================== the procurement queue
     banner("5. Production pick it up")
 
