@@ -454,11 +454,15 @@ class _Document:
 
         # Right: the voucher grid.
         order = data.get("sales_order") or {}
+        # 30 only when no figure was set; a 0% advance is a real term
+        # (100% against delivery) and must print as 0, as the screen does.
+        advance = data.get("advance_percent")
+        advance = 30 if advance is None else float(advance)
         cells = [
             (None, None),
             ("Dated", _short_date(data.get("issue_date"))),
             ("Delivery Note", ""),
-            ("Mode/Terms of Payment", f"{float(data.get('advance_percent') or 30):g}% Advance"),
+            ("Mode/Terms of Payment", f"{advance:g}% Advance"),
             ("Reference No. & Date.", order.get("order_number") or ""),
             ("Other References", ""),
             ("Buyer's Order No.", order.get("po_number") or ""),
