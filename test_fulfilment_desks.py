@@ -357,9 +357,27 @@ try:
         unpaid.text[:140],
     )
 
+    undated = api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
+        "approve": True, "remarks": "No date.",
+    })
+    check(
+        "with an advance asked and nothing paid, leaving out the date still does not let it through",
+        undated.status_code == 400 and "Nothing has been received" in undated.text,
+        f"{undated.status_code} {undated.text[:140]}",
+    )
+
     api("put", f"/proforma-invoices/{invoice['id']}", owner, json={
         "amount_paid": round(float(invoice["grand_total"]) * 0.3, 2),
     })
+
+    undated = api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
+        "approve": True, "remarks": "No date.",
+    })
+    check(
+        "an advance that was paid needs the date it came in",
+        undated.status_code == 400 and "date the payment was received" in undated.text,
+        f"{undated.status_code} {undated.text[:140]}",
+    )
 
     approved = api("put", f"/fulfilment/orders/{order['id']}/decide", token["accounts"], json={
         "approve": True, "remarks": "Advance received in full.", "received_date": TODAY,
@@ -380,6 +398,33 @@ try:
             r["id"]
             for r in api("get", "/fulfilment/accounts", token["accounts"]).json()["data"]["orders"]
         },
+    )
+
+    # Terms with no advance (100% against delivery): ₹0 received, so no
+    # day it came in - verified without a date.
+    from sqlalchemy import text as sql_text
+
+    from app.database.postgres import SessionLocal as Db
+
+    free = raise_order("No Advance", invoiced=False)
+    invoice_order(free, paid=False)
+    with Db() as db:
+        db.execute(sql_text("update sales_order set advance_percent = 0 where id = :o"), {"o": free["id"]})
+        db.commit()
+    for stage in ("ADVANCE_ACCEPTED", "ORDER_PROCESSED"):
+        api("put", f"/orders/{free['id']}/status", admin, json={"status": stage})
+
+    verified = api("put", f"/fulfilment/orders/{free['id']}/decide", token["accounts"], json={
+        "approve": True, "remarks": "No advance on these terms.",
+    })
+    check(
+        "an order with no advance is verified without a received date",
+        verified.status_code == 200 and status_of(free["id"]) == "PAYMENT_VERIFIED",
+        f"{verified.status_code} {verified.text[:160]}",
+    )
+    check(
+        "and no received date is put on it",
+        api("get", f"/orders/{free['id']}", admin).json()["data"].get("advance_received_date") is None,
     )
 
     # ============================================== the procurement queue

@@ -766,7 +766,11 @@ class FulfilmentDeskService:
                 ),
             )
 
-        if float(invoice.amount_paid or 0) <= 0:
+        # Terms with no advance (e.g. 100% against delivery) have nothing
+        # to record yet; the invoice is still required above.
+        no_advance_asked = order.advance_percent is not None and float(order.advance_percent) <= 0
+
+        if float(invoice.amount_paid or 0) <= 0 and not no_advance_asked:
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -1022,14 +1026,23 @@ class FulfilmentDeskService:
         picks: list[dict] = []
 
         # Accounts say on which day the money came in, whether it is the
-        # advance they verify or the balance that closes the order.
+        # advance they verify or the balance that closes the order. An
+        # advance of nothing (no advance asked, or none paid) came in on
+        # no day, so the date is optional then.
         if approve and desk.role == ACCOUNTS:
-            if received_date is None:
+            balance = order.status == SalesOrderStatus.INSTALLED
+            # The same figure the desk shows as "Advance received".
+            invoice = _latest_invoice(order, db)
+            paid = float(invoice.amount_paid if invoice else (order.advance_received or 0))
+            no_advance = not balance and paid <= 0
+
+            if received_date is None and not no_advance:
                 raise HTTPException(
                     status_code=400,
                     detail="Enter the date the payment was received.",
                 )
 
+        if approve and desk.role == ACCOUNTS and received_date is not None:
             if received_date > now_ist().date():
                 raise HTTPException(
                     status_code=400,
